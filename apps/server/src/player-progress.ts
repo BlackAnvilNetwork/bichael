@@ -22,6 +22,11 @@ export type PlayerProgress = {
   subjob: string | null;
   /** Spendable log items were copied into the bag and exported off the log. */
   logItemsMoved: boolean;
+  /**
+   * One-time copy from the log into the bag finished. Export may still be pending.
+   * Missing on saves from the first migration: those already copied before export.
+   */
+  logItemsCopied?: boolean;
 };
 
 export function playerProgressPath(dataDir: string, charId: string): string {
@@ -63,6 +68,10 @@ export function readPlayerProgress(path: string): PlayerProgress | null {
     throw new Error("character progress has a bad bag.");
   }
   if (typeof row.logItemsMoved !== "boolean") throw new Error("character progress has no ledger flag.");
+  if (!Array.isArray(row.learned)) throw new Error("character progress has bad learned abilities.");
+  if (row.logItemsCopied !== undefined && typeof row.logItemsCopied !== "boolean") {
+    throw new Error("character progress has a bad copy flag.");
+  }
   return row as PlayerProgress;
 }
 
@@ -86,6 +95,53 @@ export function stacksFromLogItems(
   return { inventory, baseMats };
 }
 
+/** Merge log stacks into an existing bag without replacing starter-flagged rows. */
+export function mergeLogItemsIntoBag(
+  progress: PlayerProgress,
+  items: { tokenId: number; amount: string }[],
+  slugOf: (tokenId: number) => string | null,
+): number {
+  let added = 0;
+  for (const item of items) {
+    const amount = Number(item.amount);
+    if (!Number.isSafeInteger(amount) || amount <= 0) continue;
+    const row = progress.inventory.find((slot) => slot.tokenId === item.tokenId && !slot.starter);
+    if (row) row.amount += amount;
+    else progress.inventory.push({ tokenId: item.tokenId, amount });
+    const slug = slugOf(item.tokenId);
+    if (slug) progress.baseMats[slug] = (progress.baseMats[slug] ?? 0) + amount;
+    added += 1;
+  }
+  return added;
+}
+
+/**
+ * Union trainer ability ids from the per-character log into `learned`.
+ * Does not invent craft XP, equipment, or Dust. Returns true when the save changed.
+ */
+export function hydrateLearnedFromLog(progress: PlayerProgress, abilityIds: string[]): number {
+  let added = 0;
+  const have = new Set(progress.learned);
+  for (const id of abilityIds) {
+    if (!id || have.has(id)) continue;
+    progress.learned.push(id);
+    have.add(id);
+    added += 1;
+  }
+  return added;
+}
+
+/**
+ * True when buying this ability should debit KEK.
+ * Already in `learned` or already on the character log must not charge again.
+ */
+export function shouldChargeForAbility(learned: readonly string[], logKnows: boolean, abilityId: string): boolean {
+  if (!abilityId) return false;
+  if (learned.includes(abilityId)) return false;
+  if (logKnows) return false;
+  return true;
+}
+
 export function freshProgress(args: {
   level: number;
   items: { tokenId: number; amount: string }[];
@@ -94,6 +150,7 @@ export function freshProgress(args: {
   skillUnlocked: string[];
   craftSkills: PlayerProgress["craftSkills"];
   equip: PlayerProgress["equip"];
+  learned?: string[];
 }): PlayerProgress {
   const bag = stacksFromLogItems(args.items, args.slugOf);
   return {
@@ -104,7 +161,7 @@ export function freshProgress(args: {
     baseMats: bag.baseMats,
     equip: args.equip,
     craftSkills: args.craftSkills,
-    learned: [],
+    learned: [...(args.learned ?? [])],
     skillUnlocked: args.skillUnlocked,
     skillPoints: args.skillPoints,
     skillPrestige: 0,
@@ -114,30 +171,44 @@ export function freshProgress(args: {
     dust: 0,
     subjob: null,
     logItemsMoved: false,
+    logItemsCopied: true,
   };
+}
+
+function needsLogItemCopy(progress: PlayerProgress, pendingItems: number): boolean {
+  if (progress.logItemsMoved) return false;
+  if (progress.logItemsCopied === true) return false;
+  // Legacy #174 saves copied into the bag before export but had no copy flag.
+  if (progress.logItemsCopied === undefined && progress.inventory.length > 0) return false;
+  // Empty bag with log stacks still pending: copy before export so a resume cannot drop them.
+  return pendingItems > 0;
 }
 
 /**
  * First boot for a character with no save: copy the log's spendable items into the bag,
  * then export them off the log so a drop is not spendable twice. Later calls leave the bag alone.
  * Level stays the logged level. XP is not in the log, so a first save starts the level at 0 XP.
+ * Learned trainer abilities are always hydrated from the log, including after a prior item migration.
  */
 export function reconcileCharacterProgress(args: {
   dir: string;
   chars: { charId: string; tokenId: string }[];
   levelOf: (tokenId: string) => number;
   itemsOf: (tokenId: string) => { tokenId: number; amount: string }[];
+  abilitiesOf: (tokenId: string) => string[];
   exportItem: (tokenId: string, itemId: string, amount: string) => { ok: true } | { ok: false; error: string };
   skillPointsForLevel: (level: number) => number;
   skillUnlocked: (charId: string) => string[];
   slugOf: (tokenId: number) => string | null;
   craftSkills: () => PlayerProgress["craftSkills"];
   equip: () => PlayerProgress["equip"];
-}): { charId: string; moved: number }[] {
-  const moved: { charId: string; moved: number }[] = [];
+}): { charId: string; moved: number; learned: number }[] {
+  const moved: { charId: string; moved: number; learned: number }[] = [];
   for (const row of args.chars) {
     const path = playerProgressPath(args.dir, row.charId);
+    const fromLog = args.abilitiesOf(row.tokenId);
     let progress = readPlayerProgress(path);
+    let learnedAdded = 0;
     if (!progress) {
       const level = Math.max(1, args.levelOf(row.tokenId));
       progress = freshProgress({
@@ -148,13 +219,30 @@ export function reconcileCharacterProgress(args: {
         skillUnlocked: args.skillUnlocked(row.charId),
         craftSkills: args.craftSkills(),
         equip: args.equip(),
+        learned: fromLog,
       });
+      learnedAdded = progress.learned.length;
       writePlayerProgress(path, progress);
+    } else {
+      learnedAdded = hydrateLearnedFromLog(progress, fromLog);
+      if (learnedAdded > 0) writePlayerProgress(path, progress);
     }
+
     if (progress.logItemsMoved) {
-      moved.push({ charId: row.charId, moved: 0 });
+      moved.push({ charId: row.charId, moved: 0, learned: learnedAdded });
       continue;
     }
+
+    const pending = args.itemsOf(row.tokenId);
+    if (needsLogItemCopy(progress, pending.length)) {
+      mergeLogItemsIntoBag(progress, pending, args.slugOf);
+      progress.logItemsCopied = true;
+      writePlayerProgress(path, progress);
+    } else if (progress.logItemsCopied !== true) {
+      progress.logItemsCopied = true;
+      writePlayerProgress(path, progress);
+    }
+
     const items = args.itemsOf(row.tokenId);
     let ok = true;
     for (const item of items) {
@@ -162,12 +250,13 @@ export function reconcileCharacterProgress(args: {
       if (!res.ok) ok = false;
     }
     if (!ok) {
-      moved.push({ charId: row.charId, moved: 0 });
+      moved.push({ charId: row.charId, moved: 0, learned: learnedAdded });
       continue;
     }
     progress.logItemsMoved = true;
     writePlayerProgress(path, progress);
-    moved.push({ charId: row.charId, moved: items.length });
+    moved.push({ charId: row.charId, moved: items.length, learned: learnedAdded });
   }
   return moved;
 }
+

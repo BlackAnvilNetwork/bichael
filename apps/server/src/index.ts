@@ -38,6 +38,7 @@ import {
   isRogueAbilityId,
   isSkillNodeId,
   isSorcererAbilityId,
+  isAbilityId,
   isTimAbilityId,
   physicalDamage,
   skillHubForJob,
@@ -186,7 +187,7 @@ import {
 } from "./lok-vault";
 import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
 import { defaultLokDir, LokWorld } from "./lok-world";
-import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, writePlayerProgress, type PlayerProgress } from "./player-progress";
+import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, writePlayerProgress, shouldChargeForAbility, type PlayerProgress } from "./player-progress";
 import {
   PARTY_INVITE_RANGE,
   PARTY_SHARE_RANGE,
@@ -487,6 +488,7 @@ function reconcilePlayers(world: LokWorld): number {
     chars: world.boundChars(),
     levelOf: (id) => world.levelOf(id),
     itemsOf: (id) => world.view(id).items,
+    abilitiesOf: (id) => world.abilitiesOf(id).filter((abilityId) => isAbilityId(abilityId)),
     exportItem: (id, itemId, amount) => world.exportItem(id, itemId, amount),
     skillPointsForLevel: (level) => skillPointsGrantedForLevels(0, level),
     skillUnlocked: (charId) => {
@@ -550,6 +552,7 @@ function rememberPlayer(p: Player) {
       dust: p.dust,
       subjob: p.subjob,
       logItemsMoved: prev?.logItemsMoved ?? true,
+      logItemsCopied: prev?.logItemsCopied ?? true,
     });
   } catch {
     console.error("[bellgrave] character save failed");
@@ -648,14 +651,16 @@ function handleLokImport(p: Player, tokenId: number, amount: number) {
     pushLog(p, "You do not have that many to import. Nothing was moved.");
     return;
   }
+  // Persist the bag before the log append so a crash cannot restore a bag that still has the stack.
+  rememberPlayer(p);
   const res = lok.itemDrop(token, String(tokenId), String(amount));
   if (!res.ok) {
     if (def && def.kind === "base") grantBaseMat(p, def.slug, amount);
     else addItem(p.inventory, tokenId, amount);
+    rememberPlayer(p);
     pushLog(p, res.error);
     return;
   }
-  rememberPlayer(p);
   pushLog(p, "Imported " + itemLabel(tokenId) + " x" + amount + " from your bag into the log.");
   send(p.ws, snapshotFor(p));
 }
@@ -2827,9 +2832,21 @@ async function handleSpellBuy(p: Player, id: AbilityId) {
     return;
   }
   const cost = trainerAbilityDustCost(unlockLevel);
+  const token = lokToken(p);
+  const logKnows = !!(token && lok.hasAbility(token, id));
+  if (!shouldChargeForAbility(p.learned, logKnows, id)) {
+    if (!p.learned.includes(id)) {
+      p.learned.push(id);
+      rememberPlayer(p);
+    }
+    pushLog(p, "You already know " + abilityLabel(id) + ".");
+    send(p.ws, snapshotFor(p));
+    handleNpcInteract(p, TRAINER.id);
+    return;
+  }
   const charged = await withPlayerCharge(
     p.charId,
-    () => !p.learned.includes(id),
+    () => shouldChargeForAbility(p.learned, !!(token && lok.hasAbility(token, id)), id),
     () => {
       if (p.learned.includes(id)) return null;
       p.learned.push(id);
@@ -4301,6 +4318,7 @@ wss.on("connection", (ws) => {
     const p = players.get(wallet);
     // Drop from the live interest set so peers stop rendering ghosts; roster keeps the char.
     if (p && p.ws === ws) {
+      rememberPlayer(p);
       registerAccountChar(p);
       const affected = onPlayerDisconnect(wallet);
       players.delete(wallet);
@@ -4318,4 +4336,8 @@ wss.on("connection", (ws) => {
 });
 
 setInterval(tickSim, TICK_MS);
+const SAVE_INTERVAL_MS = 15_000;
+setInterval(() => {
+  for (const p of players.values()) rememberPlayer(p);
+}, SAVE_INTERVAL_MS);
 console.log(`[bellgrave] game server on ws://localhost:${PORT}`);

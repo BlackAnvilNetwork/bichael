@@ -236,6 +236,12 @@ export class LokWorld {
     return (me?.abilities ?? []).includes(abilityId);
   }
 
+  /** Ability / skill ids already on this character's log. */
+  abilitiesOf(tokenId: string): string[] {
+    const me = this.state.characters.find((c) => c.tokenId === tokenId);
+    return [...(me?.abilities ?? [])];
+  }
+
   craftOf(tokenId: string, itemId: string): string {
     const me = this.state.characters.find((c) => c.tokenId === tokenId);
     return me?.crafts?.find((row) => row.itemId === itemId)?.amount ?? "0";
