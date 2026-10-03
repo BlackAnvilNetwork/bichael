@@ -12,7 +12,7 @@ export type CastResult = { stdout: string; stderr: string };
 export type CastFn = (args: string[]) => Promise<CastResult>;
 
 export type VaultOk = { ok: true; id: string; availableAt: number };
-export type VaultErr = { ok: false; error: string };
+export type VaultErr = { ok: false; error: string; uncertain?: boolean; id?: string };
 export type QueuedWithdrawal = {
   id: string;
   tokenId: string;
@@ -335,7 +335,28 @@ function tupleOf(body: Body): string {
   return `(${body.prevRoot},${body.newRoot},${body.fromIndex},${body.toIndex},${body.logHash},${body.rulesetHash},${body.summary},${body.inboundConsumed},${body.kekOut},[])`;
 }
 
+let vaultQueueTail: Promise<void> = Promise.resolve();
+
+function withVaultQueue<T>(fn: () => Promise<T>): Promise<T> {
+  const run = vaultQueueTail.then(fn, fn);
+  vaultQueueTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export async function queueKekWithdrawal(
+  tokenId: string,
+  amount: string,
+  envIn: NodeJS.ProcessEnv = process.env,
+  cast?: CastFn,
+  hooks?: { beforeSend?: (predictedId: string) => void },
+): Promise<VaultOk | VaultErr> {
+  return withVaultQueue(() => queueKekWithdrawalNow(tokenId, amount, envIn, cast, hooks));
+}
+
+async function queueKekWithdrawalNow(
   tokenId: string,
   amount: string,
   envIn: NodeJS.ProcessEnv = process.env,
@@ -349,6 +370,8 @@ export async function queueKekWithdrawal(
     return { ok: false, error: "Withdrawal is not configured. No in-game KEK was spent." };
   }
   if (!/^[1-9][0-9]{0,18}$/.test(amount)) return { ok: false, error: "Bad withdrawal amount." };
+  let broadcast = false;
+  let predicted = "";
   try {
     const owner = await ownerAddress(cast, env.ownerKey);
     const nftOwner = await call(cast, env.rpc, env.nft, "ownerOf(uint256)(address)", [tokenId]);
@@ -421,7 +444,9 @@ export async function queueKekWithdrawal(
     });
     const sig = word((await cast(["wallet", "sign", "--data", typed, "--private-key", env.ownerKey])).stdout);
     const before = BigInt(await call(cast, env.rpc, env.vault, "nextWithdrawalId()(uint256)"));
-    hooks?.beforeSend?.((before + 1n).toString());
+    predicted = (before + 1n).toString();
+    hooks?.beforeSend?.(predicted);
+    broadcast = true;
     await cast(
       sendArgs(
         env.checkpoint,
@@ -432,13 +457,28 @@ export async function queueKekWithdrawal(
       ),
     );
     const after = BigInt(await call(cast, env.rpc, env.vault, "nextWithdrawalId()(uint256)"));
-    if (after !== before + 1n) throw new Error("vault withdrawal id did not advance by one");
+    if (after !== before + 1n) {
+      return {
+        ok: false,
+        uncertain: true,
+        id: predicted,
+        error: "The vault withdrawal may already be queued. Spendable KEK stays reserved until the chain is checked.",
+      };
+    }
     const id = after.toString();
     const packed = (await cast(["call", env.vault, "withdrawals(uint256)(address,uint64,uint8,uint256)", id, "--rpc-url", env.rpc])).stdout;
     const availableAt = Number(packed.trim().split(/\s+/)[1] ?? "0");
     remember({ id, tokenId, amount, availableAt, status: "pending" });
     return { ok: true, id, availableAt };
   } catch (err) {
+    if (broadcast) {
+      return {
+        ok: false,
+        uncertain: true,
+        id: predicted,
+        error: "The vault send did not finish. Spendable KEK stays reserved until the chain is checked. " + redact(String(err), secrets),
+      };
+    }
     return { ok: false, error: "Withdrawal was not queued. No in-game KEK was spent. " + redact(String(err), secrets) };
   }
 }
@@ -466,20 +506,24 @@ export async function claimQueuedWithdrawal(
   }
 }
 
-/** True when the vault withdrawal has a non-zero amount. Null when the chain cannot be read. No private key. */
-export async function vaultWithdrawalExists(
+/** True only when this id is this character's withdrawal for this amount. Null if the chain cannot be read. No private key. */
+export async function vaultWithdrawalMatches(
   id: string,
+  token: string,
+  amount: string,
   envIn: NodeJS.ProcessEnv = process.env,
   cast?: CastFn,
 ): Promise<boolean | null> {
   const env = envOf(envIn);
   if (!env.rpc || !env.vault) return null;
-  if (!/^\d+$/.test(id)) return null;
+  if (!/^\d+$/.test(id) || !/^\d+$/.test(token) || !/^\d+$/.test(amount)) return null;
   const run = cast ?? spawnCast(env.castBin);
   try {
+    const owner = word((await run(["call", env.vault, "withdrawalToken(uint256)(uint256)", id, "--rpc-url", env.rpc])).stdout);
+    if (!owner || BigInt(owner) !== BigInt(token)) return false;
     const packed = (await run(["call", env.vault, "withdrawals(uint256)(address,uint64,uint8,uint256)", id, "--rpc-url", env.rpc])).stdout;
-    const amount = packed.trim().split(/\s+/)[3] ?? "0";
-    return BigInt(amount) > 0n;
+    const got = packed.trim().split(/\s+/)[3] ?? "0";
+    return BigInt(got) === BigInt(amount) && BigInt(got) > 0n;
   } catch {
     return null;
   }

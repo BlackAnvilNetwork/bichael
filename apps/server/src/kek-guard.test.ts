@@ -175,7 +175,7 @@ test("a withdrawal that is not on chain releases the intent and does not debit",
   let debited = 0;
   const left = await reconcileWithdrawIntents({
     intents: readWithdrawIntents(path),
-    existsOnChain: async (id) => (id === "9" ? false : null),
+    existsOnChain: async (intent) => (intent.id === "9" ? false : null),
     debit: () => {
       debited += 1;
       return { ok: true };
@@ -220,6 +220,13 @@ test("a second overlapping craft does not double-charge", async () => {
     withPlayerCharge(
       "hero",
       () => mats >= 1,
+      () => {
+        if (mats < 1) return null;
+        mats -= 1;
+        return () => {
+          mats += 1;
+        };
+      },
       async () => {
         await Promise.resolve();
         if (kek < 1000) return { ok: false as const, error: "short" };
@@ -228,8 +235,6 @@ test("a second overlapping craft does not double-charge", async () => {
         return { ok: true as const };
       },
       () => {
-        if (mats < 1) return;
-        mats -= 1;
         items += 1;
       },
     );
@@ -248,6 +253,13 @@ test("a second overlapping buy does not double-charge or learn twice", async () 
     withPlayerCharge(
       "hero-buy",
       () => !learned.includes("fire"),
+      () => {
+        if (learned.includes("fire")) return null;
+        learned.push("fire");
+        return () => {
+          learned.pop();
+        };
+      },
       async () => {
         await Promise.resolve();
         if (kek < 500) return { ok: false as const, error: "short" };
@@ -265,4 +277,63 @@ test("a second overlapping buy does not double-charge or learn twice", async () 
   assert.equal(charges, 1);
   assert.equal(kek, 500);
   assert.equal([first, second].filter((row) => row.ok).length, 1);
+});
+
+test("a failed craft spend rolls the reserved materials back", async () => {
+  let mats = 1;
+  let kek = 1000;
+  const result = await withPlayerCharge(
+    "hero-undo",
+    () => mats >= 1,
+    () => {
+      mats -= 1;
+      return () => {
+        mats += 1;
+      };
+    },
+    async () => ({ ok: false as const, error: "short" }),
+    () => {
+      kek -= 1000;
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(mats, 1);
+  assert.equal(kek, 1000);
+});
+
+test("an uncertain withdrawal stays reserved until the chain confirms it", async () => {
+  let alice = 1000n;
+  let cleared = false;
+  const pending = await guardedWithdraw({
+    token: "alice-uncertain",
+    amount: "1000",
+    balanceOf: () => alice.toString(),
+    debit: () => {
+      alice -= 1000n;
+      return { ok: true };
+    },
+    noteIntent: () => {},
+    clearIntent: () => {
+      cleared = true;
+    },
+    queue: async () => ({ ok: false, error: "timed out", uncertain: true, id: "4" }),
+    confirm: async () => null,
+  });
+  assert.equal(pending.ok, false);
+  assert.equal(cleared, false);
+  assert.equal(alice, 1000n);
+  assert.equal(reservedOf("alice-uncertain"), 1000n);
+
+  const missed = await guardedWithdraw({
+    token: "alice-miss",
+    amount: "1000",
+    balanceOf: () => "1000",
+    debit: () => ({ ok: true }),
+    noteIntent: () => {},
+    clearIntent: () => {},
+    queue: async () => ({ ok: false, error: "reverted", uncertain: true, id: "5" }),
+    confirm: async () => false,
+  });
+  assert.equal(missed.ok, false);
+  assert.equal(reservedOf("alice-miss"), 0n);
 });

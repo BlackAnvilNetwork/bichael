@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowPlayerDeposit, debitAfterQueue, depositCastArgs, depositKekOnchain, loadQueues, LOCAL_MOCK_KEK, PLAYER_DEPOSIT_CAP, playerDepositGate, queueKekWithdrawal, withdrawalById, writeTextAtomic, type CastFn } from "./lok-vault";
+import { allowPlayerDeposit, debitAfterQueue, depositCastArgs, depositKekOnchain, loadQueues, LOCAL_MOCK_KEK, PLAYER_DEPOSIT_CAP, playerDepositGate, queueKekWithdrawal, vaultWithdrawalMatches, withdrawalById, writeTextAtomic, type CastFn } from "./lok-vault";
 
 const ENV = {
   LOK_CHAIN_RPC: "http://127.0.0.1:8545",
@@ -117,7 +117,10 @@ test("a reverted checkpoint does not report a queued withdrawal", async () => {
     },
   });
   assert.equal(res.ok, false);
-  if (!res.ok) assert.match(res.error, /No in-game KEK was spent/);
+  if (!res.ok) {
+    assert.equal(res.uncertain, true);
+    assert.match(res.error, /stays reserved/);
+  }
   assert.deepEqual(order, ["note:1", "send"]);
 });
 
@@ -175,4 +178,63 @@ test("a crash mid-write of the queue temp file does not wipe lok-queues.json", (
   writeFileSync(path, "{");
   assert.throws(() => loadQueues(dir), /empty queue list/);
   assert.equal(withdrawalById("9")?.amount, "3");
+});
+
+test("two characters cannot queue withdrawals on the same counter", async () => {
+  let next = 0n;
+  let inflight = 0;
+  let maxInflight = 0;
+  const cast: CastFn = async (args) => {
+    const cmd = args[0] ?? "";
+    const sig = args[2] ?? "";
+    if (cmd === "wallet" && args[1] === "address") {
+      return { stdout: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\n", stderr: "" };
+    }
+    if (cmd === "block") return { stdout: "1000\n", stderr: "" };
+    if (cmd === "chain-id") return { stdout: "31337\n", stderr: "" };
+    if (cmd === "keccak" || cmd === "abi-encode") return { stdout: "0x" + "11".repeat(32) + "\n", stderr: "" };
+    if (cmd === "wallet" && args[1] === "sign") return { stdout: "0x" + "ab".repeat(65) + "\n", stderr: "" };
+    if (cmd === "call") {
+      if (sig.startsWith("ownerOf")) return { stdout: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\n", stderr: "" };
+      if (sig.startsWith("isAccepted")) return { stdout: "true\n", stderr: "" };
+      if (sig.startsWith("isActiveSigner")) return { stdout: "true\n", stderr: "" };
+      if (sig.startsWith("stateRoot")) return { stdout: "0x" + "33".repeat(32) + "\n", stderr: "" };
+      if (sig.startsWith("logIndex") || sig.startsWith("version")) return { stdout: "0\n", stderr: "" };
+      if (sig.startsWith("nextWithdrawalId")) return { stdout: next.toString() + "\n", stderr: "" };
+      if (sig.startsWith("inboundApplied") || sig.startsWith("summary")) return { stdout: "1\n", stderr: "" };
+      if (sig.startsWith("withdrawals")) return { stdout: "0xabc 10 1 1000\n", stderr: "" };
+    }
+    if (cmd === "send" && sig.startsWith("checkpoint")) {
+      inflight += 1;
+      maxInflight = Math.max(maxInflight, inflight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      next += 1n;
+      inflight -= 1;
+      return { stdout: "0xhash\n", stderr: "" };
+    }
+    throw new Error("unexpected " + cmd + " " + sig);
+  };
+  const [alice, bob] = await Promise.all([
+    queueKekWithdrawal("6", "1000", ENV, cast),
+    queueKekWithdrawal("7", "1000", ENV, cast),
+  ]);
+  assert.equal(alice.ok, true);
+  assert.equal(bob.ok, true);
+  if (alice.ok && bob.ok) {
+    assert.deepEqual([alice.id, bob.id].sort(), ["1", "2"]);
+  }
+  assert.equal(maxInflight, 1);
+  assert.equal(next, 2n);
+});
+
+test("a withdrawal match requires the character and the amount", async () => {
+  const cast: CastFn = async (args) => {
+    const sig = args[2] ?? "";
+    if (sig.startsWith("withdrawalToken")) return { stdout: "6\n", stderr: "" };
+    if (sig.startsWith("withdrawals")) return { stdout: "0xabc 10 1 1000\n", stderr: "" };
+    throw new Error("unexpected");
+  };
+  assert.equal(await vaultWithdrawalMatches("4", "6", "1000", ENV, cast), true);
+  assert.equal(await vaultWithdrawalMatches("4", "7", "1000", ENV, cast), false);
+  assert.equal(await vaultWithdrawalMatches("4", "6", "999", ENV, cast), false);
 });

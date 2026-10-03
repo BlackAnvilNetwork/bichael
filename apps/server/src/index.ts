@@ -181,11 +181,12 @@ import {
   queuesFor,
   readWithdrawDelay,
   vaultDelaySec,
-  vaultWithdrawalExists,
+  vaultWithdrawalMatches,
   withdrawalById,
 } from "./lok-vault";
 import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
 import { defaultLokDir, LokWorld } from "./lok-world";
+import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, writePlayerProgress, type PlayerProgress } from "./player-progress";
 import {
   PARTY_INVITE_RANGE,
   PARTY_SHARE_RANGE,
@@ -447,7 +448,8 @@ async function reconcileQueuedWithdrawals(world: LokWorld): Promise<void> {
   if (intents.length === 0) return;
   const left = await reconcileWithdrawIntents({
     intents,
-    existsOnChain: (id) => vaultWithdrawalExists(id),
+    existsOnChain: (intent) =>
+      intent.id ? vaultWithdrawalMatches(intent.id, intent.token, intent.amount) : false,
     debit: (token, amount) => world.withdrawKek(token, amount),
   });
   writeWithdrawIntents(path, left);
@@ -464,6 +466,8 @@ const lok: LokWorld = await (async (): Promise<LokWorld> => {
     startKekDepositWatcher(world);
     loadQueues(defaultLokDir());
     await reconcileQueuedWithdrawals(world);
+    const moved = reconcilePlayers(world);
+    if (moved > 0) console.log("[bellgrave] moved " + moved + " log item stack(s) into character bags");
     void readWithdrawDelay().catch(() => {
       console.error("[bellgrave] withdraw delay read failed");
     });
@@ -476,6 +480,81 @@ const lok: LokWorld = await (async (): Promise<LokWorld> => {
     process.exit(1);
   }
 })();
+
+function reconcilePlayers(world: LokWorld): number {
+  const rows = reconcileCharacterProgress({
+    dir: defaultLokDir(),
+    chars: world.boundChars(),
+    levelOf: (id) => world.levelOf(id),
+    itemsOf: (id) => world.view(id).items,
+    exportItem: (id, itemId, amount) => world.exportItem(id, itemId, amount),
+    skillPointsForLevel: (level) => skillPointsGrantedForLevels(0, level),
+    skillUnlocked: (charId) => {
+      const row = world.boundChars().find((c) => c.charId === charId);
+      const jobId = row ? JOB_IDS[row.job] : undefined;
+      const job = jobId && isJobId(jobId) && JOBS[jobId].playable ? jobId : "time_mage";
+      return initialUnlockedForJob(job);
+    },
+    slugOf: (id) => {
+      const def = getItem(id);
+      return def && def.kind === "base" ? def.slug : null;
+    },
+    craftSkills: () => emptyCraftSkills(),
+    equip: () => ({ ...emptyEquipment() }),
+  });
+  return rows.reduce((sum, row) => sum + row.moved, 0);
+}
+
+function applySaved(p: Player, saved: PlayerProgress) {
+  p.level = saved.level;
+  p.xp = saved.xp;
+  p.inventory = saved.inventory.map((row) => ({ ...row }));
+  p.baseMats = { ...saved.baseMats };
+  p.equip = { ...emptyEquipment(), ...saved.equip };
+  p.craftSkills = saved.craftSkills as Player["craftSkills"];
+  p.learned = [...saved.learned] as AbilityId[];
+  p.skillUnlocked = [...saved.skillUnlocked];
+  p.skillPoints = saved.skillPoints;
+  p.skillPrestige = saved.skillPrestige;
+  p.freeStats = { str: 0, dex: 0, vit: 0, agi: 0, int: 0, mnd: 0, ...saved.freeStats };
+  p.freeStatPoints = saved.freeStatPoints;
+  p.claimedStarter = saved.claimedStarter;
+  p.dust = saved.dust;
+  if (saved.subjob && isJobId(saved.subjob)) p.subjob = saved.subjob;
+  syncVitals(p, true);
+}
+
+function rememberPlayer(p: Player) {
+  try {
+    const path = playerProgressPath(defaultLokDir(), p.charId);
+    const prev = readPlayerProgress(path);
+    writePlayerProgress(path, {
+      version: 1,
+      level: p.level,
+      xp: p.xp,
+      inventory: p.inventory.map((row) => ({
+        tokenId: row.tokenId,
+        amount: row.amount,
+        ...(row.starter ? { starter: true } : {}),
+      })),
+      baseMats: { ...p.baseMats },
+      equip: { ...p.equip },
+      craftSkills: p.craftSkills,
+      learned: [...p.learned],
+      skillUnlocked: [...p.skillUnlocked],
+      skillPoints: p.skillPoints,
+      skillPrestige: p.skillPrestige,
+      freeStats: { ...p.freeStats },
+      freeStatPoints: p.freeStatPoints,
+      claimedStarter: p.claimedStarter,
+      dust: p.dust,
+      subjob: p.subjob,
+      logItemsMoved: prev?.logItemsMoved ?? true,
+    });
+  } catch {
+    console.error("[bellgrave] character save failed");
+  }
+}
 
 function lokToken(p: Player): string {
   const existing = lok.tokenFor(p.charId);
@@ -508,14 +587,6 @@ function syncLokLevel(p: Player) {
     }
     logged = next;
   }
-}
-
-function logLokDrop(p: Player, itemId: number, amount: number) {
-  if (!Number.isInteger(itemId) || itemId <= 0 || amount <= 0) return;
-  const token = lokToken(p);
-  if (!token) return;
-  const res = lok.itemDrop(token, String(itemId), String(amount));
-  if (!res.ok) pushLog(p, "Loot was not written to your log: " + res.error);
 }
 
 function logLokCraft(p: Player, itemId: number, amount: number) {
@@ -558,13 +629,35 @@ function handleLokImport(p: Player, tokenId: number, amount: number) {
     );
     return;
   }
-  // The client must not credit items. A credit requires a nonce the server recorded from
-  // custody, and no vault or item watcher is wired, so this message never has one.
-  // Nothing is taken from the bag.
-  pushLog(
-    p,
-    "Import is not available from the client. Items enter the log only after the server records a custody nonce. Nothing was moved.",
-  );
+  if (!Number.isInteger(amount) || amount <= 0 || plain < amount) {
+    pushLog(p, "You do not have that many to import. Nothing was moved.");
+    return;
+  }
+  const token = lokToken(p);
+  if (!token) {
+    pushLog(p, "Could not open your log identity.");
+    return;
+  }
+  const def = getItem(tokenId);
+  if (def && def.kind === "base") {
+    if (!takeMat(p, def.slug, amount)) {
+      pushLog(p, "You do not have that many to import. Nothing was moved.");
+      return;
+    }
+  } else if (!takeItem(p.inventory, tokenId, amount)) {
+    pushLog(p, "You do not have that many to import. Nothing was moved.");
+    return;
+  }
+  const res = lok.itemDrop(token, String(tokenId), String(amount));
+  if (!res.ok) {
+    if (def && def.kind === "base") grantBaseMat(p, def.slug, amount);
+    else addItem(p.inventory, tokenId, amount);
+    pushLog(p, res.error);
+    return;
+  }
+  rememberPlayer(p);
+  pushLog(p, "Imported " + itemLabel(tokenId) + " x" + amount + " from your bag into the log.");
+  send(p.ws, snapshotFor(p));
 }
 
 function handleLokExport(p: Player, tokenId: number, amount: number) {
@@ -579,6 +672,11 @@ function handleLokExport(p: Player, tokenId: number, amount: number) {
     return;
   }
   addItem(p.inventory, tokenId, amount);
+  const exported = getItem(tokenId);
+  if (exported && exported.kind === "base") {
+    p.baseMats[exported.slug] = (p.baseMats[exported.slug] ?? 0) + amount;
+  }
+  rememberPlayer(p);
   pushLog(
     p,
     "Exported " + itemLabel(tokenId) + " x" + amount + " to your bag. No chain withdrawal was submitted.",
@@ -708,6 +806,7 @@ function handleLokWithdrawKek(p: Player, amount: string) {
       queueKekWithdrawal(token, amount, process.env, undefined, {
         beforeSend: (id) => upsertWithdrawIntent(withdrawIntentPath(defaultLokDir()), { token, amount, id }),
       }),
+    confirm: (id) => vaultWithdrawalMatches(id, token, amount),
   }).then((res) => {
     if (!res.ok) pushLog(p, res.error);
     else {
@@ -1328,6 +1427,7 @@ function grantBaseMat(p: Player, matId: string, amount = 1) {
   p.baseMats[matId] = (p.baseMats[matId] ?? 0) + amount;
   const def = CATALOG_BY_SLUG[matId];
   if (def) addItem(p.inventory, def.id, amount);
+  rememberPlayer(p);
 }
 
 function ensureCraftSkills(p: Player) {
@@ -1352,6 +1452,7 @@ function setMatAmount(p: Player, slug: string, amount: number) {
         if (idx >= 0) p.inventory.splice(idx, 1);
       }
     }
+    rememberPlayer(p);
     return;
   }
   p.baseMats[slug] = amount;
@@ -1360,6 +1461,7 @@ function setMatAmount(p: Player, slug: string, amount: number) {
     if (row) row.amount = amount;
     else p.inventory.push({ tokenId: def.id, amount });
   }
+  rememberPlayer(p);
 }
 
 function takeMat(p: Player, slug: string, amount: number): boolean {
@@ -2140,10 +2242,15 @@ function createPlayer(
     lastLog: [`Welcome to Bellgrave, ${name}.`],
     ws,
   };
+  if (existingCharId) {
+    const saved = readPlayerProgress(playerProgressPath(defaultLokDir(), existingCharId));
+    if (saved) applySaved(p, saved);
+  }
   registerAccountChar(p);
   players.set(wallet, p);
   walletToPlayer.set(wallet, wallet);
   for (const abilityId of p.skillUnlocked) logLokAbility(p, abilityId);
+  rememberPlayer(p);
   return p;
 }
 
@@ -2270,6 +2377,7 @@ function tryLevelUp(p: Player) {
         : `Skill echo ×${echoes}! Tree points banked (${p.skillPrestige}/${SKILL_PRESTIGE_CAP}).`,
     );
   }
+  rememberPlayer(p);
 }
 
 function rewardMobKill(p: Player, mob: Mob, now: number) {
@@ -2314,7 +2422,6 @@ function rewardMobKill(p: Player, mob: Mob, now: number) {
     if (Math.random() < 0.65) {
       grantBaseMat(p, mat, 1);
       const def = CATALOG_BY_SLUG[mat];
-      if (def) logLokDrop(p, def.id, 1);
       dropNotes.push(matDisplayName(mat));
     }
   }
@@ -2323,7 +2430,6 @@ function rewardMobKill(p: Player, mob: Mob, now: number) {
       const def = CATALOG_BY_SLUG[rare.slug];
       if (def) {
         addItem(p.inventory, def.id, 1);
-        logLokDrop(p, def.id, 1);
         dropNotes.push(def.name);
       } else {
         grantBaseMat(p, rare.slug, 1);
@@ -2337,7 +2443,6 @@ function rewardMobKill(p: Player, mob: Mob, now: number) {
     if (shinyMat) {
       grantBaseMat(p, shinyMat, 1);
       const def = CATALOG_BY_SLUG[shinyMat];
-      if (def) logLokDrop(p, def.id, 1);
       dropNotes.push(matDisplayName(shinyMat));
     }
     despawnShinyClones(mob, now);
@@ -2345,6 +2450,7 @@ function rewardMobKill(p: Player, mob: Mob, now: number) {
     const hq = findMob(mob.hqId);
     if (hq) hq.cloneIds = hq.cloneIds.filter((id) => id !== mob.id);
   }
+  rememberPlayer(p);
   pushLog(
     p,
     dropNotes.length
@@ -2724,11 +2830,18 @@ async function handleSpellBuy(p: Player, id: AbilityId) {
   const charged = await withPlayerCharge(
     p.charId,
     () => !p.learned.includes(id),
+    () => {
+      if (p.learned.includes(id)) return null;
+      p.learned.push(id);
+      return () => {
+        const at = p.learned.lastIndexOf(id);
+        if (at >= 0) p.learned.splice(at, 1);
+      };
+    },
     () => spendLogKek(p, cost),
     () => {
-      if (p.learned.includes(id)) return;
-      p.learned.push(id);
       logLokAbility(p, id);
+      rememberPlayer(p);
       pushLog(p, "Learned " + abilityLabel(id) + " (-" + cost + " KEK).");
       send(p.ws, snapshotFor(p));
       handleNpcInteract(p, TRAINER.id);
@@ -2737,8 +2850,6 @@ async function handleSpellBuy(p: Player, id: AbilityId) {
   if (!charged.ok) {
     if (charged.error === "no longer available") {
       pushLog(p, "You already know " + abilityLabel(id) + ".");
-    } else if (charged.error === "state changed after the KEK spend") {
-      pushLog(p, "You already know " + abilityLabel(id) + ". The KEK spend already landed.");
     } else {
       pushLog(p, "Need " + cost + " KEK for " + abilityLabel(id) + ". " + charged.error);
     }
@@ -2910,6 +3021,7 @@ function handleJobChange(p: Player, job: JobId) {
   syncVitals(p, true);
   ensureJobHubs(p);
   pushLog(p, `Main job — you are now a ${def.name}.`);
+  rememberPlayer(p);
   send(p.ws, snapshotFor(p));
 }
 
@@ -2951,6 +3063,7 @@ function handleSubjob(p: Player, job: JobId | null) {
     p,
     `Support job set — ${JOBS[job].name} L${subLv} (half of main L${p.level}). ${JOBS[job].name} Heart unlocked on the skill tree. Sprite remains ${JOBS[p.job].name}.`,
   );
+  rememberPlayer(p);
   send(p.ws, snapshotFor(p));
   handleNpcInteract(p, JOB_MASTER.id);
 }
@@ -2977,6 +3090,7 @@ function handleEquip(p: Player, slot: EquipSlot, tokenId: number | null) {
     }
     syncVitals(p, false);
     pushLog(p, `Unequipped ${slot}.`);
+    rememberPlayer(p);
     return;
   }
   if (invAmount(p.inventory, tokenId) <= 0) {
@@ -3010,6 +3124,7 @@ function handleEquip(p: Player, slot: EquipSlot, tokenId: number | null) {
   p.equip[slot] = tokenId;
   syncVitals(p, false);
   pushLog(p, `Equipped ${def.name} on ${slot}.`);
+  rememberPlayer(p);
 }
 
 function handleUseItem(p: Player, tokenId: number) {
@@ -3867,26 +3982,31 @@ async function handleCraft(p: Player, itemId: number) {
       const now = pickAffordableMaterials(def, p.inventory, p.baseMats);
       return !!now && now.length > 0;
     },
-    () => spendLogKek(p, kekCost),
     () => {
       const now = pickAffordableMaterials(def, p.inventory, p.baseMats);
-      if (!now) return;
+      if (!now || now.length === 0) return null;
+      const taken: { slug: string; qty: number }[] = [];
       for (const mat of now) {
         if (!takeMat(p, mat.slug, mat.qty)) {
-          pushLog(p, "Failed to consume " + mat.name + ".");
-          return;
+          for (const prev of taken) grantBaseMat(p, prev.slug, prev.qty);
+          return null;
         }
+        taken.push({ slug: mat.slug, qty: mat.qty });
       }
-      if (def.kind === "base") {
-        grantBaseMat(p, def.slug, 1);
-      } else {
-        addItem(p.inventory, def.id, 1);
-      }
+      return () => {
+        for (const prev of taken) grantBaseMat(p, prev.slug, prev.qty);
+      };
+    },
+    () => spendLogKek(p, kekCost),
+    () => {
+      if (def.kind === "base") grantBaseMat(p, def.slug, 1);
+      else addItem(p.inventory, def.id, 1);
       logLokCraft(p, def.id, 1);
       const prevLv = p.craftSkills[skill]?.level ?? 1;
       grantCraftXp(p, skill, craftXpForRecipe(def.craftLevel ?? skillLv, skillLv));
       const nextLv = p.craftSkills[skill]?.level ?? prevLv;
       const levelNote = nextLv > prevLv ? " " + skill + " rose to " + nextLv + "!" : "";
+      rememberPlayer(p);
       pushLog(p, "Crafted " + def.name + "." + levelNote);
       send(p.ws, snapshotFor(p));
     },
@@ -3896,8 +4016,6 @@ async function handleCraft(p: Player, itemId: number) {
       const preview = recipeMaterials(def);
       if (preview.length === 0) pushLog(p, "Recipe materials unknown.");
       else pushLog(p, "Need materials: " + preview.map((m) => m.name + " x" + m.qty).join(", ") + ".");
-    } else if (charged.error === "state changed after the KEK spend") {
-      pushLog(p, "Could not finish crafting " + def.name + " after the KEK spend.");
     } else {
       pushLog(p, "Need " + kekCost + " KEK to craft " + def.name + ". " + charged.error);
     }

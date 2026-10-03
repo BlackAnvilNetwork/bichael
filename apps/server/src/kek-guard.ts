@@ -55,14 +55,19 @@ export function withPlayerAction<T>(playerId: string, fn: () => Promise<T>): Pro
 export async function withPlayerCharge(
   playerId: string,
   stillOk: () => boolean,
+  reserve: () => (() => void) | null,
   spend: () => Promise<{ ok: true } | { ok: false; error: string }>,
   grant: () => void,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   return withPlayerAction(playerId, async () => {
     if (!stillOk()) return { ok: false, error: "no longer available" };
+    const undo = reserve();
+    if (!undo) return { ok: false, error: "no longer available" };
     const paid = await spend();
-    if (!paid.ok) return paid;
-    if (!stillOk()) return { ok: false, error: "state changed after the KEK spend" };
+    if (!paid.ok) {
+      undo();
+      return paid;
+    }
     grant();
     return { ok: true };
   });
@@ -146,7 +151,7 @@ export function removeWithdrawIntent(path: string, token: string): void {
  */
 export async function reconcileWithdrawIntents(args: {
   intents: WithdrawIntent[];
-  existsOnChain: (id: string) => Promise<boolean | null> | boolean | null;
+  existsOnChain: (intent: WithdrawIntent) => Promise<boolean | null> | boolean | null;
   debit: (token: string, amount: string) => { ok: true } | { ok: false; error: string };
 }): Promise<WithdrawIntent[]> {
   const keep: WithdrawIntent[] = [];
@@ -154,7 +159,7 @@ export async function reconcileWithdrawIntents(args: {
     if (intent.id == null) continue;
     let exists: boolean | null;
     try {
-      exists = await args.existsOnChain(intent.id);
+      exists = await args.existsOnChain(intent);
     } catch {
       exists = null;
     }
@@ -170,7 +175,7 @@ export async function reconcileWithdrawIntents(args: {
 }
 
 type VaultOk = { ok: true; id: string; availableAt: number };
-type VaultErr = { ok: false; error: string };
+type VaultErr = { ok: false; error: string; uncertain?: boolean; id?: string };
 
 /**
  * Reserve spendable KEK, write the intent, then queue. The log debit runs only after the queue exists.
@@ -186,6 +191,8 @@ export async function guardedWithdraw(args: {
   queue: () => Promise<VaultOk | VaultErr>;
   noteIntent?: (intent: WithdrawIntent) => void;
   clearIntent?: () => void;
+  /** After a send that threw or timed out, true means this withdrawal is the one on chain. */
+  confirm?: (id: string) => Promise<boolean | null>;
 }): Promise<VaultOk | VaultErr> {
   return withKekLock(args.token, async () => {
     let cost: bigint;
@@ -210,14 +217,56 @@ export async function guardedWithdraw(args: {
     try {
       queued = await args.queue();
     } catch {
-      const back = release();
-      try {
-        args.clearIntent?.();
-      } catch {
-        /* boot releases a null id, or checks the chain if a predicted id was saved */
+      return {
+        ok: false,
+        uncertain: true,
+        error: "Withdrawal threw after it was reserved. Spendable KEK stays reserved until the chain is checked.",
+      };
+    }
+    if (!queued.ok && queued.uncertain) {
+      if (queued.id) {
+        try {
+          args.noteIntent?.({ token: args.token, amount: args.amount, id: queued.id });
+        } catch {
+          /* the predicted id from before the send is enough for boot */
+        }
       }
-      if (!back.ok) return { ok: false, error: "Withdrawal threw and the reserve could not be returned." };
-      return { ok: false, error: "Withdrawal was not queued. Reserved KEK was returned." };
+      if (queued.id && args.confirm) {
+        let found: boolean | null = null;
+        try {
+          found = await args.confirm(queued.id);
+        } catch {
+          found = null;
+        }
+        if (found === true) {
+          const spent = args.debit();
+          if (!spent.ok) {
+            return {
+              ok: false,
+              error: "The vault withdrawal is on chain, but spendable KEK was not debited. It stays reserved. " + spent.error,
+            };
+          }
+          try {
+            args.clearIntent?.();
+          } catch {
+            /* a leftover intent retries and the engine rejects a second debit */
+          }
+          const back = release();
+          if (!back.ok) return { ok: false, error: "Withdrawal was debited, but the reservation could not be cleared." };
+          return { ok: true, id: queued.id, availableAt: 0 };
+        }
+        if (found === false) {
+          const back = release();
+          try {
+            args.clearIntent?.();
+          } catch {
+            /* boot will see the id is not this withdrawal */
+          }
+          if (!back.ok) return { ok: false, error: "Withdrawal was not on chain and the reserve could not be returned." };
+          return { ok: false, error: "Withdrawal was not queued. Reserved KEK was returned." };
+        }
+      }
+      return queued;
     }
     if (!queued.ok) {
       const back = release();
