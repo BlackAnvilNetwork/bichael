@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { allowPlayerDeposit, debitAfterQueue, depositCastArgs, depositKekOnchain, LOCAL_MOCK_KEK, PLAYER_DEPOSIT_CAP, playerDepositGate, queueKekWithdrawal, type CastFn } from "./lok-vault";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { allowPlayerDeposit, debitAfterQueue, depositCastArgs, depositKekOnchain, loadQueues, LOCAL_MOCK_KEK, PLAYER_DEPOSIT_CAP, playerDepositGate, queueKekWithdrawal, withdrawalById, writeTextAtomic, type CastFn } from "./lok-vault";
 
 const ENV = {
   LOK_CHAIN_RPC: "http://127.0.0.1:8545",
@@ -101,12 +104,21 @@ test("a reverted checkpoint does not report a queued withdrawal", async () => {
       }
       if (sig.startsWith("inboundApplied") || sig.startsWith("summary")) return { stdout: "1\n", stderr: "" };
     }
-    if (cmd === "send" && sig.startsWith("checkpoint")) throw new Error("revert");
+    if (cmd === "send" && sig.startsWith("checkpoint")) {
+      order.push("send");
+      throw new Error("revert");
+    }
     throw new Error("unexpected " + cmd + " " + sig);
   };
-  const res = await queueKekWithdrawal("6", "1", ENV, cast);
+  const order: string[] = [];
+  const res = await queueKekWithdrawal("6", "1", ENV, cast, {
+    beforeSend: (id) => {
+      order.push("note:" + id);
+    },
+  });
   assert.equal(res.ok, false);
   if (!res.ok) assert.match(res.error, /No in-game KEK was spent/);
+  assert.deepEqual(order, ["note:1", "send"]);
 });
 
 test("missing vault config refuses without debiting", async () => {
@@ -150,4 +162,17 @@ test("player deposits are rate limited per character", () => {
   assert.equal(allowPlayerDeposit("rate-char", 1_000).ok, true);
   assert.equal(allowPlayerDeposit("rate-char", 2_000).ok, false);
   assert.equal(allowPlayerDeposit("rate-char", 11_000).ok, true);
+});
+
+test("a crash mid-write of the queue temp file does not wipe lok-queues.json", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lok-queues-"));
+  const path = join(dir, "lok-queues.json");
+  const row = { id: "9", tokenId: "1", amount: "3", availableAt: 1, status: "pending" as const };
+  writeTextAtomic(path, JSON.stringify([row]));
+  writeFileSync(path + ".tmp", "{");
+  loadQueues(dir);
+  assert.equal(withdrawalById("9")?.amount, "3");
+  writeFileSync(path, "{");
+  assert.throws(() => loadQueues(dir), /empty queue list/);
+  assert.equal(withdrawalById("9")?.amount, "3");
 });

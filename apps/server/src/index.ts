@@ -181,9 +181,10 @@ import {
   queuesFor,
   readWithdrawDelay,
   vaultDelaySec,
+  vaultWithdrawalExists,
   withdrawalById,
 } from "./lok-vault";
-import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, reservedOf } from "./kek-guard";
+import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
 import { defaultLokDir, LokWorld } from "./lok-world";
 import {
   PARTY_INVITE_RANGE,
@@ -440,17 +441,35 @@ let tick = 0;
 let mobs: Mob[] = spawnSegmentAPack();
 let fieldNodes: FieldNode[] = createPaleHollowNodes();
 
-const lok: LokWorld = (() => {
+async function reconcileQueuedWithdrawals(world: LokWorld): Promise<void> {
+  const path = withdrawIntentPath(defaultLokDir());
+  const intents = readWithdrawIntents(path);
+  if (intents.length === 0) return;
+  const left = await reconcileWithdrawIntents({
+    intents,
+    existsOnChain: (id) => vaultWithdrawalExists(id),
+    debit: (token, amount) => world.withdrawKek(token, amount),
+  });
+  writeWithdrawIntents(path, left);
+  console.log("[bellgrave] withdraw intents reconciled=" + (intents.length - left.length) + " still open=" + left.length);
+}
+
+const lok: LokWorld = await (async (): Promise<LokWorld> => {
   try {
     loadLokEnv();
     const world = LokWorld.open(defaultLokDir());
     console.log(
-      `[bellgrave] lok log ${world.logPath} entries=${world.length}. ${world.chainNote}`,
+      "[bellgrave] lok log " + world.logPath + " entries=" + world.length + ". " + world.chainNote,
     );
     startKekDepositWatcher(world);
     loadQueues(defaultLokDir());
-    void readWithdrawDelay();
-    void ensureLocalRuleset();
+    await reconcileQueuedWithdrawals(world);
+    void readWithdrawDelay().catch(() => {
+      console.error("[bellgrave] withdraw delay read failed");
+    });
+    void ensureLocalRuleset().catch(() => {
+      console.error("[bellgrave] ruleset check failed");
+    });
     return world;
   } catch (err) {
     console.error("[bellgrave] lok log failed to open; refusing to start.", err);
@@ -622,7 +641,17 @@ function handleLokSendKek(p: Player, to: string, amount: string) {
       tellToken(dest.tokenId, p.name + " sent you " + amount + " KEK.");
     }
     send(p.ws, snapshotFor(p));
-  });
+  }).catch(() => failAction(p, "KEK send"));
+}
+
+function failAction(p: Player, label: string): void {
+  console.error("[bellgrave] " + label + " failed");
+  try {
+    pushLog(p, label + " failed before it finished.");
+    send(p.ws, snapshotFor(p));
+  } catch {
+    /* the socket may already be gone */
+  }
 }
 
 function spendLogKek(p: Player, amount: number): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -659,7 +688,7 @@ function handleLokDeposit(p: Player, amount: string) {
       );
     }
     send(p.ws, snapshotFor(p));
-  });
+  }).catch(() => failAction(p, "KEK deposit"));
 }
 
 function handleLokWithdrawKek(p: Player, amount: string) {
@@ -673,7 +702,12 @@ function handleLokWithdrawKek(p: Player, amount: string) {
     amount,
     balanceOf: () => lok.kekOf(token),
     debit: () => lok.withdrawKek(token, amount),
-    queue: () => queueKekWithdrawal(token, amount),
+    noteIntent: (intent) => upsertWithdrawIntent(withdrawIntentPath(defaultLokDir()), intent),
+    clearIntent: () => removeWithdrawIntent(withdrawIntentPath(defaultLokDir()), token),
+    queue: () =>
+      queueKekWithdrawal(token, amount, process.env, undefined, {
+        beforeSend: (id) => upsertWithdrawIntent(withdrawIntentPath(defaultLokDir()), { token, amount, id }),
+      }),
   }).then((res) => {
     if (!res.ok) pushLog(p, res.error);
     else {
@@ -685,7 +719,7 @@ function handleLokWithdrawKek(p: Player, amount: string) {
       );
     }
     send(p.ws, snapshotFor(p));
-  });
+  }).catch(() => failAction(p, "KEK withdrawal"));
 }
 
 function handleLokClaim(p: Player, id: string) {
@@ -706,6 +740,7 @@ function handleLokClaim(p: Player, id: string) {
       else pushLog(p, "Claimed vault withdrawal #" + id + ". It was already debited from spendable KEK when it was queued.");
       send(p.ws, snapshotFor(p));
     })
+    .catch(() => failAction(p, "KEK claim"))
     .finally(() => endClaim(token));
 }
 
@@ -751,7 +786,7 @@ function handleLokBid(p: Player, listingId: string, amount: string) {
     if (!res.ok) pushLog(p, res.error);
     else pushLog(p, "Bid " + amount + " KEK on listing #" + listingId + ".");
     send(p.ws, snapshotFor(p));
-  });
+  }).catch(() => failAction(p, "KEK bid"));
 }
 
 function handleLokCancel(p: Player, listingId: string) {
@@ -2685,21 +2720,29 @@ async function handleSpellBuy(p: Player, id: AbilityId) {
     }
     return;
   }
-  if (p.learned.includes(id)) {
-    pushLog(p, `You already know ${abilityLabel(id)}.`);
-    return;
-  }
   const cost = trainerAbilityDustCost(unlockLevel);
-  const paid = await spendLogKek(p, cost);
-  if (!paid.ok) {
-    pushLog(p, `Need ${cost} KEK for ${abilityLabel(id)}. ${paid.error}`);
-    return;
+  const charged = await withPlayerCharge(
+    p.charId,
+    () => !p.learned.includes(id),
+    () => spendLogKek(p, cost),
+    () => {
+      if (p.learned.includes(id)) return;
+      p.learned.push(id);
+      logLokAbility(p, id);
+      pushLog(p, "Learned " + abilityLabel(id) + " (-" + cost + " KEK).");
+      send(p.ws, snapshotFor(p));
+      handleNpcInteract(p, TRAINER.id);
+    },
+  );
+  if (!charged.ok) {
+    if (charged.error === "no longer available") {
+      pushLog(p, "You already know " + abilityLabel(id) + ".");
+    } else if (charged.error === "state changed after the KEK spend") {
+      pushLog(p, "You already know " + abilityLabel(id) + ". The KEK spend already landed.");
+    } else {
+      pushLog(p, "Need " + cost + " KEK for " + abilityLabel(id) + ". " + charged.error);
+    }
   }
-  p.learned.push(id);
-  logLokAbility(p, id);
-  pushLog(p, `Learned ${abilityLabel(id)} (-${cost} KEK).`);
-  send(p.ws, snapshotFor(p));
-  handleNpcInteract(p, TRAINER.id);
 }
 
 /** Dev/test helper — instant L75 + all TIM spells learned. */
@@ -3817,42 +3860,48 @@ async function handleCraft(p: Player, itemId: number) {
     pushLog(p, "Recipe materials unknown or incomplete — cannot craft.");
     return;
   }
-  const mats = pickAffordableMaterials(def, p.inventory, p.baseMats);
-  if (!mats || mats.length === 0) {
-    const preview = recipeMaterials(def);
-    if (preview.length === 0) {
-      pushLog(p, "Recipe materials unknown.");
-      return;
-    }
-    const need = preview.map((m) => `${m.name} ×${m.qty}`).join(", ");
-    pushLog(p, `Need materials: ${need}.`);
-    return;
-  }
   const kekCost = def.recipe?.kek ?? 0;
-  const paid = await spendLogKek(p, kekCost);
-  if (!paid.ok) {
-    pushLog(p, `Need ${kekCost} KEK to craft ${def.name}. ${paid.error}`);
-    return;
-  }
-  for (const mat of mats) {
-    if (!takeMat(p, mat.slug, mat.qty)) {
-      pushLog(p, `Failed to consume ${mat.name}.`);
-      return;
+  const charged = await withPlayerCharge(
+    p.charId,
+    () => {
+      const now = pickAffordableMaterials(def, p.inventory, p.baseMats);
+      return !!now && now.length > 0;
+    },
+    () => spendLogKek(p, kekCost),
+    () => {
+      const now = pickAffordableMaterials(def, p.inventory, p.baseMats);
+      if (!now) return;
+      for (const mat of now) {
+        if (!takeMat(p, mat.slug, mat.qty)) {
+          pushLog(p, "Failed to consume " + mat.name + ".");
+          return;
+        }
+      }
+      if (def.kind === "base") {
+        grantBaseMat(p, def.slug, 1);
+      } else {
+        addItem(p.inventory, def.id, 1);
+      }
+      logLokCraft(p, def.id, 1);
+      const prevLv = p.craftSkills[skill]?.level ?? 1;
+      grantCraftXp(p, skill, craftXpForRecipe(def.craftLevel ?? skillLv, skillLv));
+      const nextLv = p.craftSkills[skill]?.level ?? prevLv;
+      const levelNote = nextLv > prevLv ? " " + skill + " rose to " + nextLv + "!" : "";
+      pushLog(p, "Crafted " + def.name + "." + levelNote);
+      send(p.ws, snapshotFor(p));
+    },
+  );
+  if (!charged.ok) {
+    if (charged.error === "no longer available") {
+      const preview = recipeMaterials(def);
+      if (preview.length === 0) pushLog(p, "Recipe materials unknown.");
+      else pushLog(p, "Need materials: " + preview.map((m) => m.name + " x" + m.qty).join(", ") + ".");
+    } else if (charged.error === "state changed after the KEK spend") {
+      pushLog(p, "Could not finish crafting " + def.name + " after the KEK spend.");
+    } else {
+      pushLog(p, "Need " + kekCost + " KEK to craft " + def.name + ". " + charged.error);
     }
   }
-  // Intermediate / equipment / consumable → bag; base mats also track ledger.
-  if (def.kind === "base") {
-    grantBaseMat(p, def.slug, 1);
-  } else {
-    addItem(p.inventory, def.id, 1);
-  }
-  logLokCraft(p, def.id, 1);
-  const prevLv = p.craftSkills[skill]?.level ?? 1;
-  grantCraftXp(p, skill, craftXpForRecipe(def.craftLevel, skillLv));
-  const nextLv = p.craftSkills[skill]?.level ?? prevLv;
-  const levelNote = nextLv > prevLv ? ` ${skill} rose to ${nextLv}!` : "";
-  pushLog(p, `Crafted ${def.name}.${levelNote}`);
-  send(p.ws, snapshotFor(p));
 }
 
 function adoptOrphanLogs(wallet: string, ws: WebSocket) {
@@ -4006,7 +4055,7 @@ function onMessage(ws: WebSocket, data: string) {
       handleGather(p, msg.nodeId);
       break;
     case "craft":
-      handleCraft(p, msg.itemId);
+      void handleCraft(p, msg.itemId).catch(() => failAction(p, "Craft"));
       break;
     case "engage": {
       const mob = findMob(msg.targetId);
@@ -4055,7 +4104,7 @@ function onMessage(ws: WebSocket, data: string) {
       handleSubjob(p, msg.job);
       break;
     case "spell/buy":
-      handleSpellBuy(p, msg.id);
+      void handleSpellBuy(p, msg.id).catch(() => failAction(p, "Ability buy"));
       break;
     case "debug/maxlevel":
       handleDebugMaxLevel(p);
@@ -4152,4 +4201,3 @@ wss.on("connection", (ws) => {
 
 setInterval(tickSim, TICK_MS);
 console.log(`[bellgrave] game server on ws://localhost:${PORT}`);
-

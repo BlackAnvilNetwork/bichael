@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** Accepted on the local anvil only. Not a mainnet ruleset. */
@@ -182,17 +182,24 @@ export function queuesFor(tokenId: string): { id: string; amount: string; availa
 export function loadQueues(dataDir: string): void {
   queuePath = join(dataDir, "lok-queues.json");
   if (!existsSync(queuePath)) return;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(readFileSync(queuePath, "utf8")) as QueuedWithdrawal[];
-    if (Array.isArray(parsed)) queues = parsed;
+    parsed = JSON.parse(readFileSync(queuePath, "utf8"));
   } catch {
-    queues = [];
+    throw new Error("lok-queues.json could not be read. Refusing to start with an empty queue list.");
   }
+  if (Array.isArray(parsed)) queues = parsed as QueuedWithdrawal[];
+}
+
+export function writeTextAtomic(path: string, text: string): void {
+  const tmp = path + ".tmp";
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
 }
 
 function saveQueues() {
   if (!queuePath) return;
-  writeFileSync(queuePath, JSON.stringify(queues));
+  writeTextAtomic(queuePath, JSON.stringify(queues));
 }
 
 function remember(row: QueuedWithdrawal) {
@@ -332,8 +339,10 @@ export async function queueKekWithdrawal(
   tokenId: string,
   amount: string,
   envIn: NodeJS.ProcessEnv = process.env,
-  cast: CastFn = spawnCast(envOf(envIn).castBin),
+  cast?: CastFn,
+  hooks?: { beforeSend?: (predictedId: string) => void },
 ): Promise<VaultOk | VaultErr> {
+  if (!cast) cast = spawnCast(envOf(envIn).castBin);
   const env = envOf(envIn);
   const secrets = [env.ownerKey, env.rotatorKey, env.proposerKey];
   if (!env.rpc || !env.checkpoint || !env.vault || !env.nft || !env.rulesets || !env.ownerKey || !env.rotatorKey) {
@@ -412,6 +421,7 @@ export async function queueKekWithdrawal(
     });
     const sig = word((await cast(["wallet", "sign", "--data", typed, "--private-key", env.ownerKey])).stdout);
     const before = BigInt(await call(cast, env.rpc, env.vault, "nextWithdrawalId()(uint256)"));
+    hooks?.beforeSend?.((before + 1n).toString());
     await cast(
       sendArgs(
         env.checkpoint,
@@ -453,5 +463,24 @@ export async function claimQueuedWithdrawal(
       return { ok: false, error: "That withdrawal is still inside the vault delay. Nothing was paid out." };
     }
     return { ok: false, error: "Claim was not paid. " + redact(text, [env.ownerKey]) };
+  }
+}
+
+/** True when the vault withdrawal has a non-zero amount. Null when the chain cannot be read. No private key. */
+export async function vaultWithdrawalExists(
+  id: string,
+  envIn: NodeJS.ProcessEnv = process.env,
+  cast?: CastFn,
+): Promise<boolean | null> {
+  const env = envOf(envIn);
+  if (!env.rpc || !env.vault) return null;
+  if (!/^\d+$/.test(id)) return null;
+  const run = cast ?? spawnCast(env.castBin);
+  try {
+    const packed = (await run(["call", env.vault, "withdrawals(uint256)(address,uint64,uint8,uint256)", id, "--rpc-url", env.rpc])).stdout;
+    const amount = packed.trim().split(/\s+/)[3] ?? "0";
+    return BigInt(amount) > 0n;
+  } catch {
+    return null;
   }
 }

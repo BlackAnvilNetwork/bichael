@@ -1,12 +1,21 @@
 /** In-process reserve and per-token lock for spendable KEK. Not a mint. */
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const reserved = new Map<string, bigint>();
 const tails = new Map<string, Promise<void>>();
+const playerTails = new Map<string, Promise<void>>();
 const claimBusy = new Set<string>();
 const claimNotBefore = new Map<string, number>();
 
 /** One claim cast at a time per character, and not more than once per five seconds. */
 export const CLAIM_GAP_MS = 5_000;
+
+export type WithdrawIntent = { token: string; amount: string; id: string | null };
+
+export function withdrawIntentPath(dataDir: string): string {
+  return join(dataDir, "lok-withdraw-intents.json");
+}
 
 export function reservedOf(token: string): bigint {
   return reserved.get(token) ?? 0n;
@@ -23,6 +32,40 @@ export function withKekLock<T>(token: string, fn: () => Promise<T>): Promise<T> 
     ),
   );
   return run;
+}
+
+/** One craft or trainer buy at a time for this character. The lock covers the check and the spend. */
+export function withPlayerAction<T>(playerId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = playerTails.get(playerId) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  playerTails.set(
+    playerId,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
+/**
+ * Serialize a KEK spend and the grant that follows it.
+ * A second overlapping call waits, re-checks, and does not spend when the first already took the cost.
+ */
+export async function withPlayerCharge(
+  playerId: string,
+  stillOk: () => boolean,
+  spend: () => Promise<{ ok: true } | { ok: false; error: string }>,
+  grant: () => void,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  return withPlayerAction(playerId, async () => {
+    if (!stillOk()) return { ok: false, error: "no longer available" };
+    const paid = await spend();
+    if (!paid.ok) return paid;
+    if (!stillOk()) return { ok: false, error: "state changed after the KEK spend" };
+    grant();
+    return { ok: true };
+  });
 }
 
 export function reserveKek(
@@ -49,14 +92,91 @@ export function releaseKek(token: string, amount: bigint): { ok: true } | { ok: 
   return { ok: true };
 }
 
+function atomicWrite(path: string, text: string): void {
+  const tmp = path + ".tmp";
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
+
+function isIntent(value: unknown): value is WithdrawIntent {
+  if (!value || typeof value !== "object") return false;
+  const row = value as { token?: unknown; amount?: unknown; id?: unknown };
+  if (typeof row.token !== "string" || row.token.length === 0 || row.token.length > 80) return false;
+  if (typeof row.amount !== "string" || !/^[1-9][0-9]{0,18}$/.test(row.amount)) return false;
+  if (row.id === null) return true;
+  return typeof row.id === "string" && /^[0-9]+$/.test(row.id);
+}
+
+/** Read intents. A missing file is an empty list. A partial or corrupt file throws so boot does not forget a debit. */
+export function readWithdrawIntents(path: string): WithdrawIntent[] {
+  if (!existsSync(path)) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    throw new Error("lok-withdraw-intents.json could not be read. Refusing to start with an empty intent list.");
+  }
+  if (!Array.isArray(parsed) || !parsed.every(isIntent)) {
+    throw new Error("lok-withdraw-intents.json is not a list of withdrawal intents.");
+  }
+  return parsed;
+}
+
+export function writeWithdrawIntents(path: string, intents: WithdrawIntent[]): void {
+  atomicWrite(path, JSON.stringify(intents));
+}
+
+/** One open intent per token. The per-token KEK lock allows only one withdrawal attempt at a time. */
+export function upsertWithdrawIntent(path: string, intent: WithdrawIntent): void {
+  const next = readWithdrawIntents(path).filter((row) => row.token !== intent.token);
+  next.push(intent);
+  writeWithdrawIntents(path, next);
+}
+
+export function removeWithdrawIntent(path: string, token: string): void {
+  writeWithdrawIntents(
+    path,
+    readWithdrawIntents(path).filter((row) => row.token !== token),
+  );
+}
+
+/**
+ * Boot reconcile. An id that exists on chain is debited. An id that does not, or a null id
+ * (the queue never returned), is released. A chain check that cannot be answered keeps the intent.
+ */
+export async function reconcileWithdrawIntents(args: {
+  intents: WithdrawIntent[];
+  existsOnChain: (id: string) => Promise<boolean | null> | boolean | null;
+  debit: (token: string, amount: string) => { ok: true } | { ok: false; error: string };
+}): Promise<WithdrawIntent[]> {
+  const keep: WithdrawIntent[] = [];
+  for (const intent of args.intents) {
+    if (intent.id == null) continue;
+    let exists: boolean | null;
+    try {
+      exists = await args.existsOnChain(intent.id);
+    } catch {
+      exists = null;
+    }
+    if (exists === null) {
+      keep.push(intent);
+      continue;
+    }
+    if (!exists) continue;
+    const spent = args.debit(intent.token, intent.amount);
+    if (!spent.ok) keep.push(intent);
+  }
+  return keep;
+}
+
 type VaultOk = { ok: true; id: string; availableAt: number };
 type VaultErr = { ok: false; error: string };
 
 /**
- * Reserve spendable KEK, then queue. The log debit runs only after the queue exists.
- * A failed queue releases the reserve. The per-token lock is held for the whole attempt
+ * Reserve spendable KEK, write the intent, then queue. The log debit runs only after the queue exists.
+ * A failed queue releases the reserve and drops the intent. The per-token lock is held for the whole attempt
  * so a transfer cannot spend the same deposit while the vault call is in flight.
- * If the queue exists but the log debit fails, the reserve stays so that KEK cannot also be sent.
+ * If the queue exists but the log debit fails, the reserve and the intent stay so a restart can debit.
  */
 export async function guardedWithdraw(args: {
   token: string;
@@ -64,6 +184,8 @@ export async function guardedWithdraw(args: {
   balanceOf: () => string;
   debit: () => { ok: true } | { ok: false; error: string };
   queue: () => Promise<VaultOk | VaultErr>;
+  noteIntent?: (intent: WithdrawIntent) => void;
+  clearIntent?: () => void;
 }): Promise<VaultOk | VaultErr> {
   return withKekLock(args.token, async () => {
     let cost: bigint;
@@ -76,18 +198,44 @@ export async function guardedWithdraw(args: {
     }
     const held = reserveKek(args.token, cost, bal);
     if (!held.ok) return held;
+    const release = () => releaseKek(args.token, cost);
+    try {
+      args.noteIntent?.({ token: args.token, amount: args.amount, id: null });
+    } catch {
+      const back = release();
+      if (!back.ok) return { ok: false, error: "Withdrawal intent could not be saved and the reserve could not be returned." };
+      return { ok: false, error: "Withdrawal intent could not be saved. Nothing was queued." };
+    }
     let queued: VaultOk | VaultErr;
     try {
       queued = await args.queue();
-    } catch (err) {
-      const back = releaseKek(args.token, cost);
+    } catch {
+      const back = release();
+      try {
+        args.clearIntent?.();
+      } catch {
+        /* boot releases a null id, or checks the chain if a predicted id was saved */
+      }
       if (!back.ok) return { ok: false, error: "Withdrawal threw and the reserve could not be returned." };
       return { ok: false, error: "Withdrawal was not queued. Reserved KEK was returned." };
     }
     if (!queued.ok) {
-      const back = releaseKek(args.token, cost);
+      const back = release();
+      try {
+        args.clearIntent?.();
+      } catch {
+        /* a predicted id stays until boot sees it is not on chain */
+      }
       if (!back.ok) return { ok: false, error: queued.error + " Reserved KEK could not be returned." };
       return queued;
+    }
+    try {
+      args.noteIntent?.({ token: args.token, amount: args.amount, id: queued.id });
+    } catch {
+      return {
+        ok: false,
+        error: "The vault withdrawal was queued, but the intent id was not saved. Spendable KEK stays reserved.",
+      };
     }
     const spent = args.debit();
     if (!spent.ok) {
@@ -96,7 +244,12 @@ export async function guardedWithdraw(args: {
         error: "The vault withdrawal was queued, but spendable KEK was not debited. It stays reserved. " + spent.error,
       };
     }
-    const back = releaseKek(args.token, cost);
+    try {
+      args.clearIntent?.();
+    } catch {
+      /* the debit landed; a leftover intent retries and the engine rejects a second debit */
+    }
+    const back = release();
     if (!back.ok) return { ok: false, error: "Withdrawal was debited, but the reservation could not be cleared." };
     return queued;
   });
