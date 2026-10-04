@@ -36,6 +36,12 @@ struct Character {
     abilities: BTreeSet<String>,
     /// Material id to gathered amount. Rebuilt by replay. Not a spendable balance.
     harvests: BTreeMap<String, U256>,
+    /// Craft skill id to level. Rebuilt by replay. Not XP, items, or KEK.
+    craft_skills: BTreeMap<String, u32>,
+    /// Items waiting at the Provisioner. Not spendable and not in the bag.
+    inbox: BTreeMap<U256, U256>,
+    /// Skill ids removed by respec and not learned again. Rebuilt by replay.
+    dropped_skills: BTreeSet<String>,
 }
 
 /// An auction listing. The item amount is escrowed out of the seller's spendable
@@ -48,7 +54,17 @@ pub struct Listing {
     pub amount: U256,
     pub high_bidder: Option<U256>,
     pub high_bid: U256,
+    /// Order-book minimum. Zero on a legacy listing that still uses bid and settle.
+    pub min_price: U256,
+    /// Unix seconds supplied when the ask was listed. Zero on a legacy listing.
+    pub listed_at: u64,
+    /// True when this row is an order-book ask. Legacy rows stay on bid and settle.
+    pub book: bool,
 }
+
+/// Unsold asks can be reclaimed after this many seconds. The log has no clock;
+/// the ask event stores the server time and reclaim compares the server time.
+pub const ASK_WINDOW_SEC: u64 = 7 * 24 * 60 * 60;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CharacterSnapshot {
@@ -177,6 +193,20 @@ impl World {
         self.characters
             .get(token_id)
             .map(|c| c.harvests.iter().map(|(k, v)| (k.clone(), *v)).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn craft_skill_level(&self, token_id: &U256, skill_id: &str) -> u32 {
+        self.characters
+            .get(token_id)
+            .and_then(|c| c.craft_skills.get(skill_id).copied())
+            .unwrap_or(0)
+    }
+
+    pub fn craft_skills_of(&self, token_id: &U256) -> Vec<(String, u32)> {
+        self.characters
+            .get(token_id)
+            .map(|c| c.craft_skills.iter().map(|(k, v)| (k.clone(), *v)).collect())
             .unwrap_or_default()
     }
 
@@ -323,6 +353,74 @@ impl World {
 
     pub fn append_settle(&mut self, listing_id: U256) -> Result<AppliedEvent, EngineError> {
         self.apply(Input::Settle { listing_id })
+    }
+
+    pub fn append_ask(
+        &mut self,
+        listing_id: U256,
+        seller: U256,
+        item_id: U256,
+        amount: U256,
+        min_price: U256,
+        listed_at: u64,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::Ask { listing_id, seller, item_id, amount, min_price, listed_at })
+    }
+
+    /// Fill the cheapest ask of item_id that this bidder does not own and whose minimum is at most mount.
+    pub fn append_fill(&mut self, bidder: U256, item_id: U256, amount: U256) -> Result<AppliedEvent, EngineError> {
+        let chosen = self.choose_ask(bidder, item_id, amount)?;
+        self.apply(Input::Fill { bidder, item_id, amount, listing_id: chosen.id })
+    }
+
+    pub fn append_cancel_ask(&mut self, listing_id: U256, seller: U256) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::CancelAsk { listing_id, seller })
+    }
+
+    pub fn append_reclaim_ask(
+        &mut self,
+        listing_id: U256,
+        seller: U256,
+        now: u64,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::ReclaimAsk { listing_id, seller, now })
+    }
+
+    pub fn append_send_inbox(
+        &mut self,
+        from: U256,
+        to: U256,
+        item_id: U256,
+        amount: U256,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::SendInbox { from, to, item_id, amount })
+    }
+
+    pub fn append_take_inbox(
+        &mut self,
+        token_id: U256,
+        item_id: U256,
+        amount: U256,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::TakeInbox { token_id, item_id, amount })
+    }
+
+    pub fn inbox_balance(&self, token_id: &U256, item_id: &U256) -> Option<U256> {
+        self.characters.get(token_id).map(|c| c.inbox.get(item_id).copied().unwrap_or(U256::ZERO))
+    }
+
+    pub fn inbox_of(&self, token_id: &U256) -> Vec<(U256, U256)> {
+        self.characters
+            .get(token_id)
+            .map(|c| c.inbox.iter().map(|(id, amount)| (*id, *amount)).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn dropped_skills_of(&self, token_id: &U256) -> Vec<String> {
+        self.characters
+            .get(token_id)
+            .map(|c| c.dropped_skills.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Apply one command. On failure nothing is appended to any character log.
@@ -744,6 +842,120 @@ impl World {
                 }
                 touch.insert(*token_id);
             }
+            Input::CraftSkill { token_id, skill_id, level } => {
+                parse_label(skill_id)?;
+                if *level == 0 || *level > 65535 {
+                    return Err(EngineError::BadCraftSkill);
+                }
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*token_id);
+            }
+            Input::RespecSkills { token_id, node_ids } => {
+                if node_ids.len() > 600 {
+                    return Err(EngineError::BadId);
+                }
+                for id in node_ids {
+                    parse_label(id)?;
+                }
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*token_id);
+            }
+            Input::Ask { listing_id, seller, item_id, amount, min_price, listed_at } => {
+                if *amount == U256::ZERO || *min_price == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                if *item_id == U256::ZERO || *listing_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                if *listed_at == 0 {
+                    return Err(EngineError::BadClock);
+                }
+                if self.listings.contains_key(listing_id) {
+                    return Err(EngineError::ListingExists);
+                }
+                if !self.characters.contains_key(seller) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*seller);
+            }
+            Input::Fill { bidder, item_id, amount, listing_id } => {
+                if *amount == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                if *item_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                let chosen = self.choose_ask(*bidder, *item_id, *amount)?;
+                if chosen.id != *listing_id {
+                    return Err(EngineError::NoAsk);
+                }
+                if !self.characters.contains_key(bidder) || !self.characters.contains_key(&chosen.seller) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*bidder);
+                touch.insert(chosen.seller);
+            }
+            Input::CancelAsk { listing_id, seller } => {
+                let listing = self.listings.get(listing_id).ok_or(EngineError::UnknownListing)?;
+                if !listing.book {
+                    return Err(EngineError::UnknownListing);
+                }
+                if listing.seller != *seller {
+                    return Err(EngineError::NotSeller);
+                }
+                if !self.characters.contains_key(seller) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*seller);
+            }
+            Input::ReclaimAsk { listing_id, seller, now } => {
+                let listing = self.listings.get(listing_id).ok_or(EngineError::UnknownListing)?;
+                if !listing.book {
+                    return Err(EngineError::UnknownListing);
+                }
+                if listing.seller != *seller {
+                    return Err(EngineError::NotSeller);
+                }
+                if listing.listed_at == 0 || *now < listing.listed_at.saturating_add(ASK_WINDOW_SEC) {
+                    return Err(EngineError::TooSoon);
+                }
+                if !self.characters.contains_key(seller) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*seller);
+            }
+            Input::SendInbox { from, to, item_id, amount } => {
+                if *from == *to {
+                    return Err(EngineError::SelfTransfer);
+                }
+                if *amount == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                if *item_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                if !self.characters.contains_key(from) || !self.characters.contains_key(to) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*from);
+                touch.insert(*to);
+            }
+            Input::TakeInbox { token_id, item_id, amount } => {
+                if *amount == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                if *item_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*token_id);
+            }
         }
         Ok(touch)
     }
@@ -770,6 +982,9 @@ impl World {
                         inbound_applied: 0,
                         abilities: BTreeSet::new(),
                         harvests: BTreeMap::new(),
+                        craft_skills: BTreeMap::new(),
+                        inbox: BTreeMap::new(),
+                        dropped_skills: BTreeSet::new(),
                     },
                 );
                 Ok(())
@@ -842,6 +1057,30 @@ impl World {
                 }
                 Ok(())
             }
+            Input::CraftSkill { token_id, skill_id, level } => {
+                if touch.contains(token_id) {
+                    self.note_craft_skill(*token_id, skill_id, *level)?;
+                }
+                Ok(())
+            }
+            Input::RespecSkills { token_id, node_ids } => {
+                if touch.contains(token_id) {
+                    self.respec_skills(*token_id, node_ids)?;
+                }
+                Ok(())
+            }
+            Input::Ask { listing_id, seller, item_id, amount, min_price, listed_at } => {
+                self.ask(*listing_id, *seller, *item_id, *amount, *min_price, *listed_at, touch)
+            }
+            Input::Fill { bidder, item_id, amount, listing_id } => {
+                self.fill(*bidder, *item_id, *amount, *listing_id, touch)
+            }
+            Input::CancelAsk { listing_id, seller } => self.cancel_ask(*listing_id, *seller, touch),
+            Input::ReclaimAsk { listing_id, seller, now } => self.reclaim_ask(*listing_id, *seller, *now, touch),
+            Input::SendInbox { from, to, item_id, amount } => {
+                self.send_inbox(*from, *to, *item_id, *amount, touch)
+            }
+            Input::TakeInbox { token_id, item_id, amount } => self.take_inbox(*token_id, *item_id, *amount, touch),
         }
     }
 
@@ -861,6 +1100,7 @@ impl World {
         if !ch.abilities.insert(ability_id.to_string()) {
             return Err(EngineError::AlreadyKnown);
         }
+        ch.dropped_skills.remove(ability_id);
         let key = label_key(ability_id);
         if ch.state.knows_ability_key(&key) {
             return Err(EngineError::AlreadyKnown);
@@ -878,6 +1118,37 @@ impl World {
         }
         let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
         ch.state.add_count(Key::Craft(item_id), amount).map_err(|_| EngineError::Overflow)?;
+        Ok(())
+    }
+
+    fn note_craft_skill(&mut self, token_id: U256, skill_id: &str, level: u32) -> Result<(), EngineError> {
+        parse_label(skill_id)?;
+        if level == 0 || level > 65535 {
+            return Err(EngineError::BadCraftSkill);
+        }
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        let current = ch.craft_skills.get(skill_id).copied().unwrap_or(0);
+        if level <= current {
+            return Err(EngineError::BadCraftSkill);
+        }
+        ch.craft_skills.insert(skill_id.to_string(), level);
+        ch.state.set_craft_skill(label_key(skill_id), level);
+        Ok(())
+    }
+
+    fn respec_skills(&mut self, token_id: U256, node_ids: &[String]) -> Result<(), EngineError> {
+        if node_ids.len() > 600 {
+            return Err(EngineError::BadId);
+        }
+        for id in node_ids {
+            parse_label(id)?;
+        }
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        for id in node_ids {
+            ch.abilities.remove(id);
+            ch.state.clear_ability(label_key(id));
+            ch.dropped_skills.insert(id.clone());
+        }
         Ok(())
     }
 
@@ -1092,6 +1363,9 @@ impl World {
                 amount,
                 high_bidder: None,
                 high_bid: U256::ZERO,
+                min_price: U256::ZERO,
+                listed_at: 0,
+                book: false,
             },
         );
         Ok(())
@@ -1112,6 +1386,9 @@ impl World {
             .get(&listing_id)
             .cloned()
             .ok_or(EngineError::UnknownListing)?;
+        if listing.book {
+            return Err(EngineError::NoAsk);
+        }
         if amount <= listing.high_bid {
             return Err(EngineError::BidNotHigher);
         }
@@ -1137,6 +1414,13 @@ impl World {
             .ok_or(EngineError::UnknownListing)?;
         if listing.seller != seller {
             return Err(EngineError::NotSeller);
+        }
+        if listing.book {
+            if touch.contains(&listing.seller) {
+                self.credit_inbox(listing.seller, listing.item_id, listing.amount)?;
+            }
+            self.listings.remove(&listing_id);
+            return Ok(());
         }
         if touch.contains(&listing.seller) {
             self.credit_item(listing.seller, listing.item_id, listing.amount)?;
@@ -1166,6 +1450,198 @@ impl World {
         self.listings.remove(&listing_id);
         Ok(())
     }
+
+    pub(crate) fn choose_ask(&self, bidder: U256, item_id: U256, amount: U256) -> Result<Listing, EngineError> {
+        if !self.characters.contains_key(&bidder) {
+            return Err(EngineError::NotSpawned);
+        }
+        let mut best: Option<&Listing> = None;
+        for listing in self.listings.values() {
+            if !listing.book || listing.item_id != item_id || listing.seller == bidder {
+                continue;
+            }
+            if listing.min_price > amount {
+                continue;
+            }
+            best = Some(match best {
+                None => listing,
+                Some(cur) => {
+                    let cheaper = listing.min_price < cur.min_price;
+                    let older = listing.min_price == cur.min_price
+                        && (listing.listed_at < cur.listed_at
+                            || (listing.listed_at == cur.listed_at && listing.id < cur.id));
+                    if cheaper || older { listing } else { cur }
+                }
+            });
+        }
+        best.cloned().ok_or(EngineError::NoAsk)
+    }
+
+    fn ask(
+        &mut self,
+        listing_id: U256,
+        seller: U256,
+        item_id: U256,
+        amount: U256,
+        min_price: U256,
+        listed_at: u64,
+        touch: &BTreeSet<U256>,
+    ) -> Result<(), EngineError> {
+        if amount == U256::ZERO || min_price == U256::ZERO {
+            return Err(EngineError::ZeroAmount);
+        }
+        if listed_at == 0 {
+            return Err(EngineError::BadClock);
+        }
+        if self.listings.contains_key(&listing_id) {
+            return Err(EngineError::ListingExists);
+        }
+        if touch.contains(&seller) {
+            self.debit_item(seller, item_id, amount)?;
+        }
+        self.listings.insert(
+            listing_id,
+            Listing {
+                id: listing_id,
+                seller,
+                item_id,
+                amount,
+                high_bidder: None,
+                high_bid: U256::ZERO,
+                min_price,
+                listed_at,
+                book: true,
+            },
+        );
+        Ok(())
+    }
+
+    fn fill(
+        &mut self,
+        bidder: U256,
+        item_id: U256,
+        amount: U256,
+        listing_id: U256,
+        touch: &BTreeSet<U256>,
+    ) -> Result<(), EngineError> {
+        let chosen = self.choose_ask(bidder, item_id, amount)?;
+        if chosen.id != listing_id {
+            return Err(EngineError::NoAsk);
+        }
+        if touch.contains(&bidder) {
+            self.debit_kek(bidder, amount)?;
+        }
+        if touch.contains(&chosen.seller) {
+            self.credit_kek(chosen.seller, amount)?;
+        }
+        if touch.contains(&bidder) {
+            self.credit_inbox(bidder, chosen.item_id, chosen.amount)?;
+        }
+        self.listings.remove(&listing_id);
+        Ok(())
+    }
+
+    fn cancel_ask(&mut self, listing_id: U256, seller: U256, touch: &BTreeSet<U256>) -> Result<(), EngineError> {
+        let listing = self.listings.get(&listing_id).cloned().ok_or(EngineError::UnknownListing)?;
+        if !listing.book {
+            return Err(EngineError::UnknownListing);
+        }
+        if listing.seller != seller {
+            return Err(EngineError::NotSeller);
+        }
+        if touch.contains(&seller) {
+            self.credit_inbox(seller, listing.item_id, listing.amount)?;
+        }
+        self.listings.remove(&listing_id);
+        Ok(())
+    }
+
+    fn reclaim_ask(
+        &mut self,
+        listing_id: U256,
+        seller: U256,
+        now: u64,
+        touch: &BTreeSet<U256>,
+    ) -> Result<(), EngineError> {
+        let listing = self.listings.get(&listing_id).cloned().ok_or(EngineError::UnknownListing)?;
+        if !listing.book || listing.seller != seller {
+            return Err(if listing.seller != seller { EngineError::NotSeller } else { EngineError::UnknownListing });
+        }
+        if listing.listed_at == 0 || now < listing.listed_at.saturating_add(ASK_WINDOW_SEC) {
+            return Err(EngineError::TooSoon);
+        }
+        if touch.contains(&seller) {
+            self.credit_inbox(seller, listing.item_id, listing.amount)?;
+        }
+        self.listings.remove(&listing_id);
+        Ok(())
+    }
+
+    fn send_inbox(
+        &mut self,
+        from: U256,
+        to: U256,
+        item_id: U256,
+        amount: U256,
+        touch: &BTreeSet<U256>,
+    ) -> Result<(), EngineError> {
+        if from == to {
+            return Err(EngineError::SelfTransfer);
+        }
+        if amount == U256::ZERO {
+            return Err(EngineError::ZeroAmount);
+        }
+        if touch.contains(&from) {
+            self.debit_item(from, item_id, amount)?;
+        }
+        if touch.contains(&to) {
+            self.credit_inbox(to, item_id, amount)?;
+        }
+        Ok(())
+    }
+
+    fn take_inbox(
+        &mut self,
+        token_id: U256,
+        item_id: U256,
+        amount: U256,
+        touch: &BTreeSet<U256>,
+    ) -> Result<(), EngineError> {
+        if !touch.contains(&token_id) {
+            return Ok(());
+        }
+        self.debit_inbox(token_id, item_id, amount)
+    }
+
+    fn credit_inbox(&mut self, token_id: U256, item_id: U256, amount: U256) -> Result<(), EngineError> {
+        if amount == U256::ZERO {
+            return Err(EngineError::ZeroAmount);
+        }
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        let next = ch.inbox.get(&item_id).copied().unwrap_or(U256::ZERO).checked_add(amount).ok_or(EngineError::Overflow)?;
+        if next == U256::ZERO {
+            ch.inbox.remove(&item_id);
+        } else {
+            ch.inbox.insert(item_id, next);
+        }
+        Ok(())
+    }
+
+    fn debit_inbox(&mut self, token_id: U256, item_id: U256, amount: U256) -> Result<(), EngineError> {
+        if amount == U256::ZERO {
+            return Err(EngineError::ZeroAmount);
+        }
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        let have = ch.inbox.get(&item_id).copied().unwrap_or(U256::ZERO);
+        let next = have.checked_sub(amount).ok_or(EngineError::InsufficientInbox)?;
+        if next == U256::ZERO {
+            ch.inbox.remove(&item_id);
+        } else {
+            ch.inbox.insert(item_id, next);
+        }
+        Ok(())
+    }
+
 }
 
 impl Default for World {
@@ -1211,7 +1687,11 @@ fn listing_id_of(input: &Input) -> Option<U256> {
         Input::List { listing_id, .. }
         | Input::Bid { listing_id, .. }
         | Input::Cancel { listing_id, .. }
-        | Input::Settle { listing_id } => Some(*listing_id),
+        | Input::Settle { listing_id }
+        | Input::Ask { listing_id, .. }
+        | Input::Fill { listing_id, .. }
+        | Input::CancelAsk { listing_id, .. }
+        | Input::ReclaimAsk { listing_id, .. } => Some(*listing_id),
         _ => None,
     }
 }

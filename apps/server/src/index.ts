@@ -187,7 +187,8 @@ import {
 } from "./lok-vault";
 import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
 import { defaultLokDir, LokWorld } from "./lok-world";
-import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, writePlayerProgress, shouldChargeForAbility, type PlayerProgress } from "./player-progress";
+import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, rememberLedger, chargeSkillRespec, RESPEC_KEK_COST, shouldChargeForAbility, type PlayerProgress } from "./player-progress";
+import { debugCheatsEnabled } from "./debug-cheats";
 import {
   PARTY_INVITE_RANGE,
   PARTY_SHARE_RANGE,
@@ -430,9 +431,8 @@ type Mob = {
 };
 
 const PORT = Number(process.env.PORT ?? 8787);
-/** Dev cheats (Max Lv). On unless NODE_ENV=production; set ALLOW_DEBUG_CHEATS=1 to force on in prod. */
-const DEBUG_CHEATS_ENABLED =
-  process.env.ALLOW_DEBUG_CHEATS === "1" || process.env.NODE_ENV !== "production";
+/** Dev cheats (Max Lv). Off unless ALLOW_DEBUG_CHEATS=1. Not implied by a dev NODE_ENV. */
+const DEBUG_CHEATS_ENABLED = debugCheatsEnabled();
 const players = new Map<string, Player>();
 const walletToPlayer = new Map<string, string>();
 /** Per-wallet character roster — live progress objects (same refs as active when online). */
@@ -488,7 +488,20 @@ function reconcilePlayers(world: LokWorld): number {
     chars: world.boundChars(),
     levelOf: (id) => world.levelOf(id),
     itemsOf: (id) => world.view(id).items,
-    abilitiesOf: (id) => world.abilitiesOf(id).filter((abilityId) => isAbilityId(abilityId)),
+    abilitiesOf: (id) => world.abilitiesOf(id),
+    isLearnedAbility: (id) => isAbilityId(id),
+    isSkillNode: (id) => isSkillNodeId(id),
+    craftSkillsOf: (id) => world.craftSkillsOf(id),
+    droppedOf: (id) => world.droppedSkillsOf(id),
+    recordNode: (id, nodeId) => world.learnAbility(id, nodeId),
+    recordCraft: (id, skillId, level) => world.craftSkill(id, skillId, level),
+    freeHubsOf: (charId, progress) => {
+      const row = world.boundChars().find((c) => c.charId === charId);
+      const jobId = row ? JOB_IDS[row.job] : undefined;
+      const job = jobId && isJobId(jobId) && JOBS[jobId].playable ? jobId : "time_mage";
+      const sub = progress.subjob && isJobId(progress.subjob) ? progress.subjob : null;
+      return freeSkillHubs(job, sub, progress.skillUnlocked);
+    },
     exportItem: (id, itemId, amount) => world.exportItem(id, itemId, amount),
     skillPointsForLevel: (level) => skillPointsGrantedForLevels(0, level),
     skillUnlocked: (charId) => {
@@ -529,8 +542,7 @@ function applySaved(p: Player, saved: PlayerProgress) {
 function rememberPlayer(p: Player) {
   try {
     const path = playerProgressPath(defaultLokDir(), p.charId);
-    const prev = readPlayerProgress(path);
-    writePlayerProgress(path, {
+    rememberLedger(path, (flags) => ({
       version: 1,
       level: p.level,
       xp: p.xp,
@@ -551,9 +563,10 @@ function rememberPlayer(p: Player) {
       claimedStarter: p.claimedStarter,
       dust: p.dust,
       subjob: p.subjob,
-      logItemsMoved: prev?.logItemsMoved ?? true,
-      logItemsCopied: prev?.logItemsCopied ?? true,
-    });
+      logItemsMoved: flags.logItemsMoved,
+      logItemsCopied: flags.logItemsCopied,
+      ...(flags.logCopied ? { logCopied: { ...flags.logCopied } } : {}),
+    }));
   } catch {
     console.error("[bellgrave] character save failed");
   }
@@ -700,13 +713,13 @@ function handleLokSendItem(p: Player, to: string, tokenId: number, amount: numbe
     pushLog(p, dest.error);
     return;
   }
-  const res = lok.sendItem(token, dest.tokenId, String(tokenId), String(amount));
+  const res = lok.sendInbox(token, dest.tokenId, String(tokenId), String(amount));
   if (!res.ok) {
     pushLog(p, res.error);
     return;
   }
-  pushLog(p, "Sent " + itemLabel(tokenId) + " x" + amount + " to " + to.trim() + ".");
-  tellToken(dest.tokenId, p.name + " sent you " + itemLabel(tokenId) + " x" + amount + ".");
+  pushLog(p, "Sent " + itemLabel(tokenId) + " x" + amount + " to " + to.trim() + ". It is in their Provisioner inbox.");
+  tellToken(dest.tokenId, p.name + " sent you " + itemLabel(tokenId) + " x" + amount + ". Take it from the Provisioner inbox.");
   send(p.ws, snapshotFor(p));
 }
 
@@ -848,25 +861,30 @@ function handleLokClaim(p: Player, id: string) {
     .finally(() => endClaim(token));
 }
 
-function handleLokList(p: Player, tokenId: number, amount: number) {
+function handleLokList(p: Player, tokenId: number, amount: number, minPrice: string) {
   const token = lokToken(p);
   if (!token) {
     pushLog(p, "Could not open your log identity.");
     return;
   }
-  const res = lok.list(token, String(tokenId), String(amount));
+  if (!/^[1-9][0-9]{0,18}$/.test(minPrice)) {
+    pushLog(p, "Enter a minimum price greater than 0. Nothing was listed.");
+    return;
+  }
+  const listedAt = Math.floor(Date.now() / 1000);
+  const res = lok.ask(token, String(tokenId), String(amount), minPrice, listedAt);
   if (!res.ok) {
     pushLog(p, res.error);
     return;
   }
   pushLog(
     p,
-    "Listed " + itemLabel(tokenId) + " x" + amount + " as #" + res.listingId + ". That stack is in escrow.",
+    "Listed " + itemLabel(tokenId) + " x" + amount + " as #" + res.listingId + " for at least " + minPrice + " KEK. The auction house is holding it.",
   );
   send(p.ws, snapshotFor(p));
 }
 
-function handleLokBid(p: Player, listingId: string, amount: string) {
+function handleLokBid(p: Player, itemId: number, amount: string) {
   const token = lokToken(p);
   if (!token) {
     pushLog(p, "Could not open your log identity.");
@@ -886,9 +904,14 @@ function handleLokBid(p: Player, listingId: string, amount: string) {
       pushLog(p, "Need " + amount + " KEK (you have " + free.toString() + " spendable). Nothing was bid.");
       return;
     }
-    const res = lok.bid(listingId, token, amount);
+    const res = lok.fill(token, String(itemId), amount);
     if (!res.ok) pushLog(p, res.error);
-    else pushLog(p, "Bid " + amount + " KEK on listing #" + listingId + ".");
+    else {
+      pushLog(p, "Bought the lowest " + itemLabel(itemId) + " ask for " + amount + " KEK. It is in your Provisioner inbox.");
+      if (res.seller && res.seller !== token) {
+        tellToken(res.seller, "Your " + itemLabel(itemId) + " ask sold for " + amount + " KEK.");
+      }
+    }
     send(p.ws, snapshotFor(p));
   }).catch(() => failAction(p, "KEK bid"));
 }
@@ -899,13 +922,95 @@ function handleLokCancel(p: Player, listingId: string) {
     pushLog(p, "Could not open your log identity.");
     return;
   }
+  const row = lok.view(token).listings.find((l) => l.id === listingId);
   const res = lok.cancel(listingId, token);
   if (!res.ok) {
     pushLog(p, res.error);
     return;
   }
-  pushLog(p, "Cancelled listing #" + listingId + ". Escrow returned.");
+  pushLog(
+    p,
+    row?.book
+      ? "Cancelled listing #" + listingId + ". The stack is in your Provisioner inbox."
+      : "Cancelled listing #" + listingId + ". Escrow returned.",
+  );
   send(p.ws, snapshotFor(p));
+}
+
+function handleLokReclaim(p: Player, listingId: string) {
+  const token = lokToken(p);
+  if (!token) {
+    pushLog(p, "Could not open your log identity.");
+    return;
+  }
+  const res = lok.reclaim(listingId, token, Math.floor(Date.now() / 1000));
+  if (!res.ok) {
+    pushLog(p, res.error);
+    return;
+  }
+  pushLog(p, "Reclaimed listing #" + listingId + " into your Provisioner inbox.");
+  send(p.ws, snapshotFor(p));
+}
+
+function handleLokTakeInbox(p: Player, tokenId: number, amount: number) {
+  const token = lokToken(p);
+  if (!token) {
+    pushLog(p, "Could not open your log identity.");
+    return;
+  }
+  const res = lok.takeInbox(token, String(tokenId), String(amount));
+  if (!res.ok) {
+    pushLog(p, res.error);
+    return;
+  }
+  addItem(p.inventory, tokenId, amount);
+  const taken = getItem(tokenId);
+  if (taken && taken.kind === "base") {
+    p.baseMats[taken.slug] = (p.baseMats[taken.slug] ?? 0) + amount;
+  }
+  rememberPlayer(p);
+  pushLog(p, "Took " + itemLabel(tokenId) + " x" + amount + " out of the Provisioner inbox.");
+  send(p.ws, snapshotFor(p));
+}
+
+function handleSkillRespec(p: Player) {
+  ensureMainHub(p);
+  const free = () => new Set(freeSkillHubs(p.job, p.subjob, p.skillUnlocked));
+  void chargeSkillRespec({
+    charId: p.charId,
+    paidNodes: () => p.skillUnlocked.filter((id) => isSkillNodeId(id) && !free().has(id)),
+    earnedPoints: skillPointsEarned(p.level, p.skillPrestige),
+    kept: (clearIds) => {
+      const skip = new Set(clearIds);
+      const hubs = free();
+      const unlocked: string[] = [];
+      for (const id of p.skillUnlocked) {
+        if (skip.has(id) && !hubs.has(id)) continue;
+        if (!unlocked.includes(id)) unlocked.push(id);
+      }
+      for (const id of hubs) {
+        if (!unlocked.includes(id)) unlocked.push(id);
+      }
+      return unlocked;
+    },
+    spend: (amount) => spendLogKek(p, amount),
+    record: (nodeIds) => {
+      const token = lokToken(p);
+      if (!token) return { ok: false, error: "Could not open your log identity." };
+      return lok.respecSkills(token, nodeIds);
+    },
+    apply: (unlocked, skillPoints) => {
+      p.skillUnlocked = unlocked;
+      p.skillPoints = skillPoints;
+      ensureMainHub(p);
+      rememberPlayer(p);
+    },
+  }).then((result) => {
+    if (!result.ok) pushLog(p, result.error === "no longer available" ? "No paid skill nodes to respec." : result.error);
+    else pushLog(p, "Respec paid " + RESPEC_KEK_COST + " KEK. The tree was cleared and the points were refunded.");
+    syncVitals(p, false);
+    send(p.ws, snapshotFor(p));
+  }).catch(() => failAction(p, "Respec"));
 }
 
 function handleLokExplore(
@@ -1486,6 +1591,17 @@ function grantCraftXp(p: Player, skill: CraftSkill, amount: number) {
     row.level += 1;
   }
   p.craftSkills[skill] = row;
+  if (row.level > prev.level) logCraftSkill(p, skill, row.level);
+}
+
+function logCraftSkill(p: Player, skill: string, level: number) {
+  if (level <= 1) return;
+  const token = lokToken(p);
+  if (!token) return;
+  const res = lok.craftSkill(token, skill, level);
+  if (!res.ok && !/not higher/i.test(res.error)) {
+    pushLog(p, "Craft level was not written to your log: " + res.error);
+  }
 }
 
 /** Backfill bag slots for mats granted before inventory mirroring existed. */
@@ -4247,6 +4363,9 @@ function onMessage(ws: WebSocket, data: string) {
     case "skill/unlock":
       handleSkillUnlock(p, msg.nodeId);
       break;
+    case "skill/respec":
+      handleSkillRespec(p);
+      break;
     case "skill/freestat":
       handleFreeStat(p, msg.attr, msg.delta === -1 ? -1 : 1);
       break;
@@ -4290,13 +4409,19 @@ function onMessage(ws: WebSocket, data: string) {
       handleLokClaim(p, msg.id);
       break;
     case "lok/list":
-      handleLokList(p, msg.tokenId, msg.amount);
+      handleLokList(p, msg.tokenId, msg.amount, msg.minPrice);
       break;
     case "lok/bid":
-      handleLokBid(p, msg.listingId, msg.amount);
+      handleLokBid(p, msg.itemId, msg.amount);
       break;
     case "lok/cancel":
       handleLokCancel(p, msg.listingId);
+      break;
+    case "lok/reclaim":
+      handleLokReclaim(p, msg.listingId);
+      break;
+    case "lok/takeInbox":
+      handleLokTakeInbox(p, msg.tokenId, msg.amount);
       break;
     case "lok/settle":
       handleLokSettle(p, msg.listingId);

@@ -358,6 +358,40 @@ pub(crate) fn parse_input(value: &serde_json::Value) -> Result<Input, String> {
         "settle" => Ok(Input::Settle {
             listing_id: req_u256(value, "listingId")?,
         }),
+        "ask" => Ok(Input::Ask {
+            listing_id: req_u256(value, "listingId")?,
+            seller: req_u256(value, "seller")?,
+            item_id: req_u256(value, "itemId")?,
+            amount: req_u256(value, "amount")?,
+            min_price: req_u256(value, "minPrice")?,
+            listed_at: req_u64(value, "listedAt")?,
+        }),
+        "fill" => Ok(Input::Fill {
+            bidder: req_u256(value, "bidder")?,
+            item_id: req_u256(value, "itemId")?,
+            amount: req_u256(value, "amount")?,
+            listing_id: req_u256(value, "listingId")?,
+        }),
+        "cancelAsk" => Ok(Input::CancelAsk {
+            listing_id: req_u256(value, "listingId")?,
+            seller: req_u256(value, "seller")?,
+        }),
+        "reclaimAsk" => Ok(Input::ReclaimAsk {
+            listing_id: req_u256(value, "listingId")?,
+            seller: req_u256(value, "seller")?,
+            now: req_u64(value, "now")?,
+        }),
+        "sendInbox" => Ok(Input::SendInbox {
+            from: req_u256(value, "from")?,
+            to: req_u256(value, "to")?,
+            item_id: req_u256(value, "itemId")?,
+            amount: req_u256(value, "amount")?,
+        }),
+        "takeInbox" => Ok(Input::TakeInbox {
+            token_id: req_u256(value, "tokenId")?,
+            item_id: req_u256(value, "itemId")?,
+            amount: req_u256(value, "amount")?,
+        }),
         "levelUp" => {
             let level = req_u64(value, "level")?;
             if level == 0 || level > u64::from(u32::MAX) {
@@ -387,6 +421,36 @@ pub(crate) fn parse_input(value: &serde_json::Value) -> Result<Input, String> {
             item_id: req_u256(value, "itemId")?,
             amount: req_u256(value, "amount")?,
         }),
+        "craftSkill" => {
+            let level = req_u64(value, "level")?;
+            if level == 0 || level > u64::from(u32::MAX) {
+                return Err("craft skill level out of range".to_string());
+            }
+            Ok(Input::CraftSkill {
+                token_id: req_u256(value, "tokenId")?,
+                skill_id: req_label(value, "skillId")?,
+                level: level as u32,
+            })
+        }
+        "respecSkills" => {
+            let token_id = req_u256(value, "tokenId")?;
+            let raw = value
+                .get("nodeIds")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "missing nodeIds".to_string())?;
+            if raw.len() > 600 {
+                return Err("too many skill nodes".to_string());
+            }
+            let mut node_ids = Vec::with_capacity(raw.len());
+            for (i, row) in raw.iter().enumerate() {
+                let id = row.as_str().ok_or_else(|| format!("bad nodeIds[{i}]"))?;
+                if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
+                    return Err(format!("bad nodeIds[{i}]"));
+                }
+                node_ids.push(id.to_string());
+            }
+            Ok(Input::RespecSkills { token_id, node_ids })
+        }
         other => Err(format!("unknown input type {other}")),
     }
 }
@@ -481,6 +545,46 @@ pub(crate) fn input_to_json(input: &Input) -> serde_json::Value {
             "type": "settle",
             "listingId": s(listing_id),
         }),
+        Input::Ask { listing_id, seller, item_id, amount, min_price, listed_at } => serde_json::json!({
+            "type": "ask",
+            "listingId": s(listing_id),
+            "seller": s(seller),
+            "itemId": s(item_id),
+            "amount": s(amount),
+            "minPrice": s(min_price),
+            "listedAt": listed_at,
+        }),
+        Input::Fill { bidder, item_id, amount, listing_id } => serde_json::json!({
+            "type": "fill",
+            "bidder": s(bidder),
+            "itemId": s(item_id),
+            "amount": s(amount),
+            "listingId": s(listing_id),
+        }),
+        Input::CancelAsk { listing_id, seller } => serde_json::json!({
+            "type": "cancelAsk",
+            "listingId": s(listing_id),
+            "seller": s(seller),
+        }),
+        Input::ReclaimAsk { listing_id, seller, now } => serde_json::json!({
+            "type": "reclaimAsk",
+            "listingId": s(listing_id),
+            "seller": s(seller),
+            "now": now,
+        }),
+        Input::SendInbox { from, to, item_id, amount } => serde_json::json!({
+            "type": "sendInbox",
+            "from": s(from),
+            "to": s(to),
+            "itemId": s(item_id),
+            "amount": s(amount),
+        }),
+        Input::TakeInbox { token_id, item_id, amount } => serde_json::json!({
+            "type": "takeInbox",
+            "tokenId": s(token_id),
+            "itemId": s(item_id),
+            "amount": s(amount),
+        }),
         Input::LevelUp { token_id, level } => serde_json::json!({
             "type": "levelUp",
             "tokenId": s(token_id),
@@ -508,6 +612,17 @@ pub(crate) fn input_to_json(input: &Input) -> serde_json::Value {
             "tokenId": s(token_id),
             "itemId": s(item_id),
             "amount": s(amount),
+        }),
+        Input::CraftSkill { token_id, skill_id, level } => serde_json::json!({
+            "type": "craftSkill",
+            "tokenId": s(token_id),
+            "skillId": skill_id,
+            "level": level,
+        }),
+        Input::RespecSkills { token_id, node_ids } => serde_json::json!({
+            "type": "respecSkills",
+            "tokenId": s(token_id),
+            "nodeIds": node_ids,
         }),
     }
 }

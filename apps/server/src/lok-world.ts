@@ -10,13 +10,17 @@ export type LokResult = { ok: true } | { ok: false; error: string };
 type EngineItem = { itemId: string; amount: string };
 type EngineCraft = { itemId: string; amount: string };
 type EngineHarvest = { materialId: string; amount: string };
+type EngineCraftSkill = { skillId: string; level: number };
 type EngineCharacter = {
   tokenId: string;
   kek: string;
   level?: number;
   abilities?: string[];
   crafts?: EngineCraft[];
+  craftSkills?: EngineCraftSkill[];
   harvests?: EngineHarvest[];
+  inbox?: EngineItem[];
+  droppedSkills?: string[];
   items: EngineItem[];
 };
 type EngineListing = {
@@ -26,6 +30,9 @@ type EngineListing = {
   amount: string;
   highBidder: string | null;
   highBid: string;
+  minPrice?: string;
+  listedAt?: number;
+  book?: boolean;
 };
 type EngineState = { characters: EngineCharacter[]; listings: EngineListing[] };
 type ApplyBody = {
@@ -269,6 +276,35 @@ export class LokWorld {
     return { ok: true, listingId };
   }
 
+  /** Order-book ask. The stack leaves the log and waits at minPrice. listedAt is a unix second. */
+  ask(
+    seller: string,
+    itemId: string,
+    amount: string,
+    minPrice: string,
+    listedAt: number,
+  ): LokResult & { listingId?: string } {
+    const listingId = this.bind.nextListing;
+    const res = this.apply({ op: "ask", listingId, seller, itemId, amount, minPrice, listedAt });
+    if (!res.ok) return res;
+    this.bind.nextListing = (BigInt(listingId) + 1n).toString();
+    this.saveBind();
+    return { ok: true, listingId };
+  }
+
+  /**
+   * Buy the cheapest ask of this item at or under amount. Pays amount, not the minimum.
+   * The engine picks the ask. A rejected bid appends nothing.
+   */
+  fill(bidder: string, itemId: string, amount: string): LokResult & { listingId?: string; seller?: string; stack?: string } {
+    const before = this.state.listings.map((row) => ({ ...row }));
+    const res = this.apply({ op: "fill", bidder, itemId, amount });
+    if (!res.ok) return res;
+    const left = new Set(this.state.listings.map((row) => row.id));
+    const prior = before.find((row) => !left.has(row.id));
+    return { ok: true, listingId: prior?.id, seller: prior?.seller, stack: prior?.amount };
+  }
+
   bid(listingId: string, bidder: string, amount: string): LokResult {
     return this.apply({ op: "bid", listingId, bidder, amount });
   }
@@ -279,6 +315,38 @@ export class LokWorld {
 
   settle(listingId: string): LokResult {
     return this.apply({ op: "settle", listingId });
+  }
+
+  reclaim(listingId: string, seller: string, now: number): LokResult {
+    return this.apply({ op: "reclaimAsk", listingId, seller, now });
+  }
+
+  sendInbox(from: string, to: string, itemId: string, amount: string): LokResult {
+    return this.apply({ op: "sendInbox", from, to, itemId, amount });
+  }
+
+  takeInbox(tokenId: string, itemId: string, amount: string): LokResult {
+    return this.apply({ op: "takeInbox", tokenId, itemId, amount });
+  }
+
+  craftSkill(tokenId: string, skillId: string, level: number): LokResult {
+    return this.apply({ op: "craftSkill", tokenId, skillId, level });
+  }
+
+  respecSkills(tokenId: string, nodeIds: string[]): LokResult {
+    return this.apply({ op: "respecSkills", tokenId, nodeIds });
+  }
+
+  craftSkillsOf(tokenId: string): { skillId: string; level: number }[] {
+    const me = this.state.characters.find((c) => c.tokenId === tokenId);
+    return (me?.craftSkills ?? [])
+      .filter((row) => row.skillId && Number.isSafeInteger(row.level) && row.level > 0)
+      .map((row) => ({ skillId: row.skillId, level: row.level }));
+  }
+
+  droppedSkillsOf(tokenId: string): string[] {
+    const me = this.state.characters.find((c) => c.tokenId === tokenId);
+    return [...(me?.droppedSkills ?? [])];
   }
 
   resolveName(name: string, selfToken: string): { ok: true; tokenId: string } | { ok: false; error: string } {
@@ -348,13 +416,24 @@ export class LokWorld {
         highBidder: row.highBidder,
         highBidderName: nameOf(row.highBidder),
         highBid: row.highBid,
+        minPrice: row.minPrice ?? "0",
+        listedAt: row.listedAt ?? 0,
+        book: row.book === true,
         yours: row.seller === tokenId,
       });
     }
+    const inbox = (me?.inbox ?? [])
+      .map((row) => {
+        const id = asItemId(row.itemId);
+        if (id == null || id <= 0) return null;
+        return { tokenId: id, amount: row.amount };
+      })
+      .filter((row): row is { tokenId: number; amount: string } => row != null);
     return {
       tokenId,
       kek: me?.kek ?? "0",
       items,
+      inbox,
       listings,
       chain: this.chain,
       withdrawDelaySec: null,

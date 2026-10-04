@@ -41,6 +41,16 @@ pub enum EngineError {
     AlreadyKnown,
     /// Ability, material, or item id is empty or not a printable token.
     BadId,
+    /// Craft skill level was zero, above 16 bits, or not strictly higher than the logged level.
+    BadCraftSkill,
+    /// No ask of that item is at or under the bid, after skipping the bidder's own asks.
+    NoAsk,
+    /// The ask is still inside its 7 day window.
+    TooSoon,
+    /// The inbox does not hold that stack.
+    InsufficientInbox,
+    /// The ask was recorded without a server timestamp.
+    BadClock,
 }
 
 impl fmt::Display for EngineError {
@@ -67,6 +77,11 @@ impl fmt::Display for EngineError {
             Self::BadLevel => write!(f, "level is not the next level"),
             Self::AlreadyKnown => write!(f, "already known"),
             Self::BadId => write!(f, "id is empty or invalid"),
+            Self::BadCraftSkill => write!(f, "craft skill level is not higher than the logged level"),
+            Self::NoAsk => write!(f, "no ask at or under that bid"),
+            Self::TooSoon => write!(f, "ask can be reclaimed after 7 days"),
+            Self::InsufficientInbox => write!(f, "nothing in the inbox"),
+            Self::BadClock => write!(f, "listing has no time"),
         }
     }
 }
@@ -169,14 +184,23 @@ impl Engine {
             Input::ExportItem { token_id, item_id, amount } => self.debit_item(*token_id, *item_id, *amount),
             Input::SendKek { from, to, amount } => self.transfer_kek(*from, *to, *amount),
             Input::SendItem { from, to, item_id, amount } => self.transfer_item(*from, *to, *item_id, *amount),
-            Input::List { .. } | Input::Bid { .. } | Input::Cancel { .. } | Input::Settle { .. } => {
-                Err(EngineError::NotOnCharacterLog)
-            }
+            Input::List { .. }
+            | Input::Bid { .. }
+            | Input::Cancel { .. }
+            | Input::Settle { .. }
+            | Input::Ask { .. }
+            | Input::Fill { .. }
+            | Input::CancelAsk { .. }
+            | Input::ReclaimAsk { .. }
+            | Input::SendInbox { .. }
+            | Input::TakeInbox { .. } => Err(EngineError::NotOnCharacterLog),
             Input::LevelUp { token_id, level } => self.apply_level(*token_id, *level),
             Input::LearnAbility { token_id, ability_id } => self.learn(*token_id, ability_id),
             Input::Craft { token_id, item_id, amount } => self.note_craft(*token_id, *item_id, *amount),
             Input::Harvest { token_id, material_id, amount } => self.note_harvest(*token_id, material_id, *amount),
             Input::ItemDrop { token_id, item_id, amount } => self.drop_item(*token_id, *item_id, *amount),
+            Input::CraftSkill { token_id, skill_id, level } => self.note_craft_skill(*token_id, skill_id, *level),
+            Input::RespecSkills { token_id, node_ids } => self.respec_skills(*token_id, node_ids),
         }
     }
 
@@ -224,6 +248,33 @@ impl Engine {
         self.state
             .add_count(Key::Harvest(label_key(material_id)), amount)
             .map_err(|_| EngineError::Overflow)?;
+        Ok(())
+    }
+
+    fn note_craft_skill(&mut self, token_id: U256, skill_id: &str, level: u32) -> Result<(), EngineError> {
+        self.involves(&token_id)?;
+        parse_label(skill_id)?;
+        if level == 0 || level > 65535 {
+            return Err(EngineError::BadCraftSkill);
+        }
+        let key = label_key(skill_id);
+        let current = self.state.craft_skill_level(&key);
+        if level <= current {
+            return Err(EngineError::BadCraftSkill);
+        }
+        self.state.set_craft_skill(key, level);
+        Ok(())
+    }
+
+    fn respec_skills(&mut self, token_id: U256, node_ids: &[String]) -> Result<(), EngineError> {
+        self.involves(&token_id)?;
+        if node_ids.len() > 600 {
+            return Err(EngineError::BadId);
+        }
+        for id in node_ids {
+            parse_label(id)?;
+            self.state.clear_ability(label_key(id));
+        }
         Ok(())
     }
 

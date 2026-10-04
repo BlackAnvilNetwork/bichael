@@ -25,6 +25,8 @@ pub enum Key {
     Craft(U256),
     /// Total amount gathered of a material. Key data is keccak256 of the material id. Not spendable.
     Harvest(U256),
+    /// Craft skill level. Key data is keccak256 of the skill id. Value is the level, not XP.
+    CraftSkill(U256),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -73,6 +75,19 @@ impl State {
 
     pub(crate) fn mark_ability(&mut self, id: U256) {
         self.map.insert(Key::Ability(id), U256::from_u64(1));
+    }
+
+    pub(crate) fn clear_ability(&mut self, id: U256) {
+        self.map.remove(&Key::Ability(id));
+    }
+
+    pub(crate) fn set_craft_skill(&mut self, id: U256, level: u32) {
+        self.map.insert(Key::CraftSkill(id), U256::from_u64(u64::from(level)));
+    }
+
+    pub fn craft_skill_level(&self, id: &U256) -> u32 {
+        let raw = self.get(&Key::CraftSkill(*id));
+        u32::from_be_bytes(raw.0[28..].try_into().expect("4 bytes"))
     }
 
     pub fn knows_ability_key(&self, id: &U256) -> bool {
@@ -163,12 +178,13 @@ fn key_tag(key: &Key) -> u8 {
         Key::Ability(_) => 10,
         Key::Craft(_) => 11,
         Key::Harvest(_) => 12,
+        Key::CraftSkill(_) => 13,
     }
 }
 
 fn leaf(key: &Key, value: &U256) -> [u8; 32] {
     let key_data = match key {
-        Key::Item(id) | Key::Ability(id) | Key::Craft(id) | Key::Harvest(id) => *id,
+        Key::Item(id) | Key::Ability(id) | Key::Craft(id) | Key::Harvest(id) | Key::CraftSkill(id) => *id,
         _ => U256::ZERO,
     };
     let mut buf = Buf::new();

@@ -237,3 +237,60 @@ fn replay_cli_stops_at_the_first_bad_world_hash() {
     let stderr = String::from_utf8(stopped.stderr).unwrap();
     assert!(stderr.contains("bad hash at index 1"), "{stderr}");
 }
+
+#[test]
+fn order_book_fills_the_lowest_ask_and_pays_the_bid() {
+    let dust = fungible_id("pale_dust");
+    let mut world = two_characters();
+    world.append_spawn(n(3), 2).unwrap();
+    world.append_spawn(n(4), 0).unwrap();
+    import_item(&mut world, n(1), dust, n(1)).unwrap();
+    import_item(&mut world, n(2), dust, n(1)).unwrap();
+    import_item(&mut world, n(3), dust, n(1)).unwrap();
+    deposit(&mut world, n(1), n(100)).unwrap();
+    deposit(&mut world, n(4), n(3000)).unwrap();
+    let t0 = 1_700_000_000u64;
+    world.append_ask(n(10), n(1), dust, n(1), n(100), t0).unwrap();
+    world.append_ask(n(11), n(2), dust, n(1), n(1000), t0 + 1).unwrap();
+    world.append_ask(n(12), n(3), dust, n(1), n(2000), t0 + 2).unwrap();
+
+    let before = world.kek_balance(&n(1)).unwrap();
+    let own = world.append_fill(n(1), dust, n(100)).unwrap_err();
+    assert_eq!(own, EngineError::NoAsk, "seller cannot fill their own ask");
+    assert_eq!(world.kek_balance(&n(1)), Some(before));
+    assert!(world.listing(&n(10)).is_some());
+
+    let low = world.append_fill(n(4), dust, n(50)).unwrap_err();
+    assert_eq!(low, EngineError::NoAsk);
+    assert_eq!(world.kek_balance(&n(4)), Some(n(3000)), "a bid under every ask spends nothing");
+
+    world.append_fill(n(4), dust, n(2000)).unwrap();
+    assert!(world.listing(&n(10)).is_none(), "the 100 ask is the one that sells");
+    assert!(world.listing(&n(11)).is_some());
+    assert!(world.listing(&n(12)).is_some());
+    assert_eq!(world.kek_balance(&n(1)), Some(before.checked_add(n(2000)).unwrap()), "seller is paid the bid");
+    assert_eq!(world.kek_balance(&n(4)), Some(n(1000)));
+    assert_eq!(world.item_balance(&n(4), &dust), Some(n(0)), "the sale does not enter the bag");
+    assert_eq!(world.inbox_balance(&n(4), &dust), Some(n(1)));
+
+    world.append_cancel(n(11), n(2)).unwrap();
+    assert!(world.listing(&n(11)).is_none());
+    assert_eq!(world.item_balance(&n(2), &dust), Some(n(0)));
+    assert_eq!(world.inbox_balance(&n(2), &dust), Some(n(1)));
+
+    assert_eq!(
+        world.append_reclaim_ask(n(12), n(3), t0 + 2 + 7 * 24 * 60 * 60 - 1).unwrap_err(),
+        EngineError::TooSoon
+    );
+    world.append_reclaim_ask(n(12), n(3), t0 + 2 + 7 * 24 * 60 * 60).unwrap();
+    assert_eq!(world.inbox_balance(&n(3), &dust), Some(n(1)));
+    assert_eq!(world.item_balance(&n(3), &dust), Some(n(0)));
+
+    world.append_take_inbox(n(4), dust, n(1)).unwrap();
+    assert_eq!(world.inbox_balance(&n(4), &dust), Some(n(0)));
+    assert_eq!(world.item_balance(&n(4), &dust), Some(n(0)));
+
+    let report = replay_world(&world.to_document()).expect("replay");
+    assert_eq!(report.head, world.head());
+    assert_eq!(report.entries, world.len());
+}

@@ -39,6 +39,32 @@ pub enum Input {
     Harvest { token_id: U256, material_id: String, amount: U256 },
     /// Loot into this character's log inventory. Not a KEK mint.
     ItemDrop { token_id: U256, item_id: U256, amount: U256 },
+    /// Craft skill level for this character. Must be strictly higher than the logged level.
+    /// Does not store XP and does not credit items or KEK.
+    CraftSkill { token_id: U256, skill_id: String, level: u32 },
+    /// Drops the named skill-node ids so they can be learned again. Does not spend KEK.
+    RespecSkills { token_id: U256, node_ids: Vec<String> },
+    /// Order-book ask. The stack leaves spendable items and is held at \min_price\.
+    /// \listed_at\ is a unix second from the server. This log has no clock of its own.
+    Ask {
+        listing_id: U256,
+        seller: U256,
+        item_id: U256,
+        amount: U256,
+        min_price: U256,
+        listed_at: u64,
+    },
+    /// Immediate fill of one ask. The buyer pays \mount\ (not the minimum).
+    /// \listing_id\ is the ask the price-time rule selected. No standing buy is left.
+    Fill { bidder: U256, item_id: U256, amount: U256, listing_id: U256 },
+    /// Seller pulls an unsold ask into their inbox before it sells.
+    CancelAsk { listing_id: U256, seller: U256 },
+    /// After 7 days an unsold ask is reclaimed into the seller inbox. ow\ is the server clock.
+    ReclaimAsk { listing_id: U256, seller: U256, now: u64 },
+    /// Player-to-player item send into the recipient inbox, not their spendable balance.
+    SendInbox { from: U256, to: U256, item_id: U256, amount: U256 },
+    /// Take items out of the inbox. They leave the log; the server bags them.
+    TakeInbox { token_id: U256, item_id: U256, amount: U256 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,6 +185,60 @@ pub fn event_id(input: &Input) -> [u8; 32] {
         }
         Input::ItemDrop { token_id, item_id, amount } => {
             buf.b256(&domain(b"LOK_ITEM_DROP_V1"));
+            buf.u256(token_id);
+            buf.u256(item_id);
+            buf.u256(amount);
+        }
+        Input::CraftSkill { token_id, skill_id, level } => {
+            buf.b256(&domain(b"LOK_CRAFT_SKILL_V1"));
+            buf.u256(token_id);
+            push_label(&mut buf, skill_id);
+            buf.u32(*level);
+        }
+        Input::RespecSkills { token_id, node_ids } => {
+            buf.b256(&domain(b"LOK_RESPEC_SKILLS_V1"));
+            buf.u256(token_id);
+            buf.u64(node_ids.len() as u64);
+            for id in node_ids {
+                push_label(&mut buf, id);
+            }
+        }
+        Input::Ask { listing_id, seller, item_id, amount, min_price, listed_at } => {
+            buf.b256(&domain(b"LOK_ASK_V1"));
+            buf.u256(listing_id);
+            buf.u256(seller);
+            buf.u256(item_id);
+            buf.u256(amount);
+            buf.u256(min_price);
+            buf.u64(*listed_at);
+        }
+        Input::Fill { bidder, item_id, amount, listing_id } => {
+            buf.b256(&domain(b"LOK_FILL_V1"));
+            buf.u256(bidder);
+            buf.u256(item_id);
+            buf.u256(amount);
+            buf.u256(listing_id);
+        }
+        Input::CancelAsk { listing_id, seller } => {
+            buf.b256(&domain(b"LOK_CANCEL_ASK_V1"));
+            buf.u256(listing_id);
+            buf.u256(seller);
+        }
+        Input::ReclaimAsk { listing_id, seller, now } => {
+            buf.b256(&domain(b"LOK_RECLAIM_ASK_V1"));
+            buf.u256(listing_id);
+            buf.u256(seller);
+            buf.u64(*now);
+        }
+        Input::SendInbox { from, to, item_id, amount } => {
+            buf.b256(&domain(b"LOK_SEND_INBOX_V1"));
+            buf.u256(from);
+            buf.u256(to);
+            buf.u256(item_id);
+            buf.u256(amount);
+        }
+        Input::TakeInbox { token_id, item_id, amount } => {
+            buf.b256(&domain(b"LOK_TAKE_INBOX_V1"));
             buf.u256(token_id);
             buf.u256(item_id);
             buf.u256(amount);

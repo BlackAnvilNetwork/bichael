@@ -62,6 +62,7 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("debug/maxlevel") }),
   /** Unlock a skill-tree node (must be adjacent; costs 1 point). */
   z.object({ type: z.literal("skill/unlock"), nodeId: z.string().min(1).max(64) }),
+  z.object({ type: z.literal("skill/respec") }),
   /** Spend or refund one free attribute point (delta +1 / −1). */
   z.object({
     type: z.literal("skill/freestat"),
@@ -117,11 +118,21 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("lok/list"),
     tokenId: z.number().int().positive(),
     amount: z.number().int().positive().max(1_000_000),
+    minPrice: z.string().regex(/^[1-9][0-9]{0,18}$/),
   }),
   z.object({
     type: z.literal("lok/bid"),
-    listingId: z.string().regex(/^[1-9][0-9]{0,18}$/),
+    itemId: z.number().int().positive(),
     amount: z.string().regex(/^[1-9][0-9]{0,18}$/),
+  }),
+  z.object({
+    type: z.literal("lok/reclaim"),
+    listingId: z.string().regex(/^[1-9][0-9]{0,18}$/),
+  }),
+  z.object({
+    type: z.literal("lok/takeInbox"),
+    tokenId: z.number().int().positive(),
+    amount: z.number().int().positive().max(1_000_000),
   }),
   z.object({
     type: z.literal("lok/cancel"),
@@ -320,6 +331,12 @@ export type LokListingView = {
   highBidder: string | null;
   highBidderName: string | null;
   highBid: string;
+  /** Order-book minimum. "0" on a legacy bid/settle listing. */
+  minPrice: string;
+  /** Unix seconds stored on the ask. 0 when the log row has no clock. */
+  listedAt: number;
+  /** True for an order-book ask. Legacy listings stay on bid and settle. */
+  book: boolean;
   yours: boolean;
 };
 
@@ -327,6 +344,8 @@ export type LokSnapshot = {
   tokenId: string;
   kek: string;
   items: LokItemBalance[];
+  /** Provisioner inbox. Sends, sales, cancels, and reclaims land here, not in the bag. */
+  inbox: LokItemBalance[];
   listings: LokListingView[];
   /** engine-only: no endpoint. rpc-unwatched: endpoint set, vault not followed. watching: deposits are applied from the checkpoint. */
   chain: "engine-only" | "rpc-unwatched" | "watching";

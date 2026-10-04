@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { LokWorld } from "./lok-world";
 import {
+  chargeSkillRespec,
+  hydrateCraftSkills,
   hydrateLearnedFromLog,
+  hydrateSkillTree,
   readPlayerProgress,
   reconcileCharacterProgress,
+  rememberLedger,
+  RESPEC_KEK_COST,
   shouldChargeForAbility,
   writePlayerProgress,
   type PlayerProgress,
@@ -227,4 +232,205 @@ test("hydrateLearnedFromLog is idempotent and shouldChargeForAbility guards dupl
   assert.equal(shouldChargeForAbility(progress.learned, false, "fire"), false);
   assert.equal(shouldChargeForAbility([], true, "fire"), false);
   assert.equal(shouldChargeForAbility([], false, "fire"), true);
+});
+
+
+test("a failed export does not drop a stack that arrives on the next boot", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lok-gap-"));
+  const lok = LokWorld.open(dir, undefined, {});
+  const spawned = lok.spawn("char-g", "Gap", 0);
+  assert.equal(spawned.ok, true);
+  if (!spawned.ok) return;
+  const token = spawned.tokenId;
+  assert.equal(lok.itemDrop(token, "7", "1").ok, true);
+  assert.equal(lok.itemDrop(token, "8", "1").ok, true);
+
+  let failEight = true;
+  const args = reconcileArgs(dir, lok);
+  reconcileCharacterProgress({
+    ...args,
+    exportItem: (id, itemId, amount) => {
+      if (itemId === "8" && failEight) return { ok: false, error: "export failed" };
+      return lok.exportItem(id, itemId, amount);
+    },
+  });
+  const mid = readPlayerProgress(join(dir, "players", "char-g.json"));
+  assert.equal(mid?.logItemsMoved, false);
+  assert.equal(mid?.inventory.find((row) => row.tokenId === 7)?.amount, 1);
+  assert.equal(mid?.inventory.find((row) => row.tokenId === 8)?.amount, 1);
+  assert.equal(lok.itemOf(token, "7"), "0");
+  assert.equal(lok.itemOf(token, "8"), "1");
+
+  assert.equal(lok.itemDrop(token, "9", "1").ok, true);
+  failEight = false;
+  reconcileCharacterProgress(reconcileArgs(dir, lok));
+  const saved = readPlayerProgress(join(dir, "players", "char-g.json"));
+  assert.equal(saved?.logItemsMoved, true);
+  assert.equal(saved?.inventory.find((row) => row.tokenId === 7)?.amount, 1);
+  assert.equal(saved?.inventory.find((row) => row.tokenId === 8)?.amount, 1);
+  assert.equal(saved?.inventory.find((row) => row.tokenId === 9)?.amount, 1);
+  assert.equal(lok.itemOf(token, "9"), "0");
+  reconcileCharacterProgress(reconcileArgs(dir, lok));
+  const still = readPlayerProgress(join(dir, "players", "char-g.json"));
+  assert.equal(still?.inventory.find((row) => row.tokenId === 7)?.amount, 1);
+  assert.equal(still?.inventory.find((row) => row.tokenId === 8)?.amount, 1);
+  assert.equal(still?.inventory.find((row) => row.tokenId === 9)?.amount, 1);
+});
+
+test("craft levels keep the higher of the save and the log and do not invent one", () => {
+  const progress: PlayerProgress = {
+    version: 1,
+    level: 1,
+    xp: 12,
+    inventory: [],
+    baseMats: {},
+    equip: {},
+    craftSkills: { weaving: { level: 4, xp: 9 } },
+    learned: [],
+    skillUnlocked: [],
+    skillPoints: 0,
+    skillPrestige: 0,
+    freeStats: {},
+    freeStatPoints: 0,
+    claimedStarter: false,
+    dust: 0,
+    subjob: null,
+    logItemsMoved: true,
+  };
+  assert.equal(hydrateCraftSkills(progress, [{ skillId: "weaving", level: 2 }, { skillId: "smithing", level: 3 }]), 1);
+  assert.equal(progress.craftSkills.weaving?.level, 4);
+  assert.equal(progress.craftSkills.weaving?.xp, 9);
+  assert.equal(progress.craftSkills.smithing?.level, 3);
+  assert.equal(progress.craftSkills.smithing?.xp, 0);
+  assert.equal(hydrateCraftSkills(progress, [{ skillId: "alchemy", level: 0 }]), 0);
+  assert.equal(progress.craftSkills.alchemy, undefined);
+});
+
+test("a skill tree the log has not recorded is not wiped or refunded", () => {
+  const progress: PlayerProgress = {
+    version: 1,
+    level: 3,
+    xp: 0,
+    inventory: [],
+    baseMats: {},
+    equip: {},
+    craftSkills: {},
+    learned: [],
+    skillUnlocked: ["time_mage_0", "node_a"],
+    skillPoints: 2,
+    skillPrestige: 0,
+    freeStats: {},
+    freeStatPoints: 0,
+    claimedStarter: false,
+    dust: 0,
+    subjob: null,
+    logItemsMoved: true,
+  };
+  assert.equal(hydrateSkillTree(progress, [], ["time_mage_0"], (id) => id === "time_mage_0", []), false);
+  assert.deepEqual(progress.skillUnlocked, ["time_mage_0", "node_a"]);
+  assert.equal(progress.skillPoints, 2);
+  assert.equal(hydrateSkillTree(progress, ["node_b"], ["time_mage_0"], (id) => id === "time_mage_0", []), true);
+  assert.ok(progress.skillUnlocked.includes("node_b"));
+  assert.equal(progress.skillPoints, 1);
+  assert.equal(hydrateSkillTree(progress, [], ["time_mage_0"], (id) => id === "time_mage_0", ["node_a", "node_b"]), true);
+  assert.deepEqual(progress.skillUnlocked, ["time_mage_0"]);
+  assert.equal(progress.skillPoints, 3);
+});
+
+test("respec spends nothing when the tree has no paid nodes or the balance is short", async () => {
+  let spent = 0;
+  let recorded = 0;
+  const empty = await chargeSkillRespec({
+    charId: "respec-empty",
+    paidNodes: () => [],
+    earnedPoints: 4,
+    kept: () => ["hub"],
+    spend: async (amount) => {
+      spent += amount;
+      return { ok: true };
+    },
+    record: () => {
+      recorded += 1;
+      return { ok: true };
+    },
+    apply: () => {},
+  });
+  assert.equal(empty.ok, false);
+  assert.equal(spent, 0);
+  assert.equal(recorded, 0);
+
+  const short = await chargeSkillRespec({
+    charId: "respec-short",
+    paidNodes: () => ["node_a"],
+    earnedPoints: 4,
+    kept: () => ["hub"],
+    spend: async () => ({ ok: false, error: "Need 10000 KEK (you have 3)." }),
+    record: () => {
+      recorded += 1;
+      return { ok: true };
+    },
+    apply: () => {
+      throw new Error("apply");
+    },
+  });
+  assert.equal(short.ok, false);
+  if (!short.ok) assert.match(short.error, /10000/);
+  assert.equal(recorded, 0);
+  assert.equal(RESPEC_KEK_COST, 10000);
+});
+
+test("one respec at a time and a second call does not spend again", async () => {
+  let nodes = ["hub", "node_a"];
+  let spent = 0;
+  const run = () =>
+    chargeSkillRespec({
+      charId: "respec-once",
+      paidNodes: () => nodes.filter((id) => id !== "hub"),
+      earnedPoints: 6,
+      kept: (clearIds) => nodes.filter((id) => !clearIds.includes(id)),
+      spend: async (amount) => {
+        spent += amount;
+        return { ok: true };
+      },
+      record: () => ({ ok: true }),
+      apply: (unlocked) => {
+        nodes = unlocked;
+      },
+    });
+  const [a, b] = await Promise.all([run(), run()]);
+  assert.equal(a.ok, true);
+  assert.equal(b.ok, false);
+  assert.equal(spent, 10000);
+  assert.deepEqual(nodes, ["hub"]);
+});
+
+test("rememberLedger skips an unchanged player and refuses a corrupt file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lok-ledger-"));
+  const path = join(dir, "char.json");
+  const build = (flags: { logItemsMoved: boolean; logItemsCopied: boolean }) => ({
+    version: 1 as const,
+    level: 1,
+    xp: 0,
+    inventory: [],
+    baseMats: {},
+    equip: {},
+    craftSkills: {},
+    learned: [] as string[],
+    skillUnlocked: ["time_mage_0"],
+    skillPoints: 1,
+    skillPrestige: 0,
+    freeStats: {},
+    freeStatPoints: 0,
+    claimedStarter: false,
+    dust: 0,
+    subjob: null,
+    logItemsMoved: flags.logItemsMoved,
+    logItemsCopied: flags.logItemsCopied,
+  });
+  assert.equal(rememberLedger(path, build), true);
+  assert.equal(rememberLedger(path, build), false);
+  const bad = join(dir, "bad.json");
+  writeFileSync(bad, "{");
+  assert.throws(() => rememberLedger(bad, build));
+  assert.equal(readFileSync(bad, "utf8"), "{");
 });

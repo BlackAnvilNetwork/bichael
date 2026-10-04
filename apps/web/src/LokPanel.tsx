@@ -18,7 +18,9 @@ export function LokPanel({ you, onClose }: Props) {
   const lok = you.lok;
   const [to, setTo] = useState("");
   const [kek, setKek] = useState("1");
+  const [minPrice, setMinPrice] = useState("");
   const [bid, setBid] = useState<Record<string, string>>({});
+  const weekSec = 7 * 24 * 60 * 60;
   const others = units.filter((u) => u.kind === "player" && u.name !== you.name);
 
   if (!lok) {
@@ -138,6 +140,10 @@ export function LokPanel({ you, onClose }: Props) {
         </div>
       ))}
 
+      <div className="lok-row">
+        <input value={minPrice} placeholder="Minimum KEK" onChange={(e) => setMinPrice(e.target.value)} />
+        <span className="lok-note">Minimum price for the next list. A bid buys the cheapest ask and pays what was bid.</span>
+      </div>
       <div className="cmd-section-label">Log · send, list, export</div>
       {lok.items.length === 0 && <p className="lok-note">Nothing spendable on the log.</p>}
       {lok.items.map((row) => (
@@ -155,7 +161,9 @@ export function LokPanel({ you, onClose }: Props) {
           <button
             type="button"
             className="cmd-pill-tab"
-            onClick={() => send({ type: "lok/list", tokenId: row.tokenId, amount: Number(row.amount) })}
+            onClick={() =>
+              send({ type: "lok/list", tokenId: row.tokenId, amount: Number(row.amount), minPrice })
+            }
           >
             List
           </button>
@@ -169,12 +177,29 @@ export function LokPanel({ you, onClose }: Props) {
         </div>
       ))}
 
+      <div className="cmd-section-label">Inbox</div>
+      {(lok.inbox ?? []).length === 0 && <p className="lok-note">Nothing is waiting at the Provisioner.</p>}
+      {(lok.inbox ?? []).map((row) => (
+        <div className="lok-row" key={"inbox-" + row.tokenId}>
+          <span>
+            {itemName(row.tokenId)} x{row.amount}
+          </span>
+          <button
+            type="button"
+            className="cmd-pill-tab"
+            onClick={() => send({ type: "lok/takeInbox", tokenId: row.tokenId, amount: Number(row.amount) })}
+          >
+            Take
+          </button>
+        </div>
+      ))}
+
       <div className="cmd-section-label">Auction</div>
       {lok.listings.length === 0 && <p className="lok-note">No listings.</p>}
       {lok.listings.map((row) => (
         <div className="lok-row" key={row.id}>
           <span>
-            #{row.id} {itemName(row.itemId)} x{row.amount} · {row.sellerName} · bid {row.highBid}
+            #{row.id} {itemName(row.itemId)} x{row.amount}{row.book ? " min " + row.minPrice : ""} · {row.sellerName} · bid {row.highBid}
             {row.highBidderName ? " by " + row.highBidderName : ""}
           </span>
           <input
@@ -185,16 +210,21 @@ export function LokPanel({ you, onClose }: Props) {
           <button
             type="button"
             className="cmd-pill-tab"
-            onClick={() => send({ type: "lok/bid", listingId: row.id, amount: bid[row.id] ?? "" })}
+            onClick={() => send({ type: "lok/bid", itemId: row.itemId, amount: bid[row.id] ?? "" })}
           >
-            Bid
+            {row.book ? "Buy lowest" : "Bid"}
           </button>
           {row.yours && (
             <button type="button" className="cmd-pill-tab" onClick={() => send({ type: "lok/cancel", listingId: row.id })}>
               Cancel
             </button>
           )}
-          {row.highBidder && (
+          {row.book && row.yours && row.listedAt > 0 && Date.now() / 1000 >= row.listedAt + weekSec && (
+            <button type="button" className="cmd-pill-tab" onClick={() => send({ type: "lok/reclaim", listingId: row.id })}>
+              Reclaim
+            </button>
+          )}
+          {!row.book && row.highBidder && (
             <button type="button" className="cmd-pill-tab" onClick={() => send({ type: "lok/settle", listingId: row.id })}>
               Settle
             </button>

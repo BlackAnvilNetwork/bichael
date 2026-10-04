@@ -211,6 +211,51 @@ function describe(entry: RawEntry, logTokenId: string, nameOf: (tokenId: string)
       text = `${character} looted ${item} x${amount}`;
       break;
     }
+    case "ask": {
+      const seller = field(input, "seller");
+      character = who(seller) || seller || owner;
+      text = `${character} asked ${field(input, "minPrice")} KEK for ${item} x${amount} (#${field(input, "listingId")})`;
+      bits.push(who(seller));
+      break;
+    }
+    case "fill": {
+      const bidder = field(input, "bidder");
+      character = who(bidder) || bidder || owner;
+      text = `${character} bought ${item} for ${amount} KEK (#${field(input, "listingId")})`;
+      bits.push("kek", who(bidder));
+      break;
+    }
+    case "cancelAsk":
+    case "reclaimAsk": {
+      const seller = field(input, "seller");
+      character = who(seller) || seller || owner;
+      text = `${character} returned listing #${field(input, "listingId")} to the inbox`;
+      bits.push(who(seller));
+      break;
+    }
+    case "sendInbox": {
+      const from = field(input, "from");
+      const to = field(input, "to");
+      character = who(from) || from || owner;
+      text = `${character} sent ${item} x${amount} to ${who(to) || to} (inbox)`;
+      bits.push(who(from), who(to));
+      break;
+    }
+    case "takeInbox": {
+      character = who(token) || owner;
+      text = `${character} took ${item} x${amount} from the inbox`;
+      break;
+    }
+    case "craftSkill": {
+      character = who(token) || owner;
+      text = `${character} ${field(input, "skillId")} level ${field(input, "level")}`;
+      break;
+    }
+    case "respecSkills": {
+      character = who(token) || owner;
+      text = `${character} respecced skills`;
+      break;
+    }
     default:
       break;
   }

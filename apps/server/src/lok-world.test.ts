@@ -291,3 +291,62 @@ test("explore reads yours or everyone, searches, and pages newest first", () => 
   const seen = new Set(page.events.map((event) => event.seq));
   assert.ok(older.events.every((event) => !seen.has(event.seq)));
 });
+
+test("order book sells the lowest Pale Dust ask at the bid and leaves the rest", () => {
+  const lok = world();
+  const a = lok.spawn("char-a", "Ada", 0);
+  const b = lok.spawn("char-b", "Bea", 1);
+  const c = lok.spawn("char-c", "Cam", 2);
+  const d = lok.spawn("char-d", "Dot", 0);
+  assert.equal(a.ok && b.ok && c.ok && d.ok, true);
+  if (!a.ok || !b.ok || !c.ok || !d.ok) return;
+  const dust = "1057";
+  assert.equal(noteImport(lok, a.tokenId, dust, "1", "1").ok, true);
+  assert.equal(noteImport(lok, b.tokenId, dust, "1", "1").ok, true);
+  assert.equal(noteImport(lok, c.tokenId, dust, "1", "1").ok, true);
+  assert.equal(noteDeposit(lok, a.tokenId, "100", "2").ok, true);
+  assert.equal(noteDeposit(lok, d.tokenId, "3000", "1").ok, true);
+  const t0 = 1_700_000_000;
+  const ask100 = lok.ask(a.tokenId, dust, "1", "100", t0);
+  const ask1000 = lok.ask(b.tokenId, dust, "1", "1000", t0 + 1);
+  const ask2000 = lok.ask(c.tokenId, dust, "1", "2000", t0 + 2);
+  assert.equal(ask100.ok && ask1000.ok && ask2000.ok, true);
+  if (!ask100.ok || !ask1000.ok || !ask2000.ok) return;
+
+  const own = lok.fill(a.tokenId, dust, "100");
+  assert.equal(own.ok, false);
+  if (!own.ok) assert.match(own.error, /ask/i);
+  assert.equal(lok.kekOf(a.tokenId), "100");
+  assert.equal(lok.view(a.tokenId).listings.some((row) => row.id === ask100.listingId), true);
+
+  const low = lok.fill(d.tokenId, dust, "50");
+  assert.equal(low.ok, false);
+  assert.equal(lok.kekOf(d.tokenId), "3000");
+
+  const bought = lok.fill(d.tokenId, dust, "2000");
+  assert.equal(bought.ok, true);
+  if (!bought.ok) return;
+  assert.equal(bought.listingId, ask100.listingId);
+  assert.equal(bought.seller, a.tokenId);
+  assert.equal(lok.kekOf(a.tokenId), "2100");
+  assert.equal(lok.kekOf(d.tokenId), "1000");
+  assert.equal(lok.itemOf(d.tokenId, dust), "0");
+  assert.equal(lok.view(d.tokenId).inbox.find((row) => row.tokenId === 1057)?.amount, "1");
+  const left = lok.view(d.tokenId).listings.map((row) => row.minPrice).sort();
+  assert.deepEqual(left, ["1000", "2000"]);
+
+  assert.equal(lok.sendInbox(d.tokenId, b.tokenId, dust, "1").ok, false);
+  assert.equal(lok.takeInbox(d.tokenId, dust, "1").ok, true);
+  assert.equal(lok.view(d.tokenId).inbox.length, 0);
+  assert.equal(lok.itemOf(d.tokenId, dust), "0");
+
+  assert.equal(lok.cancel(ask1000.listingId!, b.tokenId).ok, true);
+  assert.equal(lok.view(b.tokenId).inbox.find((row) => row.tokenId === 1057)?.amount, "1");
+  assert.equal(lok.itemOf(b.tokenId, dust), "0");
+
+  const early = lok.reclaim(ask2000.listingId!, c.tokenId, t0 + 2 + 7 * 24 * 60 * 60 - 1);
+  assert.equal(early.ok, false);
+  assert.equal(lok.reclaim(ask2000.listingId!, c.tokenId, t0 + 2 + 7 * 24 * 60 * 60).ok, true);
+  assert.equal(lok.view(c.tokenId).inbox.find((row) => row.tokenId === 1057)?.amount, "1");
+  assert.equal(lok.view(c.tokenId).listings.length, 0);
+});

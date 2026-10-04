@@ -430,6 +430,9 @@ export function SkillTreePanel({ onClose }: Props) {
           </div>
 
           <aside className="skill-tree-detail">
+            <button type="button" className="cmd-mini-btn" onClick={() => send({ type: "skill/respec" })}>
+              Respec (10000 KEK)
+            </button>
             {selectedNode ? (
               <>
                 <div className="skill-tree-detail-kicker">Node detail</div>

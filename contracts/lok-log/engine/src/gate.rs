@@ -56,13 +56,17 @@ impl Gate {
             Err(err) => return fail(&format!("bad json: {err}")),
         };
         let op = match value.get("op").and_then(|v| v.as_str()) {
-            Some(op) => op,
+            Some(op) => op.to_string(),
             None => return fail("missing op"),
         };
         if op == "state" {
             return ok_state(&self.world);
         }
-        let input = match command_to_input(&value, op) {
+        let value = if op == "fill" { match resolve_fill(&self.world, value) {
+            Ok(v) => v,
+            Err(err) => return fail(&err),
+        } } else { value };
+        let input = match command_to_input(&value, &op) {
             Ok(input) => input,
             Err(err) => return fail(&err),
         };
@@ -83,6 +87,26 @@ impl Gate {
             Err(err) => fail(&engine_error(&err)),
         }
     }
+}
+
+fn dec_field(value: &Value, key: &str) -> Result<U256, String> {
+    let raw = value.get(key).and_then(|v| v.as_str()).ok_or_else(|| format!("missing {key}"))?;
+    U256::parse_dec(raw).map_err(|_| format!("bad {key}"))
+}
+
+/// A fill names an item and a bid. The engine selects the ask so the client cannot pick a higher one.
+fn resolve_fill(world: &World, value: Value) -> Result<Value, String> {
+    if value.get("listingId").is_some() {
+        return Ok(value);
+    }
+    let bidder = dec_field(&value, "bidder")?;
+    let item_id = dec_field(&value, "itemId")?;
+    let amount = dec_field(&value, "amount")?;
+    let chosen = world.choose_ask(bidder, item_id, amount).map_err(|err| err.to_string())?;
+    let mut value = value;
+    let obj = value.as_object_mut().ok_or_else(|| "command must be an object".to_string())?;
+    obj.insert("listingId".to_string(), Value::String(chosen.id.to_dec()));
+    Ok(value)
 }
 
 fn command_to_input(value: &Value, op: &str) -> Result<Input, String> {
@@ -149,6 +173,11 @@ fn state_body(world: &World) -> serde_json::Map<String, Value> {
             .into_iter()
             .map(|(material_id, amount)| json!({"materialId": material_id, "amount": amount.to_dec()}))
             .collect();
+        let craft_skills: Vec<Value> = world
+            .craft_skills_of(&snap.token_id)
+            .into_iter()
+            .map(|(skill_id, level)| json!({"skillId": skill_id, "level": level}))
+            .collect();
         characters.push(json!({
             "tokenId": snap.token_id.to_dec(),
             "kek": snap.kek.to_dec(),
@@ -156,7 +185,10 @@ fn state_body(world: &World) -> serde_json::Map<String, Value> {
             "level": world.level(&snap.token_id).unwrap_or(0),
             "abilities": abilities,
             "crafts": crafts,
+            "craftSkills": craft_skills,
             "harvests": harvests,
+            "inbox": world.inbox_of(&snap.token_id).into_iter().map(|(item_id, amount)| json!({"itemId": item_id.to_dec(), "amount": amount.to_dec()})).collect::<Vec<_>>(),
+            "droppedSkills": world.dropped_skills_of(&snap.token_id),
             "logLen": self_log_len(world, &snap.token_id),
             "logHead": hex32(&world.character_head(&snap.token_id).unwrap_or([0u8; 32])),
             "items": items,
@@ -171,6 +203,9 @@ fn state_body(world: &World) -> serde_json::Map<String, Value> {
             "amount": listing.amount.to_dec(),
             "highBidder": listing.high_bidder.map(|id| id.to_dec()),
             "highBid": listing.high_bid.to_dec(),
+            "minPrice": listing.min_price.to_dec(),
+            "listedAt": listing.listed_at,
+            "book": listing.book,
         }));
     }
     let mut map = serde_json::Map::new();
