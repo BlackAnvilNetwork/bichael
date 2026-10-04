@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { LokWorld, MAX_CHARS_PER_WALLET, NAME_RESERVE_MS } from "./lok-world";
+import type { AddressInfo } from "node:net";
+import { WebSocket, WebSocketServer } from "ws";
 import {
   __clearPendingChallengesForTests,
   __expirePendingForTests,
@@ -12,8 +14,15 @@ import {
   AUTH_HELLO_LIMIT,
   AUTH_PENDING_GLOBAL,
   AUTH_PENDING_PER_CONNECTION,
+  AUTH_PENDING_PER_IP,
+  authAllowlist,
   authMessage,
+  authVerifyClient,
+  clientAddress,
+  dropAuthConnection,
+  isLoopbackIp,
   issueAuthChallenge,
+  resolveAuthOrigin,
   verifyAuthLogin,
 } from "./wallet-auth";
 
@@ -155,7 +164,7 @@ test("signed login accepts a fresh nonce and rejects reuse or bare address auth"
     nonce: "abc",
     issuedAt: new Date().toISOString(),
   });
-  assert.match(msg, /Bellgrave wants you to sign in/);
+  assert.match(msg, /^localhost wants you to sign in with your Ethereum account:/);
   assert.match(msg, /Chain ID: 31337/);
 });
 
@@ -185,6 +194,7 @@ test("one nonce cannot authorize two in-flight logins", async () => {
   const challenged = issueAuthChallenge(account.address, { connectionId: "conn-a", domain: "localhost" });
   assert.equal(challenged.ok, true);
   if (!challenged.ok) return;
+  assert.match(challenged.message, /^localhost wants you to sign in with your Ethereum account:/);
   assert.match(challenged.message, /Domain: localhost/);
   assert.match(challenged.message, /Expiration Time: /);
   const signature = await account.signMessage({ message: challenged.message });
@@ -216,6 +226,7 @@ test("login rejects a different connection, a different message, and an expired 
   });
   assert.equal(otherConn.ok, false);
 
+  assert.match(challenged.message, /^bellgrave\.local wants you to sign in with your Ethereum account:/);
   const loosely = challenged.message + "\nExtra: still has the nonce";
   assert.equal(loosely.includes(challenged.nonce), true);
   assert.equal(loosely.toLowerCase().includes(account.address.toLowerCase()), true);
@@ -267,13 +278,13 @@ test("auth challenges are capped per connection and globally, and hellos are rat
   let issuedCount = 0;
   for (let c = 0; c < AUTH_PENDING_GLOBAL / AUTH_PENDING_PER_CONNECTION; c++) {
     for (let i = 0; i < AUTH_PENDING_PER_CONNECTION; i++) {
-      const issued = issueAuthChallenge(wallet, { connectionId: "g" + c });
+      const issued = issueAuthChallenge(wallet, { connectionId: "g" + c, clientIp: "198.51.100." + (c + 1) });
       assert.equal(issued.ok, true);
       issuedCount += 1;
     }
   }
   assert.equal(issuedCount, AUTH_PENDING_GLOBAL);
-  const globalOverflow = issueAuthChallenge(wallet, { connectionId: "g-extra" });
+  const globalOverflow = issueAuthChallenge(wallet, { connectionId: "g-extra", clientIp: "198.51.100.250" });
   assert.equal(globalOverflow.ok, false);
 
   __resetAuthNoncesForTests();
@@ -301,4 +312,168 @@ test("bindWallet does not replace a wallet that is already set", () => {
   const again = LokWorld.open(dir, undefined, {});
   assert.equal(again.charsForWallet(first).some((row) => row.charId === "char-own"), true);
   assert.equal(again.charsForWallet(second).length, 0);
+});
+
+function upgradeOnce(port: number, origin?: string): Promise<"open" | "rejected"> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: "open" | "rejected") => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const ws = new WebSocket("ws://127.0.0.1:" + port, origin ? { origin } : undefined);
+    ws.once("open", () => {
+      ws.close();
+      finish("open");
+    });
+    ws.once("unexpected-response", () => finish("rejected"));
+    ws.once("error", () => finish("rejected"));
+  });
+}
+
+test("a non-loopback address cannot fill the global challenge cap", () => {
+  __resetAuthNoncesForTests();
+  const wallet = "0x9999999999999999999999999999999999999999";
+  const ip = "203.0.113.8";
+  let held = 0;
+  for (let c = 0; c < 30; c++) {
+    for (let i = 0; i < AUTH_PENDING_PER_CONNECTION; i++) {
+      const issued = issueAuthChallenge(wallet, { connectionId: "rip" + c, clientIp: ip });
+      if (issued.ok) held += 1;
+    }
+  }
+  assert.ok(held <= AUTH_PENDING_PER_IP);
+  assert.ok(held < AUTH_PENDING_GLOBAL);
+  assert.equal(held, AUTH_PENDING_PER_IP);
+  const outsider = issueAuthChallenge(wallet, { connectionId: "other-ip", clientIp: "203.0.113.9" });
+  assert.equal(outsider.ok, true);
+
+  __resetAuthNoncesForTests();
+  let loopHeld = 0;
+  const loops = AUTH_PENDING_GLOBAL / AUTH_PENDING_PER_CONNECTION + 2;
+  for (let c = 0; c < loops; c++) {
+    for (let i = 0; i < AUTH_PENDING_PER_CONNECTION; i++) {
+      const issued = issueAuthChallenge(wallet, { connectionId: "loop" + c, clientIp: "127.0.0.1" });
+      assert.equal(issued.ok, true);
+      loopHeld += 1;
+    }
+  }
+  assert.ok(loopHeld > AUTH_PENDING_GLOBAL);
+  const afterLoop = issueAuthChallenge(wallet, { connectionId: "still-remote", clientIp: "203.0.113.50" });
+  assert.equal(afterLoop.ok, true);
+
+  __resetAuthNoncesForTests();
+  for (let c = 0; c < 200; c++) {
+    const issued = issueAuthChallenge(wallet, { connectionId: "lb" + c, clientIp: "::1" });
+    assert.equal(issued.ok, true, String(c));
+  }
+  const afterTracker = issueAuthChallenge(wallet, { connectionId: "after-loop", clientIp: "203.0.113.77" });
+  assert.equal(afterTracker.ok, true);
+});
+
+test("a closed connection frees its pending challenges", () => {
+  __resetAuthNoncesForTests();
+  const wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const ip = "203.0.113.40";
+  for (let i = 0; i < AUTH_PENDING_PER_CONNECTION; i++) {
+    assert.equal(issueAuthChallenge(wallet, { connectionId: "stay", clientIp: ip }).ok, true);
+  }
+  assert.equal(issueAuthChallenge(wallet, { connectionId: "stay", clientIp: ip }).ok, false);
+  dropAuthConnection("stay");
+  assert.equal(issueAuthChallenge(wallet, { connectionId: "stay", clientIp: ip }).ok, true);
+
+  __resetAuthNoncesForTests();
+  const slots = AUTH_PENDING_GLOBAL / AUTH_PENDING_PER_CONNECTION;
+  for (let c = 0; c < slots; c++) {
+    for (let i = 0; i < AUTH_PENDING_PER_CONNECTION; i++) {
+      const issued = issueAuthChallenge(wallet, {
+        connectionId: "fill" + c,
+        clientIp: "198.51.100." + (c + 1),
+      });
+      assert.equal(issued.ok, true);
+    }
+  }
+  assert.equal(
+    issueAuthChallenge(wallet, { connectionId: "blocked", clientIp: "198.51.100.250" }).ok,
+    false,
+  );
+  dropAuthConnection("fill0");
+  assert.equal(
+    issueAuthChallenge(wallet, { connectionId: "freed", clientIp: "198.51.100.250" }).ok,
+    true,
+  );
+});
+
+test("x-forwarded-for is ignored unless the trusted proxy setting is on", () => {
+  const req = {
+    headers: { "x-forwarded-for": "203.0.113.9, 10.0.0.2" },
+    socket: { remoteAddress: "::ffff:127.0.0.1" },
+  };
+  const local = clientAddress(req, {});
+  assert.equal(local, "127.0.0.1");
+  assert.equal(isLoopbackIp(local), true);
+  assert.equal(clientAddress(req, { AUTH_TRUST_PROXY: "1" }), "203.0.113.9");
+  assert.equal(clientAddress(req, { AUTH_TRUST_PROXY: "true" }), "203.0.113.9");
+});
+
+test("a missing or foreign Origin is rejected on upgrade", async () => {
+  const allow = authAllowlist({ AUTH_ORIGINS: "https://play.example" });
+  assert.deepEqual(allow, [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://play.example",
+  ]);
+  const fromOrigin = resolveAuthOrigin("http://127.0.0.1:5173", allow);
+  assert.equal(fromOrigin.ok, true);
+  if (!fromOrigin.ok) return;
+  assert.equal(fromOrigin.domain, "127.0.0.1:5173");
+  assert.equal(resolveAuthOrigin(undefined, allow).ok, false);
+  assert.equal(resolveAuthOrigin("https://evil.example", allow).ok, false);
+  assert.equal(resolveAuthOrigin("http://localhost:5173/phish", allow).ok, false);
+
+  const wss = new WebSocketServer({
+    port: 0,
+    verifyClient: (info: { origin: string }) => authVerifyClient(info, { AUTH_ORIGINS: "https://play.example" }),
+  });
+  if (!wss.address()) {
+    await new Promise<void>((resolve) => wss.once("listening", () => resolve()));
+  }
+  const port = (wss.address() as AddressInfo).port;
+  try {
+    assert.equal(await upgradeOnce(port), "rejected");
+    assert.equal(await upgradeOnce(port, "https://evil.example"), "rejected");
+    assert.equal(await upgradeOnce(port, "http://localhost:5173"), "open");
+    assert.equal(await upgradeOnce(port, "http://127.0.0.1:5173"), "open");
+    assert.equal(await upgradeOnce(port, "https://play.example"), "open");
+  } finally {
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+  }
+
+  __resetAuthNoncesForTests();
+  const wallet = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const challenged = issueAuthChallenge(wallet, {
+    connectionId: "siwe",
+    domain: fromOrigin.domain,
+    clientIp: "203.0.113.15",
+  });
+  assert.equal(challenged.ok, true);
+  if (!challenged.ok) return;
+  assert.equal(
+    challenged.message.startsWith("127.0.0.1:5173 wants you to sign in with your Ethereum account:\n"),
+    true,
+  );
+  const swapped =
+    "evil.example wants you to sign in with your Ethereum account:\n" +
+    challenged.message.slice(challenged.message.indexOf("\n") + 1);
+  assert.equal(swapped.includes(challenged.nonce), true);
+  assert.notEqual(swapped, challenged.message);
+  const rejected = await verifyAuthLogin({
+    wallet,
+    signature: "0x" + "11".repeat(65),
+    nonce: challenged.nonce,
+    message: swapped,
+    connectionId: "siwe",
+  });
+  assert.equal(rejected.ok, false);
 });

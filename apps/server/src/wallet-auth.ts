@@ -3,25 +3,150 @@ import { randomBytes } from "node:crypto";
 import { verifyMessage, type Hex } from "viem";
 
 const NONCE_TTL_MS = 5 * 60_000;
-/** Pending challenges one connection may hold at once. */
+/** Pending challenges one connection may hold at once. Applies to every address. */
 export const AUTH_PENDING_PER_CONNECTION = 5;
-/** Pending challenges across every connection. */
+/**
+ * Pending challenges one non-loopback address may hold.
+ * Kept below the global cap so a single remote IP cannot fill it.
+ */
+export const AUTH_PENDING_PER_IP = 20;
+/** Pending challenges across non-loopback addresses. Loopback does not spend this. */
 export const AUTH_PENDING_GLOBAL = 100;
 /** auth/hello attempts allowed per connection in the window below. */
 export const AUTH_HELLO_LIMIT = 10;
+/** auth/hello attempts allowed per non-loopback address in the window below. */
+export const AUTH_HELLO_PER_IP = 40;
+/** Distinct remote connections remembered in the hello tracker for one address. */
+export const AUTH_HELLO_CONNECTIONS_PER_IP = 20;
 export const AUTH_HELLO_WINDOW_MS = 60_000;
+/** Remote hello-tracker entries. Loopback connections are not stored here. */
 const MAX_HELLO_TRACKED = 200;
+
+/** Vite dev client. More origins can be added with AUTH_ORIGINS (comma-separated). */
+export const DEFAULT_AUTH_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"];
 
 type PendingNonce = {
   wallet: string;
   message: string;
   expiresAt: number;
   connectionId: string;
+  clientIp: string;
+};
+
+type HelloRow = {
+  ip: string;
+  hits: number[];
 };
 
 const usedNonces = new Map<string, number>();
 const pendingNonces = new Map<string, PendingNonce>();
-const helloHits = new Map<string, number[]>();
+const remoteHellos = new Map<string, HelloRow>();
+const loopbackHellos = new Map<string, number[]>();
+
+export function normalizeIp(ip: string): string {
+  const trimmed = ip.trim().toLowerCase();
+  if (trimmed.startsWith("::ffff:")) {
+    const v4 = trimmed.slice("::ffff:".length);
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(v4)) return v4;
+  }
+  return trimmed;
+}
+
+export function isLoopbackIp(ip: string): boolean {
+  const n = normalizeIp(ip);
+  return n === "127.0.0.1" || n === "::1";
+}
+
+function trustsProxy(env: Record<string, string | undefined>): boolean {
+  const value = (env.AUTH_TRUST_PROXY ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+/**
+ * Socket remote address by default.
+ * X-Forwarded-For is used only when AUTH_TRUST_PROXY is explicitly on.
+ */
+export function clientAddress(
+  req: {
+    headers: { [key: string]: string | string[] | undefined };
+    socket: { remoteAddress?: string | null };
+  },
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const remote = normalizeIp(req.socket.remoteAddress ?? "");
+  if (!trustsProxy(env)) return remote;
+  const header = req.headers["x-forwarded-for"];
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (!raw) return remote;
+  const first = raw.split(",")[0]?.trim() ?? "";
+  return first ? normalizeIp(first) : remote;
+}
+
+function canonicalOrigin(value: string): { origin: string; domain: string } | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password) return null;
+  if (url.pathname !== "/" && url.pathname !== "") return null;
+  if (url.search || url.hash) return null;
+  return { origin: url.origin, domain: url.host };
+}
+
+/** Local defaults plus AUTH_ORIGINS. Not a secret. */
+export function authAllowlist(env: Record<string, string | undefined> = process.env): string[] {
+  const extras = (env.AUTH_ORIGINS ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of [...DEFAULT_AUTH_ORIGINS, ...extras]) {
+    const canon = canonicalOrigin(entry);
+    if (!canon || seen.has(canon.origin)) continue;
+    seen.add(canon.origin);
+    out.push(canon.origin);
+  }
+  return out;
+}
+
+export function resolveAuthOrigin(
+  originHeader: string | undefined,
+  allowlist: readonly string[],
+): { ok: true; origin: string; domain: string } | { ok: false; error: string } {
+  if (!originHeader || !originHeader.trim()) {
+    return { ok: false, error: "Origin required." };
+  }
+  const presented = canonicalOrigin(originHeader.trim());
+  if (!presented) return { ok: false, error: "Origin is not allowed." };
+  for (const entry of allowlist) {
+    const allowed = canonicalOrigin(entry);
+    if (allowed && allowed.origin === presented.origin) {
+      return { ok: true, origin: presented.origin, domain: presented.domain };
+    }
+  }
+  return { ok: false, error: "Origin is not allowed." };
+}
+
+/** True when the websocket upgrade Origin is on the allowlist. Missing Origin is rejected. */
+export function authVerifyClient(
+  info: { origin?: string | string[] },
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const origin = Array.isArray(info.origin) ? info.origin[0] : info.origin;
+  return resolveAuthOrigin(origin, authAllowlist(env)).ok;
+}
+
+function pruneHellos(map: Map<string, HelloRow>, now: number) {
+  for (const [id, row] of map) {
+    const fresh = row.hits.filter((t) => now - t < AUTH_HELLO_WINDOW_MS);
+    if (fresh.length === 0) map.delete(id);
+    else if (fresh.length !== row.hits.length) row.hits = fresh;
+  }
+}
 
 function prune(now = Date.now()) {
   for (const [nonce, exp] of usedNonces) {
@@ -30,10 +155,11 @@ function prune(now = Date.now()) {
   for (const [nonce, row] of pendingNonces) {
     if (row.expiresAt <= now) pendingNonces.delete(nonce);
   }
-  for (const [id, hits] of helloHits) {
+  pruneHellos(remoteHellos, now);
+  for (const [id, hits] of loopbackHellos) {
     const fresh = hits.filter((t) => now - t < AUTH_HELLO_WINDOW_MS);
-    if (fresh.length === 0) helloHits.delete(id);
-    else if (fresh.length !== hits.length) helloHits.set(id, fresh);
+    if (fresh.length === 0) loopbackHellos.delete(id);
+    else if (fresh.length !== hits.length) loopbackHellos.set(id, fresh);
   }
 }
 
@@ -45,19 +171,58 @@ function pendingFor(connectionId: string): number {
   return n;
 }
 
-function allowHello(connectionId: string, now: number): boolean {
-  let hits = helloHits.get(connectionId);
-  if (!hits) {
-    if (helloHits.size >= MAX_HELLO_TRACKED) return false;
-    hits = [];
+function pendingForIp(clientIp: string): number {
+  let n = 0;
+  for (const row of pendingNonces.values()) {
+    if (row.clientIp === clientIp) n += 1;
   }
-  hits = hits.filter((t) => now - t < AUTH_HELLO_WINDOW_MS);
+  return n;
+}
+
+function pendingGlobal(): number {
+  let n = 0;
+  for (const row of pendingNonces.values()) {
+    if (!isLoopbackIp(row.clientIp)) n += 1;
+  }
+  return n;
+}
+
+function allowHello(connectionId: string, clientIp: string, now: number): boolean {
+  if (isLoopbackIp(clientIp)) {
+    const hits = (loopbackHellos.get(connectionId) ?? []).filter((t) => now - t < AUTH_HELLO_WINDOW_MS);
+    if (hits.length >= AUTH_HELLO_LIMIT) {
+      loopbackHellos.set(connectionId, hits);
+      return false;
+    }
+    hits.push(now);
+    loopbackHellos.set(connectionId, hits);
+    return true;
+  }
+  const existing = remoteHellos.get(connectionId);
+  const hits = (existing?.hits ?? []).filter((t) => now - t < AUTH_HELLO_WINDOW_MS);
+  if (!existing) {
+    if (remoteHellos.size >= MAX_HELLO_TRACKED) return false;
+    let tracked = 0;
+    for (const row of remoteHellos.values()) {
+      if (row.ip === clientIp) tracked += 1;
+    }
+    if (tracked >= AUTH_HELLO_CONNECTIONS_PER_IP) return false;
+  }
   if (hits.length >= AUTH_HELLO_LIMIT) {
-    helloHits.set(connectionId, hits);
+    remoteHellos.set(connectionId, { ip: clientIp, hits });
+    return false;
+  }
+  let ipHits = hits.length;
+  for (const [id, row] of remoteHellos) {
+    if (id === connectionId || row.ip !== clientIp) continue;
+    ipHits += row.hits.filter((t) => now - t < AUTH_HELLO_WINDOW_MS).length;
+  }
+  if (ipHits >= AUTH_HELLO_PER_IP) {
+    if (existing) remoteHellos.set(connectionId, { ip: clientIp, hits });
     return false;
   }
   hits.push(now);
-  helloHits.set(connectionId, hits);
+  remoteHellos.set(connectionId, { ip: clientIp, hits });
   return true;
 }
 
@@ -80,7 +245,7 @@ export function authMessage(args: {
   const domain = (args.domain ?? "localhost").trim() || "localhost";
   const expirationTime = args.expirationTime ?? new Date(Date.now() + NONCE_TTL_MS).toISOString();
   return [
-    "Bellgrave wants you to sign in with your Ethereum account:",
+    domain + " wants you to sign in with your Ethereum account:",
     wallet,
     "",
     "Domain: " + domain,
@@ -96,8 +261,10 @@ export function authMessage(args: {
 export type AuthChallengeOpts = {
   /** Websocket that asked for this nonce. A different socket cannot redeem it. */
   connectionId?: string;
-  /** SIWE domain, usually the request host. */
+  /** SIWE domain: host of the allowlisted Origin, never a client Host header. */
   domain?: string;
+  /** Normalized socket address. Loopback does not spend the global budget. */
+  clientIp?: string;
   now?: number;
 };
 
@@ -112,13 +279,19 @@ export function issueAuthChallenge(
     return { ok: false, error: "Wallet must be a 0x address." };
   }
   const connectionId = opts.connectionId ?? "";
+  const clientIp = normalizeIp(opts.clientIp ?? "");
   if (pendingFor(connectionId) >= AUTH_PENDING_PER_CONNECTION) {
     return { ok: false, error: "Too many pending login challenges." };
   }
-  if (pendingNonces.size >= AUTH_PENDING_GLOBAL) {
-    return { ok: false, error: "Too many pending login challenges." };
+  if (!isLoopbackIp(clientIp)) {
+    if (pendingForIp(clientIp) >= AUTH_PENDING_PER_IP) {
+      return { ok: false, error: "Too many pending login challenges." };
+    }
+    if (pendingGlobal() >= AUTH_PENDING_GLOBAL) {
+      return { ok: false, error: "Too many pending login challenges." };
+    }
   }
-  if (!allowHello(connectionId, now)) {
+  if (!allowHello(connectionId, clientIp, now)) {
     return { ok: false, error: "Too many login challenges. Wait a moment." };
   }
   const nonce = randomBytes(16).toString("hex");
@@ -132,7 +305,7 @@ export function issueAuthChallenge(
     expirationTime: new Date(expiresAt).toISOString(),
     domain,
   });
-  pendingNonces.set(nonce, { wallet: addr, message, expiresAt, connectionId });
+  pendingNonces.set(nonce, { wallet: addr, message, expiresAt, connectionId, clientIp });
   return { ok: true, nonce, issuedAt, message };
 }
 
@@ -194,14 +367,16 @@ export function dropAuthConnection(connectionId: string) {
   for (const [nonce, row] of pendingNonces) {
     if (row.connectionId === connectionId) pendingNonces.delete(nonce);
   }
-  helloHits.delete(connectionId);
+  remoteHellos.delete(connectionId);
+  loopbackHellos.delete(connectionId);
 }
 
 /** Test helper: mark a nonce used without verifying. */
 export function __resetAuthNoncesForTests() {
   usedNonces.clear();
   pendingNonces.clear();
-  helloHits.clear();
+  remoteHellos.clear();
+  loopbackHellos.clear();
 }
 
 /** Test helper: drop pending rows but keep the hello rate window. */

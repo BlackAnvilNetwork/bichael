@@ -419,3 +419,18 @@ test("a send uses the character id and does not deliver to a lookalike name", ()
   assert.equal(opened.kekOf(real.tokenId), "0");
   assert.equal(opened.kekOf(sender.tokenId), "3");
 });
+
+test("a name outside the ascii alphabet is rejected and Chrona 2 still works", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lok-alpha-"));
+  const lok = LokWorld.open(dir, undefined, {});
+  const ok = lok.claimName("char-ok", "  Chrona  2 ");
+  assert.equal(ok.ok, true);
+  if (ok.ok) assert.equal(ok.name, "Chrona 2");
+  const punct = lok.claimName("char-punct", "Chrona!");
+  assert.equal(punct.ok, false);
+  const look = lok.claimName("char-look", "Chr\u043ena");
+  assert.equal(look.ok, false);
+  assert.equal(lok.claimName("char-dup", "chrona 2").ok, false);
+  const spawned = lok.spawn("char-ok", "Chrona 2", 0);
+  assert.equal(spawned.ok, true);
+});

@@ -188,7 +188,7 @@ import {
 import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
 import { characterNameKey, normalizeCharacterName } from "./character-name";
 import { randomBytes } from "node:crypto";
-import { dropAuthConnection, issueAuthChallenge, verifyAuthLogin, isEthAddress } from "./wallet-auth";
+import { authAllowlist, authVerifyClient, clientAddress, dropAuthConnection, issueAuthChallenge, resolveAuthOrigin, verifyAuthLogin, isEthAddress } from "./wallet-auth";
 import { defaultLokDir, LokWorld } from "./lok-world";
 import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, rememberLedger, chargeSkillRespec, RESPEC_KEK_COST, shouldChargeForAbility, type PlayerProgress } from "./player-progress";
 import { debugCheatsEnabled } from "./debug-cheats";
@@ -4224,7 +4224,8 @@ function adoptOrphanLogs(wallet: string, ws: WebSocket) {
     const jobId = JOB_IDS[row.job];
     const job = jobId && isJobId(jobId) && JOBS[jobId].playable ? jobId : "time_mage";
     const crowded = (counts.get(characterNameKey(row.name)) ?? 0) > 1;
-    const renamed = (crowded ? row.name + " #" + row.tokenId : row.name).slice(0, 16);
+    // Space plus token id stays inside the ASCII name alphabet. A hash would be rejected.
+    const renamed = (crowded ? row.name + " " + row.tokenId : row.name).slice(0, 16);
     if (renamed !== row.name) {
       const named = lok.setBoundName(row.charId, renamed);
       if (!named.ok) {
@@ -4259,10 +4260,11 @@ function onMessage(ws: WebSocket, data: string) {
   }
 
   if (msg.type === "auth/hello") {
-    const sock = ws as WebSocket & { authConnId?: string; authDomain?: string };
+    const sock = ws as WebSocket & { authConnId?: string; authDomain?: string; authIp?: string };
     const challenged = issueAuthChallenge(msg.wallet, {
       connectionId: sock.authConnId,
       domain: sock.authDomain,
+      clientIp: sock.authIp,
     });
     if (!challenged.ok) {
       send(ws, { type: "error", message: challenged.error });
@@ -4543,13 +4545,23 @@ function onMessage(ws: WebSocket, data: string) {
   }
 }
 
-const wss = new WebSocketServer({ port: PORT });
+const AUTH_ORIGINS = authAllowlist();
+const wss = new WebSocketServer({
+  port: PORT,
+  verifyClient: (info: { origin: string }) => authVerifyClient(info),
+});
 wss.on("connection", (ws, req) => {
-  const sock = ws as WebSocket & { authConnId?: string; authDomain?: string };
+  const sock = ws as WebSocket & { authConnId?: string; authDomain?: string; authIp?: string };
+  const originHeader = req.headers.origin;
+  const originValue = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+  const origin = resolveAuthOrigin(originValue, AUTH_ORIGINS);
+  if (!origin.ok) {
+    ws.close(1008, "Origin");
+    return;
+  }
   sock.authConnId = randomBytes(8).toString("hex");
-  const hostHeader = req.headers.host;
-  const host = typeof hostHeader === "string" ? hostHeader.split(":")[0]?.trim() : "";
-  sock.authDomain = host || "localhost";
+  sock.authDomain = origin.domain;
+  sock.authIp = clientAddress(req);
   ws.on("message", (buf) => onMessage(ws, buf.toString()));
   ws.on("close", () => {
     if (sock.authConnId) dropAuthConnection(sock.authConnId);

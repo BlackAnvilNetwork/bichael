@@ -2,7 +2,10 @@
 
 const EXTRA_INVISIBLE = /[\u115F\u1160\u180E\u2800\u3164\uFFA0]/g;
 
-/** Non-ASCII letters that survive NFKC and still look like Latin. */
+/**
+ * Legacy comparison only. New names are rejected unless they are ASCII letters,
+ * digits, and single spaces, so this partial table is not the lookalike defense.
+ */
 const CONFUSABLE: Record<string, string> = {
   "\u0430": "a",
   "\u0435": "e",
@@ -60,6 +63,9 @@ export function normalizeCharacterName(
   const length = [...name].length;
   if (length < 2 || length > 16) {
     return { ok: false, error: "Character names must be 2\u201316 characters." };
+  }
+  if (!/^[A-Za-z0-9]+(?: [A-Za-z0-9]+)*$/.test(name)) {
+    return { ok: false, error: "Character names use letters, digits, and single spaces." };
   }
   const key = characterNameKey(name);
   if (!key) return { ok: false, error: "Name a character. Blank names are not allowed." };
