@@ -345,11 +345,8 @@ test("respec spends nothing when the tree has no paid nodes or the balance is sh
     paidNodes: () => [],
     earnedPoints: 4,
     kept: () => ["hub"],
-    spend: async (amount) => {
+    payAndClear: async (amount) => {
       spent += amount;
-      return { ok: true };
-    },
-    record: () => {
       recorded += 1;
       return { ok: true };
     },
@@ -364,11 +361,7 @@ test("respec spends nothing when the tree has no paid nodes or the balance is sh
     paidNodes: () => ["node_a"],
     earnedPoints: 4,
     kept: () => ["hub"],
-    spend: async () => ({ ok: false, error: "Need 10000 KEK (you have 3)." }),
-    record: () => {
-      recorded += 1;
-      return { ok: true };
-    },
+    payAndClear: async () => ({ ok: false, error: "Need 10000 KEK (you have 3)." }),
     apply: () => {
       throw new Error("apply");
     },
@@ -388,11 +381,10 @@ test("one respec at a time and a second call does not spend again", async () => 
       paidNodes: () => nodes.filter((id) => id !== "hub"),
       earnedPoints: 6,
       kept: (clearIds) => nodes.filter((id) => !clearIds.includes(id)),
-      spend: async (amount) => {
+      payAndClear: async (amount) => {
         spent += amount;
         return { ok: true };
       },
-      record: () => ({ ok: true }),
       apply: (unlocked) => {
         nodes = unlocked;
       },
@@ -433,4 +425,25 @@ test("rememberLedger skips an unchanged player and refuses a corrupt file", () =
   writeFileSync(bad, "{");
   assert.throws(() => rememberLedger(bad, build));
   assert.equal(readFileSync(bad, "utf8"), "{");
+});
+
+test("payAndClear failure spends nothing and does not apply", async () => {
+  let applied = false;
+  let calls = 0;
+  const failed = await chargeSkillRespec({
+    charId: "respec-atomic",
+    paidNodes: () => ["node_a"],
+    earnedPoints: 4,
+    kept: () => ["hub"],
+    payAndClear: async () => {
+      calls += 1;
+      return { ok: false, error: "log write failed" };
+    },
+    apply: () => {
+      applied = true;
+    },
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(calls, 1);
+  assert.equal(applied, false);
 });

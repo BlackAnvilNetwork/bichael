@@ -23,6 +23,7 @@
     "react-dom": "^19.0.0",
     "three": "^0.174.0",
     "three.quarks": "0.16.0",
+    "viem": "^2.57.2",
     "zustand": "^5.0.3"
   },
   "devDependencies": {

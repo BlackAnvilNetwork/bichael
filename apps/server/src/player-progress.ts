@@ -288,8 +288,8 @@ export async function chargeSkillRespec(args: {
   paidNodes: () => string[];
   earnedPoints: number;
   kept: (clearIds: readonly string[]) => string[];
-  spend: (amount: number) => Promise<{ ok: true } | { ok: false; error: string }>;
-  record: (nodeIds: string[]) => { ok: true } | { ok: false; error: string };
+  /** One call that debits KEK and clears the tree together (or fails without spending). */
+  payAndClear: (amount: number, nodeIds: string[]) => Promise<{ ok: true } | { ok: false; error: string }>;
   apply: (unlocked: string[], skillPoints: number) => void;
 }): Promise<{ ok: true; unlocked: string[]; skillPoints: number } | { ok: false; error: string }> {
   let clearIds: string[] = [];
@@ -301,13 +301,8 @@ export async function chargeSkillRespec(args: {
       return clearIds.length > 0;
     },
     () => () => {},
-    () => args.spend(RESPEC_KEK_COST),
+    () => args.payAndClear(RESPEC_KEK_COST, clearIds),
     () => {
-      const written = args.record(clearIds);
-      if (!written.ok) {
-        outcome = written;
-        return;
-      }
       const unlocked = args.kept(clearIds);
       args.apply(unlocked, args.earnedPoints);
       outcome = { ok: true, unlocked, skillPoints: args.earnedPoints };

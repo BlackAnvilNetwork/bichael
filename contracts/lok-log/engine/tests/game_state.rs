@@ -127,3 +127,31 @@ fn lone_engine_records_level_and_drop_without_minting_kek() {
     assert_eq!(engine.len(), before);
     assert_eq!(engine.state().get(&Key::Kek), U256::ZERO);
 }
+
+
+#[test]
+fn paid_respec_debits_kek_and_drops_nodes_atomically() {
+    let mut w = World::new();
+    w.append_spawn(n(1), 0).unwrap();
+    w.append_deposit_kek(n(1), n(15_000), 1).unwrap();
+    w.apply(Input::LearnAbility {
+        token_id: n(1),
+        ability_id: "node_a".into(),
+    })
+    .unwrap();
+    assert_eq!(w.kek_balance(&n(1)), Some(n(15_000)));
+    assert!(w.knows(&n(1), "node_a"));
+
+    assert_eq!(
+        w.append_paid_respec_skills(n(1), n(20_000), vec!["node_a".into()])
+            .unwrap_err(),
+        EngineError::InsufficientKek
+    );
+    assert_eq!(w.kek_balance(&n(1)), Some(n(15_000)));
+    assert!(w.knows(&n(1), "node_a"));
+
+    w.append_paid_respec_skills(n(1), n(10_000), vec!["node_a".into()])
+        .unwrap();
+    assert_eq!(w.kek_balance(&n(1)), Some(n(5_000)));
+    assert!(!w.knows(&n(1), "node_a"));
+}

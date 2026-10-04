@@ -243,7 +243,9 @@ fn expected_total(w: &World) -> U256 {
                 Input::DepositKek { amount, .. } => dep = dep.checked_add(*amount).unwrap(),
                 // SpendKek is a sink of spendable KEK, same as a withdrawal for what remains
                 // on the logs. It is not kekOut.
-                Input::WithdrawKek { amount, .. } | Input::SpendKek { amount, .. } => {
+                Input::WithdrawKek { amount, .. }
+                | Input::SpendKek { amount, .. }
+                | Input::PaidRespecSkills { amount, .. } => {
                     wd = wd.checked_add(*amount).unwrap()
                 }
                 _ => {}

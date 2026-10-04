@@ -300,6 +300,16 @@ impl World {
         self.apply(Input::SpendKek { token_id, amount })
     }
 
+    /// Debit spendable KEK and clear skill nodes together. Not a withdrawal and not a mint.
+    pub fn append_paid_respec_skills(
+        &mut self,
+        token_id: U256,
+        amount: U256,
+        node_ids: Vec<String>,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::PaidRespecSkills { token_id, amount, node_ids })
+    }
+
     pub fn append_import_item(
         &mut self,
         token_id: U256,
@@ -864,6 +874,21 @@ impl World {
                 }
                 touch.insert(*token_id);
             }
+            Input::PaidRespecSkills { token_id, amount, node_ids } => {
+                if *amount == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                if node_ids.len() > 600 {
+                    return Err(EngineError::BadId);
+                }
+                for id in node_ids {
+                    parse_label(id)?;
+                }
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*token_id);
+            }
             Input::Ask { listing_id, seller, item_id, amount, min_price, listed_at } => {
                 if *amount == U256::ZERO || *min_price == U256::ZERO {
                     return Err(EngineError::ZeroAmount);
@@ -1065,6 +1090,13 @@ impl World {
             }
             Input::RespecSkills { token_id, node_ids } => {
                 if touch.contains(token_id) {
+                    self.respec_skills(*token_id, node_ids)?;
+                }
+                Ok(())
+            }
+            Input::PaidRespecSkills { token_id, amount, node_ids } => {
+                if touch.contains(token_id) {
+                    self.debit_kek(*token_id, *amount)?;
                     self.respec_skills(*token_id, node_ids)?;
                 }
                 Ok(())

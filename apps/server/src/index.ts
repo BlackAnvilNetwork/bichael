@@ -187,6 +187,7 @@ import {
 } from "./lok-vault";
 import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
 import { characterNameKey, normalizeCharacterName } from "./character-name";
+import { issueAuthChallenge, verifyAuthLogin, isEthAddress } from "./wallet-auth";
 import { defaultLokDir, LokWorld } from "./lok-world";
 import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, rememberLedger, chargeSkillRespec, RESPEC_KEK_COST, shouldChargeForAbility, type PlayerProgress } from "./player-progress";
 import { debugCheatsEnabled } from "./debug-cheats";
@@ -577,7 +578,7 @@ function lokToken(p: Player): string {
   const existing = lok.tokenFor(p.charId);
   if (existing) return existing;
   const job = JOB_IDS.indexOf(p.job);
-  const res = lok.spawn(p.charId, p.name, job < 0 ? 0 : job);
+  const res = lok.spawn(p.charId, p.name, job < 0 ? 0 : job, p.wallet);
   return res.ok ? res.tokenId : "";
 }
 
@@ -1030,11 +1031,21 @@ function handleSkillRespec(p: Player) {
       }
       return unlocked;
     },
-    spend: (amount) => spendLogKek(p, amount),
-    record: (nodeIds) => {
+    payAndClear: async (amount, nodeIds) => {
       const token = lokToken(p);
       if (!token) return { ok: false, error: "Could not open your log identity." };
-      return lok.respecSkills(token, nodeIds);
+      return guardedKekMove(token, () => {
+        let bal: bigint;
+        let cost: bigint;
+        try {
+          bal = BigInt(lok.kekOf(token)) - reservedOf(token);
+          cost = BigInt(amount);
+        } catch {
+          return { ok: false, error: "Bad KEK balance." };
+        }
+        if (bal < cost) return { ok: false, error: "Need " + amount + " KEK (you have " + bal.toString() + ")." };
+        return lok.paidRespecSkills(token, String(amount), nodeIds);
+      });
     },
     apply: (unlocked, skillPoints) => {
       p.skillUnlocked = unlocked;
@@ -4194,33 +4205,37 @@ async function handleCraft(p: Player, itemId: number) {
 }
 
 function adoptOrphanLogs(wallet: string, ws: WebSocket) {
+  const owner = wallet.toLowerCase();
+  const owned = lok.charsForWallet(owner);
+  if (owned.length === 0) return;
   const taken = new Set<string>();
   for (const slots of accountRoster.values()) {
     for (const id of slots.keys()) taken.add(id);
   }
-  const rows = lok.boundChars();
+  const rows = owned.filter((row) => !taken.has(row.charId));
+  if (rows.length === 0) return;
   const counts = new Map<string, number>();
-  for (const row of rows) {
+  for (const row of lok.boundChars()) {
     const key = characterNameKey(row.name);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  let adopted = false;
   for (const row of rows) {
-    if (taken.has(row.charId)) continue;
     const jobId = JOB_IDS[row.job];
     const job = jobId && isJobId(jobId) && JOBS[jobId].playable ? jobId : "time_mage";
     const crowded = (counts.get(characterNameKey(row.name)) ?? 0) > 1;
     const renamed = (crowded ? row.name + " #" + row.tokenId : row.name).slice(0, 16);
-    if (renamed !== row.name) lok.setBoundName(row.charId, renamed);
+    if (renamed !== row.name) {
+      const named = lok.setBoundName(row.charId, renamed);
+      if (!named.ok) {
+        console.error("[bellgrave] rename on adopt failed:", named.error);
+      }
+    }
     const bound = lok.boundChars().find((c) => c.charId === row.charId)?.name ?? renamed;
     const norm = normalizeCharacterName(bound);
-    createPlayer(wallet, norm.ok ? norm.name : bound, ws, job, "male", row.charId);
-    adopted = true;
+    createPlayer(owner, norm.ok ? norm.name : bound, ws, job, "male", row.charId);
   }
-  if (adopted) {
-    players.delete(wallet);
-    walletToPlayer.delete(wallet);
-  }
+  players.delete(owner);
+  walletToPlayer.delete(owner);
 }
 
 function onMessage(ws: WebSocket, data: string) {
@@ -4242,29 +4257,56 @@ function onMessage(ws: WebSocket, data: string) {
     return;
   }
 
-  if (msg.type === "auth") {
-    const wallet = msg.wallet.toLowerCase();
-    (ws as WebSocket & { wallet?: string }).wallet = wallet;
-    adoptOrphanLogs(wallet, ws);
-
-    // Park any live character — keep roster, leave the world until char/enter or char/create.
-    // Otherwise tick broadcasts keep pushing snapshots and the create screen auto-enters the old char.
-    const live = players.get(wallet);
-    if (live) {
-      live.ws = ws;
-      registerAccountChar(live);
-      players.delete(wallet);
+  if (msg.type === "auth/hello") {
+    const challenged = issueAuthChallenge(msg.wallet);
+    if (!challenged.ok) {
+      send(ws, { type: "error", message: challenged.error });
+      return;
     }
-    walletToPlayer.delete(wallet);
-
-    const characters = accountPreviews(wallet);
-    const primary = characters[0];
     send(ws, {
-      type: "auth/ok",
-      wallet,
-      hasCharacter: characters.length > 0,
-      characters,
-      character: primary,
+      type: "auth/challenge",
+      wallet: msg.wallet.toLowerCase(),
+      nonce: challenged.nonce,
+      issuedAt: challenged.issuedAt,
+      message: challenged.message,
+    });
+    return;
+  }
+
+  if (msg.type === "auth") {
+    void verifyAuthLogin({
+      wallet: msg.wallet,
+      signature: msg.signature,
+      nonce: msg.nonce,
+      message: msg.message,
+    }).then((verified) => {
+      if (!verified.ok) {
+        send(ws, { type: "error", message: verified.error });
+        return;
+      }
+      const wallet = verified.wallet;
+      (ws as WebSocket & { wallet?: string }).wallet = wallet;
+      adoptOrphanLogs(wallet, ws);
+
+      // Park any live character — keep roster, leave the world until char/enter or char/create.
+      // Signed auth is required before an online session can be taken over.
+      const live = players.get(wallet);
+      if (live) {
+        live.ws = ws;
+        registerAccountChar(live);
+        players.delete(wallet);
+      }
+      walletToPlayer.delete(wallet);
+
+      const characters = accountPreviews(wallet);
+      const primary = characters[0];
+      send(ws, {
+        type: "auth/ok",
+        wallet,
+        hasCharacter: characters.length > 0,
+        characters,
+        character: primary,
+      });
     });
     return;
   }
@@ -4276,6 +4318,10 @@ function onMessage(ws: WebSocket, data: string) {
   }
 
   if (msg.type === "char/create") {
+    if (!isEthAddress(wallet)) {
+      send(ws, { type: "error", message: "Authenticate with a signed wallet first." });
+      return;
+    }
     const named = normalizeCharacterName(msg.name);
     if (!named.ok) {
       send(ws, { type: "error", message: named.error });
@@ -4285,8 +4331,13 @@ function onMessage(ws: WebSocket, data: string) {
       send(ws, { type: "error", message: "That name is already on the log. Pick another." });
       return;
     }
+    const capped = lok.ensureWalletCapacity(wallet);
+    if (!capped.ok) {
+      send(ws, { type: "error", message: capped.error });
+      return;
+    }
     const charId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const claimed = lok.claimName(charId, named.name);
+    const claimed = lok.claimName(charId, named.name, wallet);
     if (!claimed.ok) {
       send(ws, { type: "error", message: claimed.error });
       return;

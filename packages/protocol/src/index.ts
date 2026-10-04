@@ -24,7 +24,14 @@ export const Gender = z.enum(["male", "female", "pepeka"]);
 export type Gender = z.infer<typeof Gender>;
 
 export const ClientMessageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("auth"), wallet: z.string().min(3) }),
+  z.object({ type: z.literal("auth/hello"), wallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/) }),
+  z.object({
+    type: z.literal("auth"),
+    wallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+    signature: z.string().min(8).max(200),
+    nonce: z.string().min(8).max(128),
+    message: z.string().min(16).max(2000),
+  }),
   z.object({
     type: z.literal("char/create"),
     name: z.string().min(2).max(16),
@@ -441,6 +448,13 @@ export type SpellOffer = {
 export type ServerMessage =
   | SnapshotMessage
   | { type: "error"; message: string }
+  | {
+      type: "auth/challenge";
+      wallet: string;
+      nonce: string;
+      issuedAt: string;
+      message: string;
+    }
   | {
       type: "auth/ok";
       wallet: string;

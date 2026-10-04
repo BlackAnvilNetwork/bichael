@@ -451,6 +451,26 @@ pub(crate) fn parse_input(value: &serde_json::Value) -> Result<Input, String> {
             }
             Ok(Input::RespecSkills { token_id, node_ids })
         }
+        "paidRespecSkills" => {
+            let token_id = req_u256(value, "tokenId")?;
+            let amount = req_u256(value, "amount")?;
+            let raw = value
+                .get("nodeIds")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "missing nodeIds".to_string())?;
+            if raw.len() > 600 {
+                return Err("too many skill nodes".to_string());
+            }
+            let mut node_ids = Vec::with_capacity(raw.len());
+            for (i, row) in raw.iter().enumerate() {
+                let id = row.as_str().ok_or_else(|| format!("bad nodeIds[{i}]"))?;
+                if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
+                    return Err(format!("bad nodeIds[{i}]"));
+                }
+                node_ids.push(id.to_string());
+            }
+            Ok(Input::PaidRespecSkills { token_id, amount, node_ids })
+        }
         other => Err(format!("unknown input type {other}")),
     }
 }
@@ -622,6 +642,12 @@ pub(crate) fn input_to_json(input: &Input) -> serde_json::Value {
         Input::RespecSkills { token_id, node_ids } => serde_json::json!({
             "type": "respecSkills",
             "tokenId": s(token_id),
+            "nodeIds": node_ids,
+        }),
+        Input::PaidRespecSkills { token_id, amount, node_ids } => serde_json::json!({
+            "type": "paidRespecSkills",
+            "tokenId": s(token_id),
+            "amount": s(amount),
             "nodeIds": node_ids,
         }),
     }

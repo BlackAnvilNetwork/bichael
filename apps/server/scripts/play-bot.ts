@@ -12,6 +12,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import {
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
   MELEE_RANGE,
   PH_ALL_MOBS,
   PH_BRIDGE_SITES,
@@ -45,7 +46,8 @@ type Unit = {
 
 type Snapshot = {
   type: "snapshot";
-  you: { wallet: string; characterId: string; name: string; job: string; level: number };
+  you: { wallet: string;
+  privateKey: `0x${string}`; characterId: string; name: string; job: string; level: number };
   units: Unit[];
 };
 
@@ -224,6 +226,7 @@ class PlayBot {
   readonly wsUrl: string;
   readonly seconds: number;
   readonly wallet: string;
+  readonly privateKey: `0x${string}`;
   readonly tour: boolean;
   readonly routeId: TourId;
 
@@ -277,7 +280,8 @@ class PlayBot {
     this.seconds = opts.seconds;
     this.tour = opts.tour ?? false;
     this.routeId = opts.route ?? "north-spine";
-    this.wallet = `${opts.id}-${Date.now().toString(36)}`.toLowerCase();
+    this.privateKey = generatePrivateKey();
+    this.wallet = privateKeyToAccount(this.privateKey).address;
   }
 
   private t() {
@@ -809,7 +813,7 @@ class PlayBot {
         if (!this.ready) reject(err);
       };
       ws.on("open", () => {
-        this.send({ type: "auth", wallet: this.wallet });
+        this.send({ type: "auth/hello", wallet: this.wallet });
         this.pingTimer = setInterval(() => this.send({ type: "ping", t: Date.now() }), 20_000);
       });
       ws.on("error", (err) => {
@@ -839,6 +843,24 @@ class PlayBot {
         }
         if (msg.type === "log" && msg.message) {
           this.onLog(msg.message);
+          return;
+        }
+        if (msg.type === "auth/challenge") {
+          const key = this.privateKey;
+          const account = privateKeyToAccount(key);
+          if (account.address.toLowerCase() !== this.wallet.toLowerCase()) {
+            this.onLog("play-bot wallet/key mismatch");
+            return;
+          }
+          void account.signMessage({ message: msg.message }).then((signature) => {
+            this.send({
+              type: "auth",
+              wallet: this.wallet,
+              signature,
+              nonce: msg.nonce,
+              message: msg.message,
+            });
+          });
           return;
         }
         if (msg.type === "auth/ok") {

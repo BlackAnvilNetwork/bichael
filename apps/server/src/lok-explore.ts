@@ -256,6 +256,11 @@ function describe(entry: RawEntry, logTokenId: string, nameOf: (tokenId: string)
       text = `${character} respecced skills`;
       break;
     }
+    case "paidRespecSkills": {
+      character = who(token) || owner;
+      text = `${character} paid a skill respec`;
+      break;
+    }
     default:
       break;
   }

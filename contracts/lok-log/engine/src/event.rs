@@ -44,6 +44,8 @@ pub enum Input {
     CraftSkill { token_id: U256, skill_id: String, level: u32 },
     /// Drops the named skill-node ids so they can be learned again. Does not spend KEK.
     RespecSkills { token_id: U256, node_ids: Vec<String> },
+    /// Debit spendable KEK and drop skill-node ids in one apply. Not a mint and not kekOut.
+    PaidRespecSkills { token_id: U256, amount: U256, node_ids: Vec<String> },
     /// Order-book ask. The stack leaves spendable items and is held at \min_price\.
     /// \listed_at\ is a unix second from the server. This log has no clock of its own.
     Ask {
@@ -198,6 +200,15 @@ pub fn event_id(input: &Input) -> [u8; 32] {
         Input::RespecSkills { token_id, node_ids } => {
             buf.b256(&domain(b"LOK_RESPEC_SKILLS_V1"));
             buf.u256(token_id);
+            buf.u64(node_ids.len() as u64);
+            for id in node_ids {
+                push_label(&mut buf, id);
+            }
+        }
+        Input::PaidRespecSkills { token_id, amount, node_ids } => {
+            buf.b256(&domain(b"LOK_PAID_RESPEC_SKILLS_V1"));
+            buf.u256(token_id);
+            buf.u256(amount);
             buf.u64(node_ids.len() as u64);
             for id in node_ids {
                 push_label(&mut buf, id);

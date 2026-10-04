@@ -44,9 +44,12 @@ type ApplyBody = {
   state?: EngineState;
 };
 
-type BindChar = { charId: string; tokenId: string; name: string; job: number };
-type ReservedName = { charId: string; name: string };
+type BindChar = { charId: string; tokenId: string; name: string; job: number; wallet?: string };
+type ReservedName = { charId: string; name: string; wallet?: string; at: number };
 type BindFile = { nextToken: string; nextListing: string; chars: BindChar[]; reserved: ReservedName[] };
+
+export const MAX_CHARS_PER_WALLET = 8;
+export const NAME_RESERVE_MS = 10 * 60_000;
 
 /** An inbound the server recorded from custody. The game client cannot insert these. */
 export type CustodyInbound =
@@ -127,6 +130,7 @@ export class LokWorld {
     this.bind = this.readBind();
     this.refresh();
     this.reconcileBind();
+    this.pruneExpiredReservations();
     if (!existsSync(this.logPath)) this.persistLog();
     this.saveBind();
   }
@@ -139,15 +143,34 @@ export class LokWorld {
     return this.bind.chars.find((c) => c.charId === charId)?.tokenId ?? null;
   }
 
-  spawn(charId: string, name: string, job: number): { ok: true; tokenId: string } | { ok: false; error: string } {
+  spawn(
+    charId: string,
+    name: string,
+    job: number,
+    wallet?: string,
+  ): { ok: true; tokenId: string } | { ok: false; error: string } {
     const existing = this.tokenFor(charId);
-    if (existing) return { ok: true, tokenId: existing };
-    const claimed = this.claimName(charId, name);
+    if (existing) {
+      if (wallet) this.bindWallet(charId, wallet);
+      return { ok: true, tokenId: existing };
+    }
+    const owner = wallet?.trim().toLowerCase() || undefined;
+    if (owner) {
+      const capped = this.ensureWalletCapacity(owner, charId);
+      if (!capped.ok) return capped;
+    }
+    const claimed = this.claimName(charId, name, owner);
     if (!claimed.ok) return claimed;
     const tokenId = this.bind.nextToken;
     const res = this.apply({ op: "spawn", tokenId, startingJob: job });
     if (!res.ok) return res;
-    this.bind.chars.push({ charId, tokenId, name: claimed.name, job });
+    this.bind.chars.push({
+      charId,
+      tokenId,
+      name: claimed.name,
+      job,
+      ...(owner ? { wallet: owner } : {}),
+    });
     this.bind.reserved = this.bind.reserved.filter((row) => row.charId !== charId);
     this.bind.nextToken = (BigInt(tokenId) + 1n).toString();
     this.saveBind();
@@ -342,6 +365,11 @@ export class LokWorld {
     return this.apply({ op: "respecSkills", tokenId, nodeIds });
   }
 
+  /** Debit spendable KEK and clear skill nodes in one engine event. */
+  paidRespecSkills(tokenId: string, amount: string, nodeIds: string[]): LokResult {
+    return this.apply({ op: "paidRespecSkills", tokenId, amount, nodeIds });
+  }
+
   craftSkillsOf(tokenId: string): { skillId: string; level: number }[] {
     const me = this.state.characters.find((c) => c.tokenId === tokenId);
     return (me?.craftSkills ?? [])
@@ -377,40 +405,115 @@ export class LokWorld {
   }
 
   /** Reserve the normalized name when it is chosen, before the character exists on the log. */
-  claimName(charId: string, raw: string): { ok: true; name: string } | { ok: false; error: string } {
+  claimName(
+    charId: string,
+    raw: string,
+    wallet?: string,
+  ): { ok: true; name: string } | { ok: false; error: string } {
+    this.pruneExpiredReservations();
     const norm = normalizeCharacterName(raw);
     if (!norm.ok) return norm;
     if (this.nameTaken(norm.name, charId)) {
       return { ok: false, error: "That name is already on the log. Pick another." };
     }
+    const owner = wallet?.trim().toLowerCase() || undefined;
     const row = this.bind.chars.find((c) => c.charId === charId);
     if (row) {
       row.name = norm.name;
+      if (owner) row.wallet = owner;
       this.bind.reserved = this.bind.reserved.filter((reserved) => reserved.charId !== charId);
       this.saveBind();
       return { ok: true, name: norm.name };
     }
+    if (owner) {
+      const capped = this.ensureWalletCapacity(owner, charId);
+      if (!capped.ok) return capped;
+    }
     const mine = this.bind.reserved.find((reserved) => reserved.charId === charId);
-    if (mine) mine.name = norm.name;
-    else this.bind.reserved.push({ charId, name: norm.name });
+    if (mine) {
+      mine.name = norm.name;
+      mine.at = Date.now();
+      if (owner) mine.wallet = owner;
+    } else {
+      this.bind.reserved.push({
+        charId,
+        name: norm.name,
+        at: Date.now(),
+        ...(owner ? { wallet: owner } : {}),
+      });
+    }
     this.saveBind();
     return { ok: true, name: norm.name };
   }
 
   nameTaken(name: string, exceptCharId?: string): boolean {
+    this.pruneExpiredReservations();
     const key = characterNameKey(name);
     if (!key) return false;
     const rows = [...this.bind.chars, ...this.bind.reserved];
     return rows.some((row) => row.charId !== exceptCharId && characterNameKey(row.name) === key);
   }
 
-  boundChars(): { charId: string; tokenId: string; name: string; job: number }[] {
+  boundChars(): { charId: string; tokenId: string; name: string; job: number; wallet?: string }[] {
     return this.bind.chars.map((c) => ({ ...c }));
   }
 
-  setBoundName(charId: string, name: string): void {
-    if (!this.bind.chars.some((row) => row.charId === charId)) return;
-    this.claimName(charId, name);
+  /** Characters persisted for this wallet. Unowned rows are never returned. */
+  charsForWallet(wallet: string): { charId: string; tokenId: string; name: string; job: number; wallet: string }[] {
+    const owner = wallet.trim().toLowerCase();
+    return this.bind.chars
+      .filter((c): c is BindChar & { wallet: string } => !!c.wallet && c.wallet.toLowerCase() === owner)
+      .map((c) => ({ ...c, wallet: c.wallet }));
+  }
+
+  bindWallet(charId: string, wallet: string): void {
+    const owner = wallet.trim().toLowerCase();
+    if (!owner) return;
+    const row = this.bind.chars.find((c) => c.charId === charId);
+    if (!row) return;
+    if (row.wallet && row.wallet.toLowerCase() === owner) return;
+    row.wallet = owner;
+    this.saveBind();
+  }
+
+  walletCharCount(wallet: string, exceptCharId?: string): number {
+    this.pruneExpiredReservations();
+    const owner = wallet.trim().toLowerCase();
+    const live = this.bind.chars.filter(
+      (c) => c.wallet?.toLowerCase() === owner && c.charId !== exceptCharId,
+    ).length;
+    const reserved = this.bind.reserved.filter(
+      (c) => c.wallet?.toLowerCase() === owner && c.charId !== exceptCharId,
+    ).length;
+    return live + reserved;
+  }
+
+  ensureWalletCapacity(
+    wallet: string,
+    exceptCharId?: string,
+  ): { ok: true } | { ok: false; error: string } {
+    if (this.walletCharCount(wallet, exceptCharId) >= MAX_CHARS_PER_WALLET) {
+      return { ok: false, error: "This wallet already has " + MAX_CHARS_PER_WALLET + " characters." };
+    }
+    return { ok: true };
+  }
+
+  pruneExpiredReservations(now = Date.now()): number {
+    const before = this.bind.reserved.length;
+    this.bind.reserved = this.bind.reserved.filter((row) => {
+      const at = typeof row.at === "number" ? row.at : 0;
+      return at > 0 && now - at < NAME_RESERVE_MS;
+    });
+    const removed = before - this.bind.reserved.length;
+    if (removed > 0) this.saveBind();
+    return removed;
+  }
+
+  setBoundName(charId: string, name: string): { ok: true; name: string } | { ok: false; error: string } {
+    if (!this.bind.chars.some((row) => row.charId === charId)) {
+      return { ok: false, error: "Character is not on the bind file." };
+    }
+    return this.claimName(charId, name);
   }
 
   /**
@@ -525,10 +628,22 @@ export class LokWorld {
       nextToken: parsed.nextToken || "1",
       nextListing: parsed.nextListing || "1",
       chars: Array.isArray(parsed.chars) ? parsed.chars : [],
-      reserved: reserved.filter(
-        (row): row is ReservedName =>
-          !!row && typeof row.charId === "string" && row.charId.length > 0 && typeof row.name === "string",
-      ),
+      reserved: reserved
+        .filter(
+          (row): row is ReservedName =>
+            !!row &&
+            typeof row.charId === "string" &&
+            row.charId.length > 0 &&
+            typeof row.name === "string",
+        )
+        .map((row) => ({
+          charId: row.charId,
+          name: row.name,
+          at: typeof (row as { at?: number }).at === "number" ? (row as { at: number }).at : 0,
+          ...((row as { wallet?: string }).wallet
+            ? { wallet: String((row as { wallet: string }).wallet).toLowerCase() }
+            : {}),
+        })),
     };
   }
 

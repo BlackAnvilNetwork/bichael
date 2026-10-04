@@ -201,6 +201,10 @@ impl Engine {
             Input::ItemDrop { token_id, item_id, amount } => self.drop_item(*token_id, *item_id, *amount),
             Input::CraftSkill { token_id, skill_id, level } => self.note_craft_skill(*token_id, skill_id, *level),
             Input::RespecSkills { token_id, node_ids } => self.respec_skills(*token_id, node_ids),
+            Input::PaidRespecSkills { token_id, amount, node_ids } => {
+                self.debit_kek(*token_id, *amount)?;
+                self.respec_skills(*token_id, node_ids)
+            }
         }
     }
 
