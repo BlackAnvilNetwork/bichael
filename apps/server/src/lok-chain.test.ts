@@ -30,7 +30,7 @@ test("a vault deposit log credits the character once and a replay does not", () 
   const dir = mkdtempSync(join(tmpdir(), "lok-chain-"));
   const lok = LokWorld.open(dir, undefined, {});
   for (let i = 1; i <= 6; i++) {
-    assert.equal(lok.spawn("char-" + i, "Chrona", 0).ok, true);
+    assert.equal(lok.spawn("char-" + i, "N" + i, 0).ok, true);
   }
   const deposit = decodeKekDeposit(SAMPLE);
   assert.deepEqual(deposit, { tokenId: "6", nonce: "1", amount: "20000" });

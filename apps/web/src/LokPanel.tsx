@@ -16,12 +16,15 @@ function itemName(tokenId: number): string {
 export function LokPanel({ you, onClose }: Props) {
   const units = useGame((s) => s.snapshot?.units ?? []);
   const lok = you.lok;
-  const [to, setTo] = useState("");
+  const [toId, setToId] = useState("");
   const [kek, setKek] = useState("1");
   const [minPrice, setMinPrice] = useState("");
   const [bid, setBid] = useState<Record<string, string>>({});
   const weekSec = 7 * 24 * 60 * 60;
-  const others = units.filter((u) => u.kind === "player" && u.name !== you.name);
+  const others = units.filter(
+    (u) => u.kind === "player" && !!u.characterId && u.characterId !== you.characterId,
+  );
+  const selected = others.find((u) => u.characterId === toId);
 
   if (!lok) {
     return (
@@ -69,9 +72,17 @@ export function LokPanel({ you, onClose }: Props) {
 
       <div className="cmd-section-label">Send to</div>
       <div className="lok-row">
-        <input value={to} placeholder="Character name" onChange={(e) => setTo(e.target.value)} />
+        {others.length === 0 && (
+          <p className="lok-note">No other character is nearby. Pick someone in range. Names cannot be typed.</p>
+        )}
+        {selected && <span className="lok-note">Sending to {selected.name}</span>}
         {others.map((u) => (
-          <button key={u.id} type="button" className="cmd-pill-tab" onClick={() => setTo(u.name)}>
+          <button
+            key={u.characterId}
+            type="button"
+            className={u.characterId === toId ? "boot-primary" : "cmd-pill-tab"}
+            onClick={() => setToId(u.characterId ?? "")}
+          >
             {u.name}
           </button>
         ))}
@@ -81,7 +92,8 @@ export function LokPanel({ you, onClose }: Props) {
         <button
           type="button"
           className="boot-primary"
-          onClick={() => send({ type: "lok/sendKek", to, amount: kek })}
+          disabled={!toId}
+          onClick={() => toId && send({ type: "lok/sendKek", to: toId, amount: kek })}
         >
           Send KEK
         </button>
@@ -154,7 +166,10 @@ export function LokPanel({ you, onClose }: Props) {
           <button
             type="button"
             className="cmd-pill-tab"
-            onClick={() => send({ type: "lok/sendItem", to, tokenId: row.tokenId, amount: Number(row.amount) })}
+            disabled={!toId}
+            onClick={() =>
+              toId && send({ type: "lok/sendItem", to: toId, tokenId: row.tokenId, amount: Number(row.amount) })
+            }
           >
             Send
           </button>

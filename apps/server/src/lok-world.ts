@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LokListingView, LokSnapshot } from "@bellgrave/protocol";
+import { characterNameKey, normalizeCharacterName } from "./character-name";
 import { exploreDocument, type LokExplorePage } from "./lok-explore";
 import { defaultWasmPath, loadLokExports, lokCall, lokOut, type LokExports } from "./lok-engine";
 
@@ -44,7 +45,8 @@ type ApplyBody = {
 };
 
 type BindChar = { charId: string; tokenId: string; name: string; job: number };
-type BindFile = { nextToken: string; nextListing: string; chars: BindChar[] };
+type ReservedName = { charId: string; name: string };
+type BindFile = { nextToken: string; nextListing: string; chars: BindChar[]; reserved: ReservedName[] };
 
 /** An inbound the server recorded from custody. The game client cannot insert these. */
 export type CustodyInbound =
@@ -140,10 +142,13 @@ export class LokWorld {
   spawn(charId: string, name: string, job: number): { ok: true; tokenId: string } | { ok: false; error: string } {
     const existing = this.tokenFor(charId);
     if (existing) return { ok: true, tokenId: existing };
+    const claimed = this.claimName(charId, name);
+    if (!claimed.ok) return claimed;
     const tokenId = this.bind.nextToken;
     const res = this.apply({ op: "spawn", tokenId, startingJob: job });
     if (!res.ok) return res;
-    this.bind.chars.push({ charId, tokenId, name, job });
+    this.bind.chars.push({ charId, tokenId, name: claimed.name, job });
+    this.bind.reserved = this.bind.reserved.filter((row) => row.charId !== charId);
     this.bind.nextToken = (BigInt(tokenId) + 1n).toString();
     this.saveBind();
     return { ok: true, tokenId };
@@ -349,20 +354,54 @@ export class LokWorld {
     return [...(me?.droppedSkills ?? [])];
   }
 
-  resolveName(name: string, selfToken: string): { ok: true; tokenId: string } | { ok: false; error: string } {
-    const key = name.trim().toLowerCase();
-    if (!key) return { ok: false, error: "Name a character." };
-    const hits = this.bind.chars.filter((c) => c.name.toLowerCase() === key);
-    if (hits.length === 0) return { ok: false, error: "No character by that name is on the log." };
-    if (hits.length > 1) return { ok: false, error: "That name is not unique on the log." };
-    if (hits[0]!.tokenId === selfToken) return { ok: false, error: "You cannot send to yourself." };
-    return { ok: true, tokenId: hits[0]!.tokenId };
+  /**
+   * Send target is a log token or character id. Display names never match, so a lookalike cannot receive the transfer.
+   */
+  resolveRecipient(
+    to: string,
+    selfToken: string,
+  ): { ok: true; tokenId: string; name: string } | { ok: false; error: string } {
+    const id = to.trim();
+    if (!id) return { ok: false, error: "Pick a character." };
+    const hits = new Map<string, BindChar>();
+    for (const row of this.bind.chars) {
+      if (row.tokenId === id || row.charId === id) hits.set(row.tokenId, row);
+    }
+    if (hits.size === 0) {
+      return { ok: false, error: "Pick a character. A display name is not a send target." };
+    }
+    if (hits.size > 1) return { ok: false, error: "That character id is ambiguous. Nothing was sent." };
+    const row = [...hits.values()][0]!;
+    if (row.tokenId === selfToken) return { ok: false, error: "You cannot send to yourself." };
+    return { ok: true, tokenId: row.tokenId, name: row.name };
   }
 
-  nameTaken(name: string): boolean {
-    const key = name.trim().toLowerCase();
+  /** Reserve the normalized name when it is chosen, before the character exists on the log. */
+  claimName(charId: string, raw: string): { ok: true; name: string } | { ok: false; error: string } {
+    const norm = normalizeCharacterName(raw);
+    if (!norm.ok) return norm;
+    if (this.nameTaken(norm.name, charId)) {
+      return { ok: false, error: "That name is already on the log. Pick another." };
+    }
+    const row = this.bind.chars.find((c) => c.charId === charId);
+    if (row) {
+      row.name = norm.name;
+      this.bind.reserved = this.bind.reserved.filter((reserved) => reserved.charId !== charId);
+      this.saveBind();
+      return { ok: true, name: norm.name };
+    }
+    const mine = this.bind.reserved.find((reserved) => reserved.charId === charId);
+    if (mine) mine.name = norm.name;
+    else this.bind.reserved.push({ charId, name: norm.name });
+    this.saveBind();
+    return { ok: true, name: norm.name };
+  }
+
+  nameTaken(name: string, exceptCharId?: string): boolean {
+    const key = characterNameKey(name);
     if (!key) return false;
-    return this.bind.chars.some((c) => c.name.toLowerCase() === key);
+    const rows = [...this.bind.chars, ...this.bind.reserved];
+    return rows.some((row) => row.charId !== exceptCharId && characterNameKey(row.name) === key);
   }
 
   boundChars(): { charId: string; tokenId: string; name: string; job: number }[] {
@@ -370,10 +409,8 @@ export class LokWorld {
   }
 
   setBoundName(charId: string, name: string): void {
-    const row = this.bind.chars.find((c) => c.charId === charId);
-    if (!row || row.name === name) return;
-    row.name = name;
-    this.saveBind();
+    if (!this.bind.chars.some((row) => row.charId === charId)) return;
+    this.claimName(charId, name);
   }
 
   /**
@@ -480,13 +517,18 @@ export class LokWorld {
 
   private readBind(): BindFile {
     if (!existsSync(this.bindPath)) {
-      return { nextToken: "1", nextListing: "1", chars: [] };
+      return { nextToken: "1", nextListing: "1", chars: [], reserved: [] };
     }
     const parsed = JSON.parse(readFileSync(this.bindPath, "utf8")) as BindFile;
+    const reserved = Array.isArray(parsed.reserved) ? parsed.reserved : [];
     return {
       nextToken: parsed.nextToken || "1",
       nextListing: parsed.nextListing || "1",
       chars: Array.isArray(parsed.chars) ? parsed.chars : [],
+      reserved: reserved.filter(
+        (row): row is ReservedName =>
+          !!row && typeof row.charId === "string" && row.charId.length > 0 && typeof row.name === "string",
+      ),
     };
   }
 

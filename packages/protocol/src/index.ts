@@ -90,15 +90,17 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
     tokenId: z.number().int().positive(),
     amount: z.number().int().positive().max(1_000_000),
   }),
+  /** `to` is a character id or log token. A typed display name is not a target. */
   z.object({
     type: z.literal("lok/sendItem"),
-    to: z.string().min(1).max(32),
+    to: z.string().min(1).max(64),
     tokenId: z.number().int().positive(),
     amount: z.number().int().positive().max(1_000_000),
   }),
+  /** `to` is a character id or log token. A typed display name is not a target. */
   z.object({
     type: z.literal("lok/sendKek"),
-    to: z.string().min(1).max(32),
+    to: z.string().min(1).max(64),
     amount: z.string().regex(/^[1-9][0-9]{0,18}$/),
   }),
   /** Refused until a vault withdrawal is queued. Does not debit in-game KEK. */
@@ -255,6 +257,8 @@ export type BuffState = {
 export type UnitSnapshot = {
   id: string;
   kind: "player" | "mob" | "npc";
+  /** Stable character id for players. Sends use this, not the display name. */
+  characterId?: string;
   name: string;
   x: number;
   /** Terrain height — outdoor undulates; indoor hubs stay flat. */

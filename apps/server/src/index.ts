@@ -186,6 +186,7 @@ import {
   withdrawalById,
 } from "./lok-vault";
 import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
+import { characterNameKey, normalizeCharacterName } from "./character-name";
 import { defaultLokDir, LokWorld } from "./lok-world";
 import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, rememberLedger, chargeSkillRespec, RESPEC_KEK_COST, shouldChargeForAbility, type PlayerProgress } from "./player-progress";
 import { debugCheatsEnabled } from "./debug-cheats";
@@ -702,13 +703,49 @@ function handleLokExport(p: Player, tokenId: number, amount: number) {
   send(p.ws, snapshotFor(p));
 }
 
+function playerByCharId(charId: string): Player | undefined {
+  for (const slots of accountRoster.values()) {
+    const pl = slots.get(charId);
+    if (pl) return pl;
+  }
+  return undefined;
+}
+
+function rosterNameTaken(name: string, exceptCharId?: string): boolean {
+  const key = characterNameKey(name);
+  if (!key) return false;
+  for (const slots of accountRoster.values()) {
+    for (const pl of slots.values()) {
+      if (pl.charId === exceptCharId) continue;
+      if (characterNameKey(pl.name) === key) return true;
+    }
+  }
+  return false;
+}
+
+function resolveSendTarget(
+  p: Player,
+  to: string,
+  selfToken: string,
+): { ok: true; tokenId: string; name: string } | { ok: false; error: string } {
+  const direct = lok.resolveRecipient(to, selfToken);
+  if (direct.ok || /yourself|ambiguous/i.test(direct.error)) return direct;
+  const found = playerByCharId(to.trim());
+  if (!found) return direct;
+  if (found.charId === p.charId) return { ok: false, error: "You cannot send to yourself." };
+  const tokenId = lokToken(found);
+  if (!tokenId) return { ok: false, error: "That character is not on the log." };
+  if (tokenId === selfToken) return { ok: false, error: "You cannot send to yourself." };
+  return { ok: true, tokenId, name: found.name };
+}
+
 function handleLokSendItem(p: Player, to: string, tokenId: number, amount: number) {
   const token = lokToken(p);
   if (!token) {
     pushLog(p, "Could not open your log identity.");
     return;
   }
-  const dest = lok.resolveName(to, token);
+  const dest = resolveSendTarget(p, to, token);
   if (!dest.ok) {
     pushLog(p, dest.error);
     return;
@@ -718,7 +755,7 @@ function handleLokSendItem(p: Player, to: string, tokenId: number, amount: numbe
     pushLog(p, res.error);
     return;
   }
-  pushLog(p, "Sent " + itemLabel(tokenId) + " x" + amount + " to " + to.trim() + ". It is in their Provisioner inbox.");
+  pushLog(p, "Sent " + itemLabel(tokenId) + " x" + amount + " to " + dest.name + ". It is in their Provisioner inbox.");
   tellToken(dest.tokenId, p.name + " sent you " + itemLabel(tokenId) + " x" + amount + ". Take it from the Provisioner inbox.");
   send(p.ws, snapshotFor(p));
 }
@@ -729,7 +766,7 @@ function handleLokSendKek(p: Player, to: string, amount: string) {
     pushLog(p, "Could not open your log identity.");
     return;
   }
-  const dest = lok.resolveName(to, token);
+  const dest = resolveSendTarget(p, to, token);
   if (!dest.ok) {
     pushLog(p, dest.error);
     return;
@@ -753,7 +790,7 @@ function handleLokSendKek(p: Player, to: string, amount: string) {
     const res = lok.sendKek(token, dest.tokenId, amount);
     if (!res.ok) pushLog(p, res.error);
     else {
-      pushLog(p, "Sent " + amount + " KEK to " + to.trim() + ".");
+      pushLog(p, "Sent " + amount + " KEK to " + dest.name + ".");
       tellToken(dest.tokenId, p.name + " sent you " + amount + " KEK.");
     }
     send(p.ws, snapshotFor(p));
@@ -1988,6 +2025,7 @@ function snapshotFor(p: Player): SnapshotMessage {
     units.push({
       id: pl.wallet,
       kind: "player",
+      characterId: pl.charId,
       name: pl.name,
       x: pl.x,
       y: pl.y,
@@ -4163,7 +4201,7 @@ function adoptOrphanLogs(wallet: string, ws: WebSocket) {
   const rows = lok.boundChars();
   const counts = new Map<string, number>();
   for (const row of rows) {
-    const key = row.name.trim().toLowerCase();
+    const key = characterNameKey(row.name);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   let adopted = false;
@@ -4171,10 +4209,12 @@ function adoptOrphanLogs(wallet: string, ws: WebSocket) {
     if (taken.has(row.charId)) continue;
     const jobId = JOB_IDS[row.job];
     const job = jobId && isJobId(jobId) && JOBS[jobId].playable ? jobId : "time_mage";
-    const crowded = (counts.get(row.name.trim().toLowerCase()) ?? 0) > 1;
-    const name = (crowded ? row.name + " #" + row.tokenId : row.name).slice(0, 16);
-    if (name !== row.name) lok.setBoundName(row.charId, name);
-    createPlayer(wallet, name, ws, job, "male", row.charId);
+    const crowded = (counts.get(characterNameKey(row.name)) ?? 0) > 1;
+    const renamed = (crowded ? row.name + " #" + row.tokenId : row.name).slice(0, 16);
+    if (renamed !== row.name) lok.setBoundName(row.charId, renamed);
+    const bound = lok.boundChars().find((c) => c.charId === row.charId)?.name ?? renamed;
+    const norm = normalizeCharacterName(bound);
+    createPlayer(wallet, norm.ok ? norm.name : bound, ws, job, "male", row.charId);
     adopted = true;
   }
   if (adopted) {
@@ -4236,14 +4276,25 @@ function onMessage(ws: WebSocket, data: string) {
   }
 
   if (msg.type === "char/create") {
-    if (lok.nameTaken(msg.name)) {
+    const named = normalizeCharacterName(msg.name);
+    if (!named.ok) {
+      send(ws, { type: "error", message: named.error });
+      return;
+    }
+    if (rosterNameTaken(named.name)) {
       send(ws, { type: "error", message: "That name is already on the log. Pick another." });
+      return;
+    }
+    const charId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const claimed = lok.claimName(charId, named.name);
+    if (!claimed.ok) {
+      send(ws, { type: "error", message: claimed.error });
       return;
     }
     const job = isJobId(msg.job) && JOBS[msg.job].playable ? msg.job : "time_mage";
     const gender =
       msg.gender === "female" ? "female" : msg.gender === "pepeka" ? "pepeka" : "male";
-    const p = createPlayer(wallet, msg.name, ws, job, gender);
+    const p = createPlayer(wallet, claimed.name, ws, job, gender, charId);
     claimStarter(p);
     const minted = lok.tokenFor(p.charId);
     if (minted) {
