@@ -46,6 +46,13 @@ impl Chain {
         });
         self.head = hash;
     }
+
+    /// Drop the last link and restore the previous head. Used to undo a withdraw that never queued.
+    pub fn pop(&mut self) -> Option<[u8; 32]> {
+        let entry = self.entries.pop()?;
+        self.head = entry.prev_hash;
+        Some(entry.hash)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -372,6 +379,11 @@ pub(crate) fn parse_input(value: &serde_json::Value) -> Result<Input, String> {
             amount: req_u256(value, "amount")?,
             listing_id: req_u256(value, "listingId")?,
         }),
+        "buy" => Ok(Input::Buy {
+            bidder: req_u256(value, "bidder")?,
+            item_id: req_u256(value, "itemId")?,
+            listing_id: req_u256(value, "listingId")?,
+        }),
         "cancelAsk" => Ok(Input::CancelAsk {
             listing_id: req_u256(value, "listingId")?,
             seller: req_u256(value, "seller")?,
@@ -584,7 +596,13 @@ pub(crate) fn input_to_json(input: &Input) -> serde_json::Value {
             "amount": s(amount),
             "listingId": s(listing_id),
         }),
-        Input::CancelAsk { listing_id, seller } => serde_json::json!({
+                Input::Buy { bidder, item_id, listing_id } => serde_json::json!({
+            "type": "buy",
+            "bidder": s(bidder),
+            "itemId": s(item_id),
+            "listingId": s(listing_id),
+        }),
+Input::CancelAsk { listing_id, seller } => serde_json::json!({
             "type": "cancelAsk",
             "listingId": s(listing_id),
             "seller": s(seller),

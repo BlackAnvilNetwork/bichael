@@ -69,17 +69,14 @@ fn game_state_events_replay_and_a_bad_event_does_not_append() {
     assert_eq!(world.len(), len);
     assert_eq!(world.harvested(&n(1), "dustgrain"), Some(n(1)));
 
-    world
-        .apply(Input::ItemDrop { token_id: n(1), item_id: n(7), amount: n(2) })
-        .unwrap();
-    assert_eq!(world.item_balance(&n(1), &n(7)), Some(n(2)));
-    assert_eq!(world.kek_balance(&n(1)), Some(U256::ZERO));
     let len = world.len();
     let head = world.head();
     assert_eq!(
-        world.apply(Input::ItemDrop { token_id: n(1), item_id: n(0), amount: n(1) }).unwrap_err(),
-        EngineError::BadId
+        world.apply(Input::ItemDrop { token_id: n(1), item_id: n(7), amount: n(2) }).unwrap_err(),
+        EngineError::ClosedMint
     );
+    assert_eq!(world.item_balance(&n(1), &n(7)), Some(U256::ZERO));
+    assert_eq!(world.kek_balance(&n(1)), Some(U256::ZERO));
     assert_eq!(world.len(), len);
     assert_eq!(world.head(), head);
 
@@ -88,7 +85,7 @@ fn game_state_events_replay_and_a_bad_event_does_not_append() {
     assert!(again.knows(&n(1), "fire"));
     assert_eq!(again.crafted(&n(1), &n(9)), Some(n(3)));
     assert_eq!(again.harvested(&n(1), "dustgrain"), Some(n(1)));
-    assert_eq!(again.item_balance(&n(1), &n(7)), Some(n(2)));
+    assert_eq!(again.item_balance(&n(1), &n(7)), Some(U256::ZERO));
     assert_eq!(again.kek_balance(&n(1)), Some(U256::ZERO));
     assert_eq!(again.head(), world.head());
     assert_eq!(again.len(), world.len());
@@ -99,7 +96,10 @@ fn lone_engine_records_level_and_drop_without_minting_kek() {
     let mut engine = Engine::open(n(1), 0);
     engine.apply(Input::Spawn { token_id: n(1), starting_job: 0 }).unwrap();
     engine.apply(Input::LevelUp { token_id: n(1), level: 2 }).unwrap();
-    engine.apply(Input::ItemDrop { token_id: n(1), item_id: n(4), amount: n(1) }).unwrap();
+    assert_eq!(
+        engine.apply(Input::ItemDrop { token_id: n(1), item_id: n(4), amount: n(1) }).unwrap_err(),
+        EngineError::ClosedMint
+    );
     engine
         .apply(Input::LearnAbility { token_id: n(1), ability_id: "hub".into() })
         .unwrap();
@@ -110,7 +110,7 @@ fn lone_engine_records_level_and_drop_without_minting_kek() {
         .apply(Input::Harvest { token_id: n(1), material_id: "ore".into(), amount: n(3) })
         .unwrap();
     assert_eq!(engine.state().level_u32(), 2);
-    assert_eq!(engine.state().get(&Key::Item(n(4))), n(1));
+    assert_eq!(engine.state().get(&Key::Item(n(4))), U256::ZERO);
     assert_eq!(engine.state().get(&Key::Craft(n(8))), n(1));
     assert_eq!(engine.state().get(&Key::Kek), U256::ZERO);
     let before = engine.len();

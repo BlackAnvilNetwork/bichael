@@ -460,6 +460,22 @@ contract CharacterCheckpointTest is Base {
         assertEq(vault.pendingTotal(), 0);
     }
 
+    function test_checkpoint_relayerPaysTheNftOwnerNotTheSigner() public {
+        _fundAndApprove(50 ether);
+        vm.prank(player);
+        cp.depositKek(tokenId, 50 ether);
+        CharacterCheckpoint.Checkpoint memory c = _next();
+        c.inboundConsumed = 1;
+        c.kekOut = 20 ether;
+        CharacterCheckpoint.Auth memory a = _auth(c);
+        vm.prank(signer);
+        cp.checkpoint(tokenId, c, a);
+        (address to,, , uint256 amt) = vault.withdrawals(1);
+        assertEq(to, player);
+        assertTrue(to != signer);
+        assertEq(amt, 20 ether);
+    }
+
     function test_kek_withdrawalCannotExceedVault() public {
         _fundAndApprove(100 ether);
         vm.prank(player);

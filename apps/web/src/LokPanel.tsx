@@ -154,7 +154,7 @@ export function LokPanel({ you, onClose }: Props) {
 
       <div className="lok-row">
         <input value={minPrice} placeholder="Minimum KEK" onChange={(e) => setMinPrice(e.target.value)} />
-        <span className="lok-note">Minimum price for the next list. A bid buys the cheapest ask and pays what was bid.</span>
+        <span className="lok-note">Minimum price for the next list. Buy pays the cheapest ask, not a higher bid.</span>
       </div>
       <div className="cmd-section-label">Log · send, list, export</div>
       {lok.items.length === 0 && <p className="lok-note">Nothing spendable on the log.</p>}
@@ -217,18 +217,30 @@ export function LokPanel({ you, onClose }: Props) {
             #{row.id} {itemName(row.itemId)} x{row.amount}{row.book ? " min " + row.minPrice : ""} · {row.sellerName} · bid {row.highBid}
             {row.highBidderName ? " by " + row.highBidderName : ""}
           </span>
-          <input
-            value={bid[row.id] ?? ""}
-            placeholder="KEK"
-            onChange={(e) => setBid({ ...bid, [row.id]: e.target.value })}
-          />
-          <button
-            type="button"
-            className="cmd-pill-tab"
-            onClick={() => send({ type: "lok/bid", itemId: row.itemId, amount: bid[row.id] ?? "" })}
-          >
-            {row.book ? "Buy lowest" : "Bid"}
-          </button>
+          {row.book ? (
+            <button
+              type="button"
+              className="cmd-pill-tab"
+              onClick={() => send({ type: "lok/buy", itemId: row.itemId })}
+            >
+              Buy lowest
+            </button>
+          ) : (
+            <>
+              <input
+                value={bid[row.id] ?? ""}
+                placeholder="KEK"
+                onChange={(e) => setBid({ ...bid, [row.id]: e.target.value })}
+              />
+              <button
+                type="button"
+                className="cmd-pill-tab"
+                onClick={() => send({ type: "lok/bid", itemId: row.itemId, amount: bid[row.id] ?? "" })}
+              >
+                Bid
+              </button>
+            </>
+          )}
           {row.yours && (
             <button type="button" className="cmd-pill-tab" onClick={() => send({ type: "lok/cancel", listingId: row.id })}>
               Cancel

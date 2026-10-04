@@ -200,13 +200,13 @@ test("level, ability, craft, harvest, and drop replay and a bad event does not a
   assert.equal(badHarvest.ok, false);
   assert.equal(lok.harvestOf(a.tokenId, "dustgrain"), "2");
 
-  assert.equal(lok.itemDrop(a.tokenId, "7", "2").ok, true);
+  assert.equal(lok.importFromBag(a.tokenId, "7", "2").ok, true);
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
   assert.equal(lok.kekOf(a.tokenId), "0");
   const before = lok.length;
   const badDrop = lok.itemDrop(a.tokenId, "0", "1");
   assert.equal(badDrop.ok, false);
-  if (!badDrop.ok) assert.match(badDrop.error, /invalid/i);
+  if (!badDrop.ok) assert.match(badDrop.error, /cannot mint/i);
   assert.equal(lok.length, before);
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
 
@@ -292,7 +292,7 @@ test("explore reads yours or everyone, searches, and pages newest first", () => 
   assert.ok(older.events.every((event) => !seen.has(event.seq)));
 });
 
-test("order book sells the lowest Pale Dust ask at the bid and leaves the rest", () => {
+test("order book sells the lowest Pale Dust ask at the ask price and leaves the rest", () => {
   const lok = world();
   const a = lok.spawn("char-a", "Ada", 0);
   const b = lok.spawn("char-b", "Bea", 1);
@@ -328,8 +328,11 @@ test("order book sells the lowest Pale Dust ask at the bid and leaves the rest",
   if (!bought.ok) return;
   assert.equal(bought.listingId, ask100.listingId);
   assert.equal(bought.seller, a.tokenId);
-  assert.equal(lok.kekOf(a.tokenId), "2100");
-  assert.equal(lok.kekOf(d.tokenId), "1000");
+  assert.equal(bought.price, "100");
+  assert.equal(lok.kekOf(a.tokenId), "200");
+  assert.equal(lok.kekOf(d.tokenId), "2900");
+  assert.equal(lok.vaultClaim(a.tokenId), "200");
+  assert.equal(lok.vaultClaim(d.tokenId), "2900");
   assert.equal(lok.itemOf(d.tokenId, dust), "0");
   assert.equal(lok.view(d.tokenId).inbox.find((row) => row.tokenId === 1057)?.amount, "1");
   const left = lok.view(d.tokenId).listings.map((row) => row.minPrice).sort();
@@ -433,4 +436,67 @@ test("a name outside the ascii alphabet is rejected and Chrona 2 still works", (
   assert.equal(lok.claimName("char-dup", "chrona 2").ok, false);
   const spawned = lok.spawn("char-ok", "Chrona 2", 0);
   assert.equal(spawned.ok, true);
+});
+
+test("a buy pays the lowest ask and a higher fill cannot overpay", () => {
+  const lok = world();
+  const seller = lok.spawn("char-s", "Sue", 0);
+  const buyer = lok.spawn("char-u", "Uma", 1);
+  assert.equal(seller.ok && buyer.ok, true);
+  if (!seller.ok || !buyer.ok) return;
+  assert.equal(noteImport(lok, seller.tokenId, "7", "2", "1").ok, true);
+  assert.equal(noteDeposit(lok, buyer.tokenId, "5000", "1").ok, true);
+  assert.equal(lok.ask(seller.tokenId, "7", "1", "100", 10).ok, true);
+  assert.equal(lok.ask(seller.tokenId, "7", "1", "100", 11).ok, true);
+  const bought = lok.buy(buyer.tokenId, "7");
+  assert.equal(bought.ok, true);
+  if (!bought.ok) return;
+  assert.equal(bought.price, "100");
+  assert.equal(lok.kekOf(buyer.tokenId), "4900");
+  assert.equal(lok.kekOf(seller.tokenId), "100");
+  assert.equal(lok.vaultClaim(buyer.tokenId), "4900");
+  assert.equal(lok.vaultClaim(seller.tokenId), "100");
+  const over = lok.fill(buyer.tokenId, "7", "4000");
+  assert.equal(over.ok, true);
+  if (!over.ok) return;
+  assert.equal(over.price, "100");
+  assert.equal(lok.kekOf(buyer.tokenId), "4800");
+  assert.equal(lok.vaultClaim(buyer.tokenId), "4800");
+});
+
+test("received KEK is the recipient claim and spent KEK is not withdrawable", () => {
+  const lok = world();
+  const a = lok.spawn("char-a", "Ada", 0);
+  const b = lok.spawn("char-b", "Bea", 1);
+  assert.equal(a.ok && b.ok, true);
+  if (!a.ok || !b.ok) return;
+  assert.equal(noteDeposit(lok, a.tokenId, "12000", "1").ok, true);
+  assert.equal(lok.vaultClaim(a.tokenId), "12000");
+  assert.equal(lok.sendKek(a.tokenId, b.tokenId, "4000").ok, true);
+  assert.equal(lok.vaultClaim(a.tokenId), "8000");
+  assert.equal(lok.vaultClaim(b.tokenId), "4000");
+  assert.equal(lok.withdrawKek(a.tokenId, "8001").ok, false);
+  assert.equal(lok.withdrawKek(b.tokenId, "4000").ok, true);
+  assert.equal(lok.vaultClaim(b.tokenId), "0");
+  assert.equal(lok.spendKek(a.tokenId, "1000").ok, true);
+  assert.equal(lok.paidRespecSkills(a.tokenId, "7000", ["fire"]).ok, true);
+  assert.equal(lok.kekOf(a.tokenId), "0");
+  assert.equal(lok.vaultClaim(a.tokenId), "0");
+  assert.equal(lok.sunkKek(a.tokenId), "8000");
+  assert.equal(lok.withdrawKek(a.tokenId, "1").ok, false);
+});
+
+test("item drop cannot mint an arbitrary credit", () => {
+  const lok = world();
+  const a = lok.spawn("char-a", "Ada", 0);
+  assert.equal(a.ok, true);
+  if (!a.ok) return;
+  const before = lok.length;
+  const dropped = lok.itemDrop(a.tokenId, "7", "9");
+  assert.equal(dropped.ok, false);
+  if (!dropped.ok) assert.match(dropped.error, /cannot mint/i);
+  assert.equal(lok.length, before);
+  assert.equal(lok.itemOf(a.tokenId, "7"), "0");
+  assert.equal(lok.importFromBag(a.tokenId, "7", "2").ok, true);
+  assert.equal(lok.itemOf(a.tokenId, "7"), "2");
 });

@@ -241,7 +241,9 @@ contract CharacterCheckpoint is
     // ------------------------------------------------------------ checkpoints
     function checkpoint(uint256 tokenId, Checkpoint calldata c, Auth calldata a) external whenNotPaused nonReentrant {
         if (address(rulesets) == address(0)) revert NotConfigured();
-        if (nft.ownerOf(tokenId) != msg.sender) revert NotOwner();
+        address player = nft.ownerOf(tokenId);
+        // The NFT owner may submit. An active signer may relay, but is not the player.
+        if (msg.sender != player && !isActiveSigner(msg.sender)) revert NotOwner();
 
         Meta memory m = _meta[tokenId];
         if (m.version != a.version) revert StaleVersion();
@@ -251,7 +253,7 @@ contract CharacterCheckpoint is
         if (c.inboundConsumed < m.inboundApplied || c.inboundConsumed > inboundCount[tokenId]) revert BadInbound();
         if (!rulesets.isAccepted(c.rulesetHash)) revert RulesetNotAccepted();
 
-        _requireSigner(ECDSA.recover(_digest(msg.sender, tokenId, c, a), a.sig));
+        _requireSigner(ECDSA.recover(_digest(player, tokenId, c, a), a.sig));
 
         // effects
         stateRoot[tokenId] = c.newRoot;
@@ -268,8 +270,8 @@ contract CharacterCheckpoint is
         // interactions last: 1155 mint calls the receiver
         if (c.kekOut != 0) {
             if (address(vault) == address(0)) revert NotConfigured();
-            uint256 wid = vault.queueWithdrawal(msg.sender, tokenId, c.kekOut);
-            emit KekWithdrawalQueued(tokenId, wid, c.kekOut, msg.sender);
+            uint256 wid = vault.queueWithdrawal(player, tokenId, c.kekOut);
+            emit KekWithdrawalQueued(tokenId, wid, c.kekOut, player);
         }
         uint256 n = c.exports.length;
         if (n != 0) {
@@ -277,8 +279,8 @@ contract CharacterCheckpoint is
             for (uint256 i; i < n; ++i) {
                 Export calldata e = c.exports[i];
                 if (e.amount == 0) revert BadExport();
-                items.mint(msg.sender, e.itemId, e.amount);
-                emit ItemExported(tokenId, e.itemId, e.amount, msg.sender);
+                items.mint(player, e.itemId, e.amount);
+                emit ItemExported(tokenId, e.itemId, e.amount, player);
             }
         }
     }
@@ -303,7 +305,9 @@ contract CharacterCheckpoint is
     /// event carrying this nonce. Approve the VAULT (not this contract) first. Shares the inbound queue with item imports.
     function depositKek(uint256 tokenId, uint256 amount) external whenNotPaused nonReentrant {
         if (address(vault) == address(0)) revert NotConfigured();
-        if (nft.ownerOf(tokenId) != msg.sender) revert NotOwner();
+        address player = nft.ownerOf(tokenId);
+        // The owner pays, or an active signer pays their own tokens. The signer is not the player.
+        if (msg.sender != player && !isActiveSigner(msg.sender)) revert NotOwner();
         if (amount == 0) revert BadDeposit();
         uint64 nonce;
         unchecked {
@@ -311,6 +315,24 @@ contract CharacterCheckpoint is
         }
         vault.deposit(msg.sender, tokenId, amount);
         emit KekDepositRequested(tokenId, nonce, amount, msg.sender);
+    }
+
+    /// Move vault credit after the log moves KEK to another character. Cannot redirect the payout.
+    function reassignKek(uint256 fromId, uint256 toId, uint256 amount) external whenNotPaused {
+        if (address(vault) == address(0)) revert NotConfigured();
+        address player = nft.ownerOf(fromId);
+        if (msg.sender != player && !isActiveSigner(msg.sender)) revert NotOwner();
+        if (amount == 0 || fromId == toId) revert BadDeposit();
+        vault.reassign(fromId, toId, amount);
+    }
+
+    /// Burn KEK the character already spent in game so it is not left withdrawable.
+    function sinkKek(uint256 tokenId, uint256 amount) external whenNotPaused {
+        if (address(vault) == address(0)) revert NotConfigured();
+        address player = nft.ownerOf(tokenId);
+        if (msg.sender != player && !isActiveSigner(msg.sender)) revert NotOwner();
+        if (amount == 0) revert BadDeposit();
+        vault.sink(tokenId, amount);
     }
 
     function _digest(address player, uint256 tokenId, Checkpoint calldata c, Auth calldata a)

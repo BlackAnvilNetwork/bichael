@@ -134,6 +134,11 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
     itemId: z.number().int().positive(),
     amount: z.string().regex(/^[1-9][0-9]{0,18}$/),
   }),
+  /** Buy the cheapest open ask. The buyer pays that ask, not a separate bid. */
+  z.object({
+    type: z.literal("lok/buy"),
+    itemId: z.number().int().positive(),
+  }),
   z.object({
     type: z.literal("lok/reclaim"),
     listingId: z.string().regex(/^[1-9][0-9]{0,18}$/),

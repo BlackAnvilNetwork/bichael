@@ -268,6 +268,7 @@ async function ownerAddress(cast: CastFn, key: string): Promise<string> {
 export async function linkCharacterNft(
   tokenId: string,
   job: number,
+  playerWallet?: string,
   envIn: NodeJS.ProcessEnv = process.env,
   cast: CastFn = spawnCast(envOf(envIn).castBin),
 ): Promise<{ ok: true; tokenId: string } | VaultErr> {
@@ -276,27 +277,108 @@ export async function linkCharacterNft(
     return { ok: false, error: "Character mint is not configured. The log identity was still created." };
   }
   if (!Number.isInteger(job) || job < 0 || job > 255) return { ok: false, error: "That job cannot be minted." };
+  const player = playerWallet && isAddress(playerWallet) ? playerWallet.toLowerCase() : "";
   try {
+    const chainId = word((await cast(["chain-id", "--rpc-url", env.rpc])).stdout);
+    if (BigInt(chainId) !== LOCAL_ANVIL_CHAIN_ID) {
+      return { ok: false, error: "Character mint is only submitted on local chain 31337." };
+    }
     const owner = (await ownerAddress(cast, env.ownerKey)).toLowerCase();
+    const dest = player && player !== owner ? player : owner;
+    const give = async (held: string) => {
+      if (held === dest) return;
+      if (held !== owner) throw new Error("already minted");
+      if (dest !== owner) {
+        await cast(sendArgs(env.nft, "transferFrom(address,address,uint256)", [owner, dest, tokenId], env.rpc, env.ownerKey));
+      }
+    };
+    let exists = false;
     try {
       const held = (await call(cast, env.rpc, env.nft, "ownerOf(uint256)(address)", [tokenId])).toLowerCase();
-      if (held === owner) return { ok: true, tokenId };
-      return { ok: false, error: "NFT " + tokenId + " is already minted to someone else. No second mint was sent." };
-    } catch {
-      /* not minted yet */
+      exists = true;
+      await give(held);
+      return { ok: true, tokenId };
+    } catch (err) {
+      if (exists) {
+        const message = String(err).includes("already minted")
+          ? "NFT " + tokenId + " is already minted to someone else. No second mint was sent."
+          : "Character NFT could not be moved to the player wallet. " + redact(String(err), [env.ownerKey]);
+        return { ok: false, error: message };
+      }
     }
     const last = BigInt(await call(cast, env.rpc, env.nft, "nextTokenId()(uint256)"));
     if (last + 1n !== BigInt(tokenId)) {
       return {
         ok: false,
-        error: "Refused to mint NFT " + tokenId + " because the checkpoint's next id is " + String(last + 1n) + ".",
+        error: "Refused to mint NFT " + tokenId + " because the checkpoint next id is " + String(last + 1n) + ".",
       };
     }
     const fee = await call(cast, env.rpc, env.factory, "mintFee()(uint256)");
     await cast(sendArgs(env.factory, "createCharacter(uint8)", [String(job)], env.rpc, env.ownerKey, fee));
+    await give(owner);
     return { ok: true, tokenId };
   } catch (err) {
     return { ok: false, error: "Character NFT was not minted. " + redact(String(err), [env.ownerKey]) };
+  }
+}
+
+async function localVaultReady(
+  envIn: NodeJS.ProcessEnv,
+  cast: CastFn,
+): Promise<{ env: ReturnType<typeof envOf>; cast: CastFn } | undefined> {
+  const env = envOf(envIn);
+  if (!env.rpc || !env.checkpoint || !env.ownerKey || !env.rotatorKey) return undefined;
+  if (env.kek && env.kek.toLowerCase() !== LOCAL_MOCK_KEK.toLowerCase()) return undefined;
+  try {
+    const chainId = word((await cast(["chain-id", "--rpc-url", env.rpc])).stdout);
+    if (BigInt(chainId) !== LOCAL_ANVIL_CHAIN_ID) return undefined;
+    const server = await ownerAddress(cast, env.ownerKey);
+    const active = await call(cast, env.rpc, env.checkpoint, "isActiveSigner(address)(bool)", [server]);
+    if (active !== "true") {
+      const now = BigInt(word((await cast(["block", "latest", "--rpc-url", env.rpc, "-f", "timestamp"])).stdout));
+      await cast(
+        sendArgs(env.checkpoint, "addSigner(address,uint64)", [server, (now + 23n * 3600n).toString()], env.rpc, env.rotatorKey),
+      );
+    }
+    return { env, cast };
+  } catch (err) {
+    console.error("[bellgrave] vault credit was not moved: " + redact(String(err), [env.ownerKey, env.rotatorKey]));
+    return undefined;
+  }
+}
+
+export async function reassignKekOnchain(
+  fromId: string,
+  toId: string,
+  amount: string,
+  envIn: NodeJS.ProcessEnv = process.env,
+  cast: CastFn = spawnCast(envOf(envIn).castBin),
+): Promise<void> {
+  if (!/^[1-9][0-9]{0,18}$/.test(amount) || fromId === toId) return;
+  const ready = await localVaultReady(envIn, cast);
+  if (!ready) return;
+  try {
+    await cast(
+      sendArgs(ready.env.checkpoint, "reassignKek(uint256,uint256,uint256)", [fromId, toId, amount], ready.env.rpc, ready.env.ownerKey),
+    );
+  } catch (err) {
+    console.error("[bellgrave] vault reassign was not submitted: " + redact(String(err), [ready.env.ownerKey, ready.env.rotatorKey]));
+  }
+}
+
+export async function sinkKekOnchain(
+  tokenId: string,
+  amount: string,
+  envIn: NodeJS.ProcessEnv = process.env,
+  cast: CastFn = spawnCast(envOf(envIn).castBin),
+): Promise<void> {
+  if (!/^[1-9][0-9]{0,18}$/.test(amount)) return;
+  const ready = await localVaultReady(envIn, cast);
+  if (!ready) return;
+  try {
+    await cast(sendArgs(ready.env.checkpoint, "sinkKek(uint256,uint256)", [tokenId, amount], ready.env.rpc, ready.env.ownerKey));
+  } catch (err) {
+    console.error("[bellgrave] vault sink was not submitted: " + redact(String(err), [ready.env.ownerKey, ready.env.rotatorKey]));
   }
 }
 
@@ -346,12 +428,66 @@ function withVaultQueue<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+export type LogCheckpoint = {
+  player: string;
+  prevRoot: string;
+  newRoot: string;
+  fromIndex: string;
+  toIndex: string;
+  logHash: string;
+  summary: string;
+  inboundConsumed: string;
+  kekOut: string;
+};
+
+function isAddress(value: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(value);
+}
+
+function isWord(value: string): boolean {
+  return /^0x[0-9a-fA-F]{64}$/.test(value);
+}
+
+/** Refuse a made-up checkpoint. The body has to name a real log span and the player's wallet. */
+export function checkpointReady(
+  body: LogCheckpoint | undefined,
+  amount: string,
+  server: string,
+): { ok: true } | { ok: false; error: string } {
+  if (!body) return { ok: false, error: "Withdrawal needs a checkpoint from the log. No in-game KEK was spent." };
+  if (!isAddress(body.player)) return { ok: false, error: "Withdrawal needs the player's wallet." };
+  if (!isAddress(server) || body.player.toLowerCase() === server.toLowerCase()) {
+    return { ok: false, error: "The server key cannot stand in as the player." };
+  }
+  if (!isWord(body.prevRoot) || !isWord(body.newRoot) || !isWord(body.logHash)) {
+    return { ok: false, error: "Checkpoint is missing a real log hash." };
+  }
+  if (body.prevRoot.toLowerCase() === body.newRoot.toLowerCase()) {
+    return { ok: false, error: "Checkpoint root was not taken from the log." };
+  }
+  if (!/^\d+$/.test(body.fromIndex) || !/^\d+$/.test(body.toIndex) || !/^\d+$/.test(body.kekOut)) {
+    return { ok: false, error: "Checkpoint index is not a log position." };
+  }
+  if (BigInt(body.toIndex) <= BigInt(body.fromIndex)) {
+    return { ok: false, error: "Checkpoint does not cover a real log position." };
+  }
+  if (body.kekOut !== amount) return { ok: false, error: "Checkpoint kekOut does not match the withdrawal." };
+  return { ok: true };
+}
+
+export type WithdrawHooks = {
+  beforeSend?: (predictedId: string) => void;
+  body?: LogCheckpoint;
+  /** Build the body after the on-chain log index is known. A missing body is refused. */
+  prepare?: (chain: { fromIndex: string; prevRoot: string }) => LogCheckpoint | undefined;
+};
+
 export async function queueKekWithdrawal(
   tokenId: string,
   amount: string,
   envIn: NodeJS.ProcessEnv = process.env,
   cast?: CastFn,
-  hooks?: { beforeSend?: (predictedId: string) => void },
+  hooks?: WithdrawHooks,
 ): Promise<VaultOk | VaultErr> {
   return withVaultQueue(() => queueKekWithdrawalNow(tokenId, amount, envIn, cast, hooks));
 }
@@ -361,7 +497,7 @@ async function queueKekWithdrawalNow(
   amount: string,
   envIn: NodeJS.ProcessEnv = process.env,
   cast?: CastFn,
-  hooks?: { beforeSend?: (predictedId: string) => void },
+  hooks?: WithdrawHooks,
 ): Promise<VaultOk | VaultErr> {
   if (!cast) cast = spawnCast(envOf(envIn).castBin);
   const env = envOf(envIn);
@@ -373,38 +509,50 @@ async function queueKekWithdrawalNow(
   let broadcast = false;
   let predicted = "";
   try {
-    const owner = await ownerAddress(cast, env.ownerKey);
-    const nftOwner = await call(cast, env.rpc, env.nft, "ownerOf(uint256)(address)", [tokenId]);
-    if (owner.toLowerCase() !== nftOwner.toLowerCase()) {
-      return { ok: false, error: "This character NFT is not held by the local owner. No in-game KEK was spent." };
+    const chainId = word((await cast(["chain-id", "--rpc-url", env.rpc])).stdout);
+    if (BigInt(chainId) !== LOCAL_ANVIL_CHAIN_ID) {
+      return { ok: false, error: "Withdrawals are only submitted on local chain 31337. No in-game KEK was spent." };
+    }
+    const server = (await ownerAddress(cast, env.ownerKey)).toLowerCase();
+    const prevRoot = (await call(cast, env.rpc, env.checkpoint, "stateRoot(uint256)(bytes32)", [tokenId])).toLowerCase();
+    const fromIndex = await call(cast, env.rpc, env.checkpoint, "logIndex(uint256)(uint64)", [tokenId]);
+    const version = await call(cast, env.rpc, env.checkpoint, "version(uint256)(uint32)", [tokenId]);
+    const drafted = hooks?.body ?? hooks?.prepare?.({ fromIndex, prevRoot });
+    const ready = checkpointReady(drafted, amount, server);
+    if (!ready.ok) return ready;
+    const bodyIn = drafted!;
+    const player = bodyIn.player.toLowerCase();
+    let nftOwner = (await call(cast, env.rpc, env.nft, "ownerOf(uint256)(address)", [tokenId])).toLowerCase();
+    if (nftOwner === server && player !== server) {
+      await cast(sendArgs(env.nft, "transferFrom(address,address,uint256)", [server, player, tokenId], env.rpc, env.ownerKey));
+      nftOwner = (await call(cast, env.rpc, env.nft, "ownerOf(uint256)(address)", [tokenId])).toLowerCase();
+    }
+    if (nftOwner !== player) {
+      return { ok: false, error: "This character NFT is not held by the player wallet. No in-game KEK was spent." };
     }
     const accepted = await call(cast, env.rpc, env.rulesets, "isAccepted(bytes32)(bool)", [LOCAL_RULESET_HASH]);
     if (accepted !== "true") {
       return { ok: false, error: "The local ruleset is not accepted yet. No in-game KEK was spent." };
     }
     const now = BigInt(word((await cast(["block", "latest", "--rpc-url", env.rpc, "-f", "timestamp"])).stdout));
-    const active = await call(cast, env.rpc, env.checkpoint, "isActiveSigner(address)(bool)", [owner]);
+    const active = await call(cast, env.rpc, env.checkpoint, "isActiveSigner(address)(bool)", [server]);
     if (active !== "true") {
       const expiry = (now + 23n * 3600n).toString();
-      await cast(sendArgs(env.checkpoint, "addSigner(address,uint64)", [owner, expiry], env.rpc, env.rotatorKey));
+      await cast(sendArgs(env.checkpoint, "addSigner(address,uint64)", [server, expiry], env.rpc, env.rotatorKey));
     }
-    const prevRoot = await call(cast, env.rpc, env.checkpoint, "stateRoot(uint256)(bytes32)", [tokenId]);
-    const fromIndex = await call(cast, env.rpc, env.checkpoint, "logIndex(uint256)(uint64)", [tokenId]);
-    const inbound = await call(cast, env.rpc, env.checkpoint, "inboundApplied(uint256)(uint64)", [tokenId]);
-    const summary = await call(cast, env.rpc, env.checkpoint, "summary(uint256)(uint256)", [tokenId]);
-    const version = await call(cast, env.rpc, env.checkpoint, "version(uint256)(uint32)", [tokenId]);
-    const chainId = word((await cast(["chain-id", "--rpc-url", env.rpc])).stdout);
-    const toIndex = (BigInt(fromIndex) + 1n).toString();
+    if (prevRoot !== bodyIn.prevRoot.toLowerCase() || fromIndex !== bodyIn.fromIndex) {
+      return { ok: false, error: "On-chain log position does not match this checkpoint. Nothing was invented." };
+    }
     const body: Body = {
-      prevRoot,
-      newRoot: prevRoot,
-      fromIndex,
-      toIndex,
-      logHash: word((await cast(["keccak", "lok-queue-" + tokenId + "-" + toIndex + "-" + amount])).stdout),
+      prevRoot: bodyIn.prevRoot,
+      newRoot: bodyIn.newRoot,
+      fromIndex: bodyIn.fromIndex,
+      toIndex: bodyIn.toIndex,
+      logHash: bodyIn.logHash,
       rulesetHash: LOCAL_RULESET_HASH,
-      summary: summary || "0",
-      inboundConsumed: inbound || "0",
-      kekOut: amount,
+      summary: bodyIn.summary,
+      inboundConsumed: bodyIn.inboundConsumed,
+      kekOut: bodyIn.kekOut,
     };
     const encoded = word(
       (await cast(["abi-encode", "x(" + CHECKPOINT_TUPLE + ")", tupleOf(body)])).stdout,
@@ -436,7 +584,7 @@ async function queueKekWithdrawalNow(
       },
       message: {
         tokenId: Number(tokenId),
-        player: owner,
+        player: player,
         version: Number(version),
         deadline: Number(deadline),
         bodyHash,

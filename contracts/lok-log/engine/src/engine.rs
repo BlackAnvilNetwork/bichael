@@ -51,6 +51,10 @@ pub enum EngineError {
     InsufficientInbox,
     /// The ask was recorded without a server timestamp.
     BadClock,
+    /// ItemDrop must not credit an arbitrary item onto the log.
+    ClosedMint,
+    /// A fill priced above the selected ask. The buyer pays the ask.
+    OverAsk,
 }
 
 impl fmt::Display for EngineError {
@@ -82,6 +86,8 @@ impl fmt::Display for EngineError {
             Self::TooSoon => write!(f, "ask can be reclaimed after 7 days"),
             Self::InsufficientInbox => write!(f, "nothing in the inbox"),
             Self::BadClock => write!(f, "listing has no time"),
+            Self::ClosedMint => write!(f, "item drop cannot mint"),
+            Self::OverAsk => write!(f, "buyer would pay more than the ask"),
         }
     }
 }
@@ -190,6 +196,7 @@ impl Engine {
             | Input::Settle { .. }
             | Input::Ask { .. }
             | Input::Fill { .. }
+            | Input::Buy { .. }
             | Input::CancelAsk { .. }
             | Input::ReclaimAsk { .. }
             | Input::SendInbox { .. }
@@ -198,7 +205,7 @@ impl Engine {
             Input::LearnAbility { token_id, ability_id } => self.learn(*token_id, ability_id),
             Input::Craft { token_id, item_id, amount } => self.note_craft(*token_id, *item_id, *amount),
             Input::Harvest { token_id, material_id, amount } => self.note_harvest(*token_id, material_id, *amount),
-            Input::ItemDrop { token_id, item_id, amount } => self.drop_item(*token_id, *item_id, *amount),
+            Input::ItemDrop { .. } => Err(EngineError::ClosedMint),
             Input::CraftSkill { token_id, skill_id, level } => self.note_craft_skill(*token_id, skill_id, *level),
             Input::RespecSkills { token_id, node_ids } => self.respec_skills(*token_id, node_ids),
             Input::PaidRespecSkills { token_id, amount, node_ids } => {

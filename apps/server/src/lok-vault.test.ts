@@ -3,7 +3,25 @@ import test from "node:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowPlayerDeposit, debitAfterQueue, depositCastArgs, depositKekOnchain, loadQueues, LOCAL_MOCK_KEK, PLAYER_DEPOSIT_CAP, playerDepositGate, queueKekWithdrawal, vaultWithdrawalMatches, withdrawalById, writeTextAtomic, type CastFn } from "./lok-vault";
+import { allowPlayerDeposit, checkpointReady, debitAfterQueue, depositCastArgs, depositKekOnchain, loadQueues, LOCAL_MOCK_KEK, PLAYER_DEPOSIT_CAP, playerDepositGate, queueKekWithdrawal, vaultWithdrawalMatches, withdrawalById, writeTextAtomic, type CastFn, type LogCheckpoint } from "./lok-vault";
+
+const PLAYER = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+const SERVER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+function checkpointBody(amount: string, patch: Partial<LogCheckpoint> = {}): LogCheckpoint {
+  return {
+    player: PLAYER,
+    prevRoot: "0x" + "33".repeat(32),
+    newRoot: "0x" + "44".repeat(32),
+    fromIndex: "0",
+    toIndex: "1",
+    logHash: "0x" + "55".repeat(32),
+    summary: "0",
+    inboundConsumed: "0",
+    kekOut: amount,
+    ...patch,
+  };
+}
 
 const ENV = {
   LOK_CHAIN_RPC: "http://127.0.0.1:8545",
@@ -95,7 +113,7 @@ test("a reverted checkpoint does not report a queued withdrawal", async () => {
     if (cmd === "keccak" || cmd === "abi-encode") return { stdout: "0x" + "11".repeat(32) + "\n", stderr: "" };
     if (cmd === "wallet" && args[1] === "sign") return { stdout: "0x" + "ab".repeat(65) + "\n", stderr: "" };
     if (cmd === "call") {
-      if (sig.startsWith("ownerOf")) return { stdout: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\n", stderr: "" };
+      if (sig.startsWith("ownerOf")) return { stdout: PLAYER + "\n", stderr: "" };
       if (sig.startsWith("isAccepted")) return { stdout: "true\n", stderr: "" };
       if (sig.startsWith("isActiveSigner")) return { stdout: "true\n", stderr: "" };
       if (sig.startsWith("stateRoot")) return { stdout: "0x" + "33".repeat(32) + "\n", stderr: "" };
@@ -112,6 +130,7 @@ test("a reverted checkpoint does not report a queued withdrawal", async () => {
   };
   const order: string[] = [];
   const res = await queueKekWithdrawal("6", "1", ENV, cast, {
+    body: checkpointBody("1"),
     beforeSend: (id) => {
       order.push("note:" + id);
     },
@@ -195,7 +214,7 @@ test("two characters cannot queue withdrawals on the same counter", async () => 
     if (cmd === "keccak" || cmd === "abi-encode") return { stdout: "0x" + "11".repeat(32) + "\n", stderr: "" };
     if (cmd === "wallet" && args[1] === "sign") return { stdout: "0x" + "ab".repeat(65) + "\n", stderr: "" };
     if (cmd === "call") {
-      if (sig.startsWith("ownerOf")) return { stdout: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\n", stderr: "" };
+      if (sig.startsWith("ownerOf")) return { stdout: PLAYER + "\n", stderr: "" };
       if (sig.startsWith("isAccepted")) return { stdout: "true\n", stderr: "" };
       if (sig.startsWith("isActiveSigner")) return { stdout: "true\n", stderr: "" };
       if (sig.startsWith("stateRoot")) return { stdout: "0x" + "33".repeat(32) + "\n", stderr: "" };
@@ -215,8 +234,8 @@ test("two characters cannot queue withdrawals on the same counter", async () => 
     throw new Error("unexpected " + cmd + " " + sig);
   };
   const [alice, bob] = await Promise.all([
-    queueKekWithdrawal("6", "1000", ENV, cast),
-    queueKekWithdrawal("7", "1000", ENV, cast),
+    queueKekWithdrawal("6", "1000", ENV, cast, { body: checkpointBody("1000") }),
+    queueKekWithdrawal("7", "1000", ENV, cast, { body: checkpointBody("1000") }),
   ]);
   assert.equal(alice.ok, true);
   assert.equal(bob.ok, true);
@@ -237,4 +256,64 @@ test("a withdrawal match requires the character and the amount", async () => {
   assert.equal(await vaultWithdrawalMatches("4", "6", "1000", ENV, cast), true);
   assert.equal(await vaultWithdrawalMatches("4", "7", "1000", ENV, cast), false);
   assert.equal(await vaultWithdrawalMatches("4", "6", "999", ENV, cast), false);
+});
+
+test("a queued checkpoint is the supplied log body and pays the player wallet", async () => {
+  let signed = "";
+  let tuple = "";
+  let next = 4n;
+  const cast: CastFn = async (args) => {
+    const cmd = args[0] ?? "";
+    const sig = args[2] ?? "";
+    if (cmd === "wallet" && args[1] === "address") return { stdout: SERVER + "\n", stderr: "" };
+    if (cmd === "block") return { stdout: "1000\n", stderr: "" };
+    if (cmd === "chain-id") return { stdout: "31337\n", stderr: "" };
+    if (cmd === "keccak" || cmd === "abi-encode") return { stdout: "0x" + "11".repeat(32) + "\n", stderr: "" };
+    if (cmd === "wallet" && args[1] === "sign") {
+      signed = args[3] ?? "";
+      return { stdout: "0x" + "ab".repeat(65) + "\n", stderr: "" };
+    }
+    if (cmd === "call") {
+      if (sig.startsWith("ownerOf")) return { stdout: PLAYER + "\n", stderr: "" };
+      if (sig.startsWith("isAccepted")) return { stdout: "true\n", stderr: "" };
+      if (sig.startsWith("isActiveSigner")) return { stdout: "true\n", stderr: "" };
+      if (sig.startsWith("stateRoot")) return { stdout: "0x" + "33".repeat(32) + "\n", stderr: "" };
+      if (sig.startsWith("logIndex") || sig.startsWith("version")) return { stdout: "0\n", stderr: "" };
+      if (sig.startsWith("nextWithdrawalId")) return { stdout: next.toString() + "\n", stderr: "" };
+      if (sig.startsWith("withdrawals")) return { stdout: PLAYER + " 10 1 1000\n", stderr: "" };
+    }
+    if (cmd === "send" && sig.startsWith("checkpoint")) {
+      tuple = args[4] ?? "";
+      next += 1n;
+      return { stdout: "0xhash\n", stderr: "" };
+    }
+    throw new Error("unexpected " + cmd + " " + sig);
+  };
+  const body = checkpointBody("1000");
+  const res = await queueKekWithdrawal("6", "1000", ENV, cast, { body });
+  assert.equal(res.ok, true);
+  assert.match(tuple, new RegExp(body.logHash));
+  assert.match(tuple, /,1,/);
+  assert.equal(tuple.includes("lok-queue"), false);
+  assert.match(signed, new RegExp(PLAYER.slice(2), "i"));
+  assert.equal(signed.toLowerCase().includes(SERVER.slice(2).toLowerCase()), false);
+});
+
+test("a withdrawal without a real checkpoint is refused", async () => {
+  const res = await queueKekWithdrawal("6", "1", ENV, async (args) => {
+    const cmd = args[0] ?? "";
+    const sig = args[2] ?? "";
+    if (cmd === "chain-id") return { stdout: "31337\n", stderr: "" };
+    if (cmd === "wallet" && args[1] === "address") return { stdout: SERVER + "\n", stderr: "" };
+    if (cmd === "call" && sig.startsWith("stateRoot")) return { stdout: "0x" + "33".repeat(32) + "\n", stderr: "" };
+    if (cmd === "call" && sig.startsWith("logIndex")) return { stdout: "0\n", stderr: "" };
+    if (cmd === "call" && sig.startsWith("version")) return { stdout: "0\n", stderr: "" };
+    throw new Error("unexpected " + cmd + " " + sig);
+  });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.match(res.error, /checkpoint/i);
+  const serverPlayer = checkpointReady(checkpointBody("1", { player: SERVER }), "1", SERVER);
+  assert.equal(serverPlayer.ok, false);
+  const invented = checkpointReady(checkpointBody("1", { prevRoot: "0x" + "44".repeat(32), newRoot: "0x" + "44".repeat(32) }), "1", SERVER);
+  assert.equal(invented.ok, false);
 });

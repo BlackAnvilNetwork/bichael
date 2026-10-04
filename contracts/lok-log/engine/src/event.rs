@@ -58,7 +58,11 @@ pub enum Input {
     },
     /// Immediate fill of one ask. The buyer pays \mount\ (not the minimum).
     /// \listing_id\ is the ask the price-time rule selected. No standing buy is left.
+    /// amount must equal the selected ask. A higher number is rejected.
     Fill { bidder: U256, item_id: U256, amount: U256, listing_id: U256 },
+    /// Buy the cheapest open ask. The price is that ask, not a bid.
+    /// Equal prices fill the oldest ask. A seller cannot buy their own ask.
+    Buy { bidder: U256, item_id: U256, listing_id: U256 },
     /// Seller pulls an unsold ask into their inbox before it sells.
     CancelAsk { listing_id: U256, seller: U256 },
     /// After 7 days an unsold ask is reclaimed into the seller inbox. ow\ is the server clock.
@@ -230,7 +234,13 @@ pub fn event_id(input: &Input) -> [u8; 32] {
             buf.u256(amount);
             buf.u256(listing_id);
         }
-        Input::CancelAsk { listing_id, seller } => {
+                Input::Buy { bidder, item_id, listing_id } => {
+            buf.b256(&domain(b"LOK_BUY_V1"));
+            buf.u256(bidder);
+            buf.u256(item_id);
+            buf.u256(listing_id);
+        }
+Input::CancelAsk { listing_id, seller } => {
             buf.b256(&domain(b"LOK_CANCEL_ASK_V1"));
             buf.u256(listing_id);
             buf.u256(seller);

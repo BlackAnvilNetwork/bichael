@@ -42,7 +42,7 @@ test("a levelUp and an itemDrop survive a reload the same way the character does
   if (!spawned.ok) return;
   const token = spawned.tokenId;
   assert.equal(lok.levelUp(token, 2).ok, true);
-  assert.equal(lok.itemDrop(token, "1057", "1").ok, true);
+  assert.equal(lok.importFromBag(token, "1057", "1").ok, true);
 
   const reloaded = LokWorld.open(dir, undefined, {});
   assert.equal(reloaded.levelOf(token), 2);
@@ -116,7 +116,7 @@ test("partial item migration copies remaining log stacks before export", () => {
   assert.equal(spawned.ok, true);
   if (!spawned.ok) return;
   const token = spawned.tokenId;
-  assert.equal(lok.itemDrop(token, "1057", "2").ok, true);
+  assert.equal(lok.importFromBag(token, "1057", "2").ok, true);
 
   // Existing save: migration not finished, bag empty, copy flag false (resume must copy first).
   const empty: PlayerProgress = {
@@ -174,7 +174,7 @@ test("legacy in-progress migration does not double-grant bag items", () => {
   assert.equal(spawned.ok, true);
   if (!spawned.ok) return;
   const token = spawned.tokenId;
-  assert.equal(lok.itemDrop(token, "1057", "1").ok, true);
+  assert.equal(lok.importFromBag(token, "1057", "1").ok, true);
 
   // #174-style save: bag already has the copy, flag missing, export still pending.
   const legacy: PlayerProgress = {
@@ -242,8 +242,8 @@ test("a failed export does not drop a stack that arrives on the next boot", () =
   assert.equal(spawned.ok, true);
   if (!spawned.ok) return;
   const token = spawned.tokenId;
-  assert.equal(lok.itemDrop(token, "7", "1").ok, true);
-  assert.equal(lok.itemDrop(token, "8", "1").ok, true);
+  assert.equal(lok.importFromBag(token, "7", "1").ok, true);
+  assert.equal(lok.importFromBag(token, "8", "1").ok, true);
 
   let failEight = true;
   const args = reconcileArgs(dir, lok);
@@ -261,7 +261,7 @@ test("a failed export does not drop a stack that arrives on the next boot", () =
   assert.equal(lok.itemOf(token, "7"), "0");
   assert.equal(lok.itemOf(token, "8"), "1");
 
-  assert.equal(lok.itemDrop(token, "9", "1").ok, true);
+  assert.equal(lok.importFromBag(token, "9", "1").ok, true);
   failEight = false;
   reconcileCharacterProgress(reconcileArgs(dir, lok));
   const saved = readPlayerProgress(join(dir, "players", "char-g.json"));

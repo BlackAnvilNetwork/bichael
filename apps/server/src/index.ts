@@ -179,6 +179,8 @@ import {
   linkCharacterNft,
   loadQueues,
   queueKekWithdrawal,
+  reassignKekOnchain,
+  sinkKekOnchain,
   queuesFor,
   readWithdrawDelay,
   vaultDelaySec,
@@ -454,7 +456,16 @@ async function reconcileQueuedWithdrawals(world: LokWorld): Promise<void> {
     intents,
     existsOnChain: (intent) =>
       intent.id ? vaultWithdrawalMatches(intent.id, intent.token, intent.amount) : false,
-    debit: (token, amount) => world.withdrawKek(token, amount),
+    debit: (() => {
+      const seen = new Map<string, number>();
+      return (token: string, amount: string) => {
+        const key = token + ":" + amount;
+        const nth = (seen.get(key) ?? 0) + 1;
+        seen.set(key, nth);
+        if (world.withdrawCount(token, amount) >= nth) return { ok: true as const };
+        return world.withdrawKek(token, amount);
+      };
+    })(),
   });
   writeWithdrawIntents(path, left);
   console.log("[bellgrave] withdraw intents reconciled=" + (intents.length - left.length) + " still open=" + left.length);
@@ -669,7 +680,7 @@ function handleLokImport(p: Player, tokenId: number, amount: number) {
   }
   // Persist the bag before the log append so a crash cannot restore a bag that still has the stack.
   rememberPlayer(p);
-  const res = lok.itemDrop(token, String(tokenId), String(amount));
+  const res = lok.importFromBag(token, String(tokenId), String(amount));
   if (!res.ok) {
     if (def && def.kind === "base") grantBaseMat(p, def.slug, amount);
     else addItem(p.inventory, tokenId, amount);
@@ -792,6 +803,7 @@ function handleLokSendKek(p: Player, to: string, amount: string) {
     const res = lok.sendKek(token, dest.tokenId, amount);
     if (!res.ok) pushLog(p, res.error);
     else {
+      void sinkOrMove(reassignKekOnchain(token, dest.tokenId, amount));
       pushLog(p, "Sent " + amount + " KEK to " + dest.name + ".");
       tellToken(dest.tokenId, p.name + " sent you " + amount + " KEK.");
     }
@@ -824,7 +836,9 @@ function spendLogKek(p: Player, amount: number): Promise<{ ok: true } | { ok: fa
       return { ok: false, error: "Bad KEK balance." };
     }
     if (bal < cost) return { ok: false, error: "Need " + amount + " KEK (you have " + bal.toString() + ")." };
-    return lok.spendKek(token, String(amount));
+    const spent = lok.spendKek(token, String(amount));
+    if (spent.ok) void sinkOrMove(sinkKekOnchain(token, String(amount)));
+    return spent;
   });
 }
 
@@ -856,13 +870,10 @@ function handleLokWithdrawKek(p: Player, amount: string) {
     token,
     amount,
     balanceOf: () => lok.kekOf(token),
-    debit: () => lok.withdrawKek(token, amount),
     noteIntent: (intent) => upsertWithdrawIntent(withdrawIntentPath(defaultLokDir()), intent),
     clearIntent: () => removeWithdrawIntent(withdrawIntentPath(defaultLokDir()), token),
-    queue: () =>
-      queueKekWithdrawal(token, amount, process.env, undefined, {
-        beforeSend: (id) => upsertWithdrawIntent(withdrawIntentPath(defaultLokDir()), { token, amount, id }),
-      }),
+    debit: () => ({ ok: true as const }),
+    queue: () => queuePlayerWithdrawal(p, token, amount),
     confirm: (id) => vaultWithdrawalMatches(id, token, amount),
   }).then((res) => {
     if (!res.ok) pushLog(p, res.error);
@@ -923,6 +934,83 @@ function handleLokList(p: Player, tokenId: number, amount: number, minPrice: str
   send(p.ws, snapshotFor(p));
 }
 
+
+function sinkOrMove(task: Promise<void>): void {
+  task.catch(() => undefined);
+}
+
+function noteBuy(
+  p: Player,
+  token: string,
+  itemId: number,
+  res: { seller?: string; price?: string },
+): void {
+  const paid = res.price && res.price !== "0" ? res.price : "";
+  if (!paid) {
+    pushLog(p, "The buy did not name an ask price. Nothing was recorded as paid.");
+    return;
+  }
+  if (res.seller && res.seller !== token) {
+    void sinkOrMove(reassignKekOnchain(token, res.seller, paid));
+    tellToken(res.seller, "Your " + itemLabel(itemId) + " ask sold for " + paid + " KEK.");
+  }
+  pushLog(p, "Bought the lowest " + itemLabel(itemId) + " ask for " + paid + " KEK. It is in your Provisioner inbox.");
+}
+
+function handleLokBuy(p: Player, itemId: number) {
+  const token = lokToken(p);
+  if (!token) {
+    pushLog(p, "Could not open your log identity.");
+    return;
+  }
+  void guardedKekMove(token, () => {
+    const res = lok.buy(token, String(itemId));
+    if (!res.ok) pushLog(p, res.error);
+    else noteBuy(p, token, itemId, res);
+    send(p.ws, snapshotFor(p));
+  }).catch(() => failAction(p, "KEK buy"));
+}
+
+async function queuePlayerWithdrawal(p: Player, token: string, amount: string) {
+  let claim = 0n;
+  let cost = 0n;
+  try {
+    claim = BigInt(lok.vaultClaim(token) || "0");
+    cost = BigInt(amount);
+  } catch {
+    return { ok: false as const, error: "Bad withdrawal amount. No in-game KEK was spent." };
+  }
+  if (claim < cost) {
+    return {
+      ok: false as const,
+      error: "Only KEK still credited to this character can be withdrawn. Nothing was queued.",
+    };
+  }
+  const logged = lok.withdrawKek(token, amount);
+  if (!logged.ok) return { ok: false as const, error: logged.error };
+  const res = await queueKekWithdrawal(token, amount, process.env, undefined, {
+    beforeSend: (id) => upsertWithdrawIntent(withdrawIntentPath(defaultLokDir()), { token, amount, id }),
+    prepare: (chain) => {
+      const drafted = lok.checkpointFor(token, chain.fromIndex);
+      if (!drafted.ok) return undefined;
+      if (drafted.body.kekOut !== amount) return undefined;
+      if (drafted.body.prevRoot.toLowerCase() !== chain.prevRoot.toLowerCase()) return undefined;
+      return { player: p.wallet, ...drafted.body };
+    },
+  });
+  if (!res.ok && !res.uncertain) {
+    const undone = lok.undoWithdraw(token, amount);
+    if (!undone.ok) {
+      return {
+        ok: false as const,
+        uncertain: true,
+        error: "Withdrawal was not queued and the log debit could not be undone. Spendable KEK stays reserved.",
+      };
+    }
+  }
+  return res;
+}
+
 function handleLokBid(p: Player, itemId: number, amount: string) {
   const token = lokToken(p);
   if (!token) {
@@ -945,12 +1033,7 @@ function handleLokBid(p: Player, itemId: number, amount: string) {
     }
     const res = lok.fill(token, String(itemId), amount);
     if (!res.ok) pushLog(p, res.error);
-    else {
-      pushLog(p, "Bought the lowest " + itemLabel(itemId) + " ask for " + amount + " KEK. It is in your Provisioner inbox.");
-      if (res.seller && res.seller !== token) {
-        tellToken(res.seller, "Your " + itemLabel(itemId) + " ask sold for " + amount + " KEK.");
-      }
-    }
+    else noteBuy(p, token, itemId, res);
     send(p.ws, snapshotFor(p));
   }).catch(() => failAction(p, "KEK bid"));
 }
@@ -1045,7 +1128,9 @@ function handleSkillRespec(p: Player) {
           return { ok: false, error: "Bad KEK balance." };
         }
         if (bal < cost) return { ok: false, error: "Need " + amount + " KEK (you have " + bal.toString() + ")." };
-        return lok.paidRespecSkills(token, String(amount), nodeIds);
+        const spent = lok.paidRespecSkills(token, String(amount), nodeIds);
+        if (spent.ok) void sinkOrMove(sinkKekOnchain(token, String(amount)));
+        return spent;
       });
     },
     apply: (unlocked, skillPoints) => {
@@ -1106,6 +1191,9 @@ function handleLokSettle(p: Player, listingId: string) {
   if (!res.ok) {
     pushLog(p, res.error);
     return;
+  }
+  if (row?.highBidder && row.highBid && row.highBid !== "0") {
+    void sinkOrMove(reassignKekOnchain(row.highBidder, row.seller, row.highBid));
   }
   pushLog(p, "Settled listing #" + listingId + ".");
   if (row?.highBidder) {
@@ -4358,7 +4446,7 @@ function onMessage(ws: WebSocket, data: string) {
     claimStarter(p);
     const minted = lok.tokenFor(p.charId);
     if (minted) {
-      void linkCharacterNft(minted, JOB_IDS.indexOf(job)).then((res) => {
+      void linkCharacterNft(minted, JOB_IDS.indexOf(job), wallet).then((res) => {
         if (p.ws.readyState !== p.ws.OPEN) return;
         pushLog(p, res.ok ? "Linked character NFT #" + res.tokenId + " on the local checkpoint." : res.error);
         send(p.ws, snapshotFor(p));
@@ -4524,6 +4612,9 @@ function onMessage(ws: WebSocket, data: string) {
       break;
     case "lok/bid":
       handleLokBid(p, msg.itemId, msg.amount);
+      break;
+    case "lok/buy":
+      handleLokBuy(p, msg.itemId);
       break;
     case "lok/cancel":
       handleLokCancel(p, msg.listingId);

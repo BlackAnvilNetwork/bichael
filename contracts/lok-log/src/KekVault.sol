@@ -63,6 +63,8 @@ contract KekVault is Initializable, AccessControlUpgradeable, PausableUpgradeabl
     event WithdrawalCancelled(uint256 indexed id);
     event WithdrawalRestored(uint256 indexed id, uint64 availableAt);
     event WithdrawDelaySet(uint64 delay);
+    event KekReassigned(uint256 indexed fromToken, uint256 indexed toToken, uint256 amount);
+    event KekSunk(uint256 indexed tokenId, uint256 amount);
 
     error BadAmount();
     error BadDelay();
@@ -72,6 +74,9 @@ contract KekVault is Initializable, AccessControlUpgradeable, PausableUpgradeabl
     error NotPending();
     error NotCancelled();
     error NotYet();
+
+    /// Spent KEK is sent here. It is not a withdrawal and not a player.
+    address public constant KEK_BURN = 0x000000000000000000000000000000000000dEaD;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -142,6 +147,31 @@ contract KekVault is Initializable, AccessControlUpgradeable, PausableUpgradeabl
         reservedOf[tokenId] += amount;
         pendingTotal += amount;
         emit WithdrawalQueued(id, tokenId, to, amount, at);
+    }
+
+    /// Move free deposit credit to the character who received the KEK in game.
+    /// Credit that is already reserved or claimed cannot move, so one deposit cannot be withdrawn twice.
+    function reassign(uint256 fromToken, uint256 toToken, uint256 amount)
+        external
+        onlyRole(BRIDGE_ROLE)
+        whenNotPaused
+    {
+        if (amount == 0 || fromToken == toToken) revert BadAmount();
+        uint256 free = depositedOf[fromToken] - reservedOf[fromToken];
+        if (amount > free) revert ExceedsTokenDeposits();
+        depositedOf[fromToken] -= amount;
+        depositedOf[toToken] += amount;
+        emit KekReassigned(fromToken, toToken, amount);
+    }
+
+    /// Take spent KEK out of the spender's withdrawable credit and out of the vault.
+    function sink(uint256 tokenId, uint256 amount) external onlyRole(BRIDGE_ROLE) whenNotPaused {
+        if (amount == 0) revert BadAmount();
+        uint256 free = depositedOf[tokenId] - reservedOf[tokenId];
+        if (amount > free) revert ExceedsTokenDeposits();
+        depositedOf[tokenId] -= amount;
+        kek.safeTransfer(KEK_BURN, amount);
+        emit KekSunk(tokenId, amount);
     }
 
     // ------------------------------------------------------------- claims

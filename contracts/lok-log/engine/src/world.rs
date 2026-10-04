@@ -42,6 +42,11 @@ struct Character {
     inbox: BTreeMap<U256, U256>,
     /// Skill ids removed by respec and not learned again. Rebuilt by replay.
     dropped_skills: BTreeSet<String>,
+    /// Vault attribution still withdrawable by this character. Receipts add to it.
+    /// KEK that was sent, spent, or withdrawn is not included.
+    vault_claim: U256,
+    /// In-game prices (trainer, craft, respec). Not withdrawable and not kekOut.
+    sunk_kek: U256,
 }
 
 /// An auction listing. The item amount is escrowed out of the seller's spendable
@@ -251,6 +256,16 @@ impl World {
         self.characters.get(token_id).map(|ch| ch.inbound_applied)
     }
 
+    /// KEK this character can still withdraw. Sent and spent KEK is not included.
+    pub fn vault_claim(&self, token_id: &U256) -> Option<U256> {
+        self.characters.get(token_id).map(|ch| ch.vault_claim)
+    }
+
+    /// KEK removed from this character by an in-game price.
+    pub fn sunk_kek(&self, token_id: &U256) -> Option<U256> {
+        self.characters.get(token_id).map(|ch| ch.sunk_kek)
+    }
+
     pub fn snapshots(&self) -> Vec<CharacterSnapshot> {
         self.characters
             .iter()
@@ -380,7 +395,18 @@ impl World {
     /// Fill the cheapest ask of item_id that this bidder does not own and whose minimum is at most mount.
     pub fn append_fill(&mut self, bidder: U256, item_id: U256, amount: U256) -> Result<AppliedEvent, EngineError> {
         let chosen = self.choose_ask(bidder, item_id, amount)?;
-        self.apply(Input::Fill { bidder, item_id, amount, listing_id: chosen.id })
+        self.apply(Input::Fill {
+            bidder,
+            item_id,
+            amount: chosen.min_price,
+            listing_id: chosen.id,
+        })
+    }
+
+    /// Buy the cheapest open ask. Pays the ask price. Equal asks fill the oldest.
+    pub fn append_buy(&mut self, bidder: U256, item_id: U256) -> Result<AppliedEvent, EngineError> {
+        let chosen = self.choose_lowest_ask(bidder, item_id)?;
+        self.apply(Input::Buy { bidder, item_id, listing_id: chosen.id })
     }
 
     pub fn append_cancel_ask(&mut self, listing_id: U256, seller: U256) -> Result<AppliedEvent, EngineError> {
@@ -449,8 +475,18 @@ impl World {
 
     /// Draft the checkpoint for `(committed, to_index]`. Does not mark it committed.
     pub fn checkpoint_span(&self, token_id: &U256, to_index: u64) -> Result<Checkpoint, EngineError> {
+        let from_index = self.characters.get(token_id).ok_or(EngineError::NotSpawned)?.committed;
+        self.checkpoint_covering(token_id, from_index, to_index)
+    }
+
+    /// Draft the checkpoint for `[from_index, to_index)`. `from_index` is the on-chain log position.
+    pub fn checkpoint_covering(
+        &self,
+        token_id: &U256,
+        from_index: u64,
+        to_index: u64,
+    ) -> Result<Checkpoint, EngineError> {
         let ch = self.characters.get(token_id).ok_or(EngineError::NotSpawned)?;
-        let from_index = ch.committed;
         if to_index <= from_index || to_index > ch.entries.len() as u64 {
             return Err(EngineError::BadRange);
         }
@@ -830,7 +866,8 @@ impl World {
                 }
                 touch.insert(*token_id);
             }
-            Input::Craft { token_id, item_id, amount } | Input::ItemDrop { token_id, item_id, amount } => {
+            Input::ItemDrop { .. } => return Err(EngineError::ClosedMint),
+            Input::Craft { token_id, item_id, amount } => {
                 if *amount == U256::ZERO {
                     return Err(EngineError::ZeroAmount);
                 }
@@ -918,6 +955,20 @@ impl World {
                     return Err(EngineError::BadId);
                 }
                 let chosen = self.choose_ask(*bidder, *item_id, *amount)?;
+                if chosen.id != *listing_id || *amount != chosen.min_price {
+                    return Err(if *amount != chosen.min_price { EngineError::OverAsk } else { EngineError::NoAsk });
+                }
+                if !self.characters.contains_key(bidder) || !self.characters.contains_key(&chosen.seller) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*bidder);
+                touch.insert(chosen.seller);
+            }
+            Input::Buy { bidder, item_id, listing_id } => {
+                if *item_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                let chosen = self.choose_lowest_ask(*bidder, *item_id)?;
                 if chosen.id != *listing_id {
                     return Err(EngineError::NoAsk);
                 }
@@ -1013,6 +1064,8 @@ impl World {
                         craft_skills: BTreeMap::new(),
                         inbox: BTreeMap::new(),
                         dropped_skills: BTreeSet::new(),
+                        vault_claim: U256::ZERO,
+                        sunk_kek: U256::ZERO,
                     },
                 );
                 Ok(())
@@ -1020,13 +1073,21 @@ impl World {
             Input::DepositKek { token_id, amount, nonce } => {
                 if touch.contains(token_id) {
                     self.credit_inbound(*token_id, *nonce, |world| world.credit_kek(*token_id, *amount))?;
+                    self.add_claim(*token_id, *amount)?;
                 }
                 Ok(())
             }
-            Input::WithdrawKek { token_id, amount } | Input::SpendKek { token_id, amount } => {
+            Input::WithdrawKek { token_id, amount } => {
                 if touch.contains(token_id) {
-                    // Spendable only. Escrowed bids were already removed from this balance.
                     self.debit_kek(*token_id, *amount)?;
+                    self.sub_claim(*token_id, *amount)?;
+                }
+                Ok(())
+            }
+            Input::SpendKek { token_id, amount } => {
+                if touch.contains(token_id) {
+                    self.debit_kek(*token_id, *amount)?;
+                    self.sink_claim(*token_id, *amount)?;
                 }
                 Ok(())
             }
@@ -1042,7 +1103,11 @@ impl World {
                 }
                 Ok(())
             }
-            Input::SendKek { from, to, amount } => self.transfer_kek(*from, *to, *amount, touch),
+            Input::SendKek { from, to, amount } => {
+                self.transfer_kek(*from, *to, *amount, touch)?;
+                self.move_claim(*from, *to, *amount)?;
+                Ok(())
+            }
             Input::SendItem { from, to, item_id, amount } => {
                 self.transfer_item(*from, *to, *item_id, *amount, touch)
             }
@@ -1077,10 +1142,8 @@ impl World {
                 Ok(())
             }
             Input::ItemDrop { token_id, item_id, amount } => {
+                // Historical log entries still credit. affected() refuses a new append.
                 if touch.contains(token_id) {
-                    if *item_id == U256::ZERO {
-                        return Err(EngineError::BadId);
-                    }
                     self.credit_item(*token_id, *item_id, *amount)?;
                 }
                 Ok(())
@@ -1103,6 +1166,7 @@ impl World {
                 }
                 if touch.contains(token_id) {
                     self.debit_kek(*token_id, *amount)?;
+                    self.sink_claim(*token_id, *amount)?;
                     self.respec_skills(*token_id, node_ids)?;
                 }
                 Ok(())
@@ -1113,6 +1177,7 @@ impl World {
             Input::Fill { bidder, item_id, amount, listing_id } => {
                 self.fill(*bidder, *item_id, *amount, *listing_id, touch)
             }
+            Input::Buy { bidder, item_id, listing_id } => self.buy(*bidder, *item_id, *listing_id, touch),
             Input::CancelAsk { listing_id, seller } => self.cancel_ask(*listing_id, *seller, touch),
             Input::ReclaimAsk { listing_id, seller, now } => self.reclaim_ask(*listing_id, *seller, *now, touch),
             Input::SendInbox { from, to, item_id, amount } => {
@@ -1274,6 +1339,63 @@ impl World {
         }
         credit(self)?;
         self.characters.get_mut(&token_id).expect("inbound character").inbound_applied = nonce;
+        Ok(())
+    }
+
+    fn add_claim(&mut self, token_id: U256, amount: U256) -> Result<(), EngineError> {
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        ch.vault_claim = ch.vault_claim.checked_add(amount).ok_or(EngineError::Overflow)?;
+        Ok(())
+    }
+
+    fn sub_claim(&mut self, token_id: U256, amount: U256) -> Result<(), EngineError> {
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        ch.vault_claim = ch.vault_claim.checked_sub(amount).ok_or(EngineError::InsufficientKek)?;
+        Ok(())
+    }
+
+    fn sink_claim(&mut self, token_id: U256, amount: U256) -> Result<(), EngineError> {
+        self.sub_claim(token_id, amount)?;
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        ch.sunk_kek = ch.sunk_kek.checked_add(amount).ok_or(EngineError::Overflow)?;
+        Ok(())
+    }
+
+    fn move_claim(&mut self, from: U256, to: U256, amount: U256) -> Result<(), EngineError> {
+        if from == to {
+            return Ok(());
+        }
+        self.sub_claim(from, amount)?;
+        self.add_claim(to, amount)
+    }
+
+    /// How many withdraws of this amount are already on the character log.
+    pub fn withdraw_count(&self, token_id: U256, amount: U256) -> u64 {
+        let Some(ch) = self.characters.get(&token_id) else {
+            return 0;
+        };
+        ch.entries
+            .iter()
+            .filter(|entry| matches!(&entry.input, Input::WithdrawKek { token_id: who, amount: logged } if who == &token_id && logged == &amount))
+            .count() as u64
+    }
+
+    /// Drop a withdraw that was appended but never queued. Only the last uncommitted entry.
+    pub fn undo_last_withdraw(&mut self, token_id: U256, amount: U256) -> Result<(), EngineError> {
+        let ch = self.characters.get(&token_id).ok_or(EngineError::NotSpawned)?;
+        let last = ch.entries.last().ok_or(EngineError::BadRange)?;
+        match &last.input {
+            Input::WithdrawKek { token_id: who, amount: logged } if who == &token_id && logged == &amount => {}
+            _ => return Err(EngineError::BadRange),
+        }
+        if ch.committed >= ch.entries.len() as u64 {
+            return Err(EngineError::BadRange);
+        }
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        ch.entries.pop();
+        ch.chain.pop().ok_or(EngineError::BadRange)?;
+        self.credit_kek(token_id, amount)?;
+        self.add_claim(token_id, amount)?;
         Ok(())
     }
 
@@ -1485,11 +1607,25 @@ impl World {
         if touch.contains(&listing.seller) {
             self.credit_kek(listing.seller, listing.high_bid)?;
         }
+        self.move_claim(winner, listing.seller, listing.high_bid)?;
         self.listings.remove(&listing_id);
         Ok(())
     }
 
+    pub(crate) fn choose_lowest_ask(&self, bidder: U256, item_id: U256) -> Result<Listing, EngineError> {
+        self.choose_ask_capped(bidder, item_id, None)
+    }
+
     pub(crate) fn choose_ask(&self, bidder: U256, item_id: U256, amount: U256) -> Result<Listing, EngineError> {
+        self.choose_ask_capped(bidder, item_id, Some(amount))
+    }
+
+    fn choose_ask_capped(
+        &self,
+        bidder: U256,
+        item_id: U256,
+        max_price: Option<U256>,
+    ) -> Result<Listing, EngineError> {
         if !self.characters.contains_key(&bidder) {
             return Err(EngineError::NotSpawned);
         }
@@ -1498,7 +1634,7 @@ impl World {
             if !listing.book || listing.item_id != item_id || listing.seller == bidder {
                 continue;
             }
-            if listing.min_price > amount {
+            if max_price.is_some_and(|max| listing.min_price > max) {
                 continue;
             }
             best = Some(match best {
@@ -1566,16 +1702,50 @@ impl World {
         if chosen.id != listing_id {
             return Err(EngineError::NoAsk);
         }
+        if amount != chosen.min_price {
+            return Err(EngineError::OverAsk);
+        }
+        self.pay_ask(bidder, &chosen, amount, touch)?;
+        self.listings.remove(&listing_id);
+        Ok(())
+    }
+
+    fn buy(
+        &mut self,
+        bidder: U256,
+        item_id: U256,
+        listing_id: U256,
+        touch: &BTreeSet<U256>,
+    ) -> Result<(), EngineError> {
+        let chosen = self.choose_lowest_ask(bidder, item_id)?;
+        if chosen.id != listing_id {
+            return Err(EngineError::NoAsk);
+        }
+        self.pay_ask(bidder, &chosen, chosen.min_price, touch)?;
+        self.listings.remove(&listing_id);
+        Ok(())
+    }
+
+    fn pay_ask(
+        &mut self,
+        bidder: U256,
+        chosen: &Listing,
+        price: U256,
+        touch: &BTreeSet<U256>,
+    ) -> Result<(), EngineError> {
+        if price != chosen.min_price {
+            return Err(EngineError::OverAsk);
+        }
         if touch.contains(&bidder) {
-            self.debit_kek(bidder, amount)?;
+            self.debit_kek(bidder, price)?;
         }
         if touch.contains(&chosen.seller) {
-            self.credit_kek(chosen.seller, amount)?;
+            self.credit_kek(chosen.seller, price)?;
         }
         if touch.contains(&bidder) {
             self.credit_inbox(bidder, chosen.item_id, chosen.amount)?;
         }
-        self.listings.remove(&listing_id);
+        self.move_claim(bidder, chosen.seller, price)?;
         Ok(())
     }
 
@@ -1728,6 +1898,7 @@ fn listing_id_of(input: &Input) -> Option<U256> {
         | Input::Settle { listing_id }
         | Input::Ask { listing_id, .. }
         | Input::Fill { listing_id, .. }
+        | Input::Buy { listing_id, .. }
         | Input::CancelAsk { listing_id, .. }
         | Input::ReclaimAsk { listing_id, .. } => Some(*listing_id),
         _ => None,

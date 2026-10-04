@@ -15,6 +15,9 @@ type EngineCraftSkill = { skillId: string; level: number };
 type EngineCharacter = {
   tokenId: string;
   kek: string;
+  vaultClaim?: string;
+  sunkKek?: string;
+  inboundApplied?: number;
   level?: number;
   abilities?: string[];
   crafts?: EngineCraft[];
@@ -257,9 +260,17 @@ export class LokWorld {
     return this.apply({ op: "harvest", tokenId, materialId, amount });
   }
 
-  /** Loot into this character's log inventory. Not a KEK mint. */
-  itemDrop(tokenId: string, itemId: string, amount: string): LokResult {
-    return this.apply({ op: "itemDrop", tokenId, itemId, amount });
+  /** Closed. An item drop must not credit an arbitrary stack onto the log. */
+  itemDrop(_tokenId: string, _itemId: string, _amount: string): LokResult {
+    return { ok: false, error: "Item drop cannot mint items onto the log." };
+  }
+
+  /** Explicit bag import. Credits only this stack, through the next inbound nonce, not ItemDrop. */
+  importFromBag(tokenId: string, itemId: string, amount: string): LokResult {
+    const applied = this.state.characters.find((c) => c.tokenId === tokenId)?.inboundApplied ?? 0;
+    const nonce = String(applied + 1);
+    this.noteCustodyInbound({ kind: "importItem", tokenId, nonce, itemId, amount });
+    return this.importItem(tokenId, itemId, amount, nonce);
   }
 
   levelOf(tokenId: string): number {
@@ -324,13 +335,32 @@ export class LokWorld {
    * Buy the cheapest ask of this item at or under amount. Pays amount, not the minimum.
    * The engine picks the ask. A rejected bid appends nothing.
    */
-  fill(bidder: string, itemId: string, amount: string): LokResult & { listingId?: string; seller?: string; stack?: string } {
+  fill(bidder: string, itemId: string, amount: string): LokResult & { listingId?: string; seller?: string; stack?: string; price?: string } {
     const before = this.state.listings.map((row) => ({ ...row }));
     const res = this.apply({ op: "fill", bidder, itemId, amount });
+    return this.bought(before, res);
+  }
+
+  /** Buy the cheapest ask and pay that ask. No bid amount. */
+  buy(bidder: string, itemId: string): LokResult & { listingId?: string; seller?: string; stack?: string; price?: string } {
+    const before = this.state.listings.map((row) => ({ ...row }));
+    const buyerKek = BigInt(this.kekOf(bidder) || "0");
+    const res = this.apply({ op: "buy", bidder, itemId });
+    const bought = this.bought(before, res);
+    if (!bought.ok) return bought;
+    const left = BigInt(this.kekOf(bidder) || "0");
+    const price = (buyerKek - left).toString();
+    return { ...bought, price };
+  }
+
+  private bought(
+    before: EngineListing[],
+    res: LokResult,
+  ): LokResult & { listingId?: string; seller?: string; stack?: string; price?: string } {
     if (!res.ok) return res;
     const left = new Set(this.state.listings.map((row) => row.id));
     const prior = before.find((row) => !left.has(row.id));
-    return { ok: true, listingId: prior?.id, seller: prior?.seller, stack: prior?.amount };
+    return { ok: true, listingId: prior?.id, seller: prior?.seller, stack: prior?.amount, price: prior?.minPrice };
   }
 
   bid(listingId: string, bidder: string, amount: string): LokResult {
@@ -582,6 +612,99 @@ export class LokWorld {
 
   kekOf(tokenId: string): string {
     return this.state.characters.find((c) => c.tokenId === tokenId)?.kek ?? "0";
+  }
+
+  vaultClaim(tokenId: string): string {
+    return this.state.characters.find((c) => c.tokenId === tokenId)?.vaultClaim ?? "0";
+  }
+
+  withdrawCount(tokenId: string, amount: string): number {
+    const called = lokCall(
+      this.exp,
+      JSON.stringify({ op: "withdrawCount", tokenId, amount }),
+      (ptr, len) => this.exp.lok_apply(ptr, len),
+    );
+    try {
+      const body = JSON.parse(called.out) as { ok?: boolean; count?: number };
+      return body.ok && typeof body.count === "number" ? body.count : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  sunkKek(tokenId: string): string {
+    return this.state.characters.find((c) => c.tokenId === tokenId)?.sunkKek ?? "0";
+  }
+
+  checkpointFor(tokenId: string, fromIndex: string): {
+    ok: true;
+    body: {
+      prevRoot: string;
+      newRoot: string;
+      fromIndex: string;
+      toIndex: string;
+      logHash: string;
+      summary: string;
+      inboundConsumed: string;
+      kekOut: string;
+    };
+  } | { ok: false; error: string } {
+    const called = lokCall(
+      this.exp,
+      JSON.stringify({ op: "checkpoint", tokenId, fromIndex }),
+      (ptr, len) => this.exp.lok_apply(ptr, len),
+    );
+    let body: {
+      ok?: boolean;
+      error?: string;
+      prevRoot?: string;
+      newRoot?: string;
+      fromIndex?: string;
+      toIndex?: string;
+      logHash?: string;
+      summary?: string;
+      inboundConsumed?: string;
+      kekOut?: string;
+    };
+    try {
+      body = JSON.parse(called.out);
+    } catch {
+      return { ok: false, error: "lok engine returned junk" };
+    }
+    if (!body.ok || !body.prevRoot || !body.newRoot || !body.logHash || !body.fromIndex || !body.toIndex || !body.kekOut) {
+      return { ok: false, error: body.error || "No checkpoint for that log position." };
+    }
+    return {
+      ok: true,
+      body: {
+        prevRoot: body.prevRoot,
+        newRoot: body.newRoot,
+        fromIndex: body.fromIndex,
+        toIndex: body.toIndex,
+        logHash: body.logHash,
+        summary: body.summary || "0",
+        inboundConsumed: body.inboundConsumed || "0",
+        kekOut: body.kekOut,
+      },
+    };
+  }
+
+  undoWithdraw(tokenId: string, amount: string): LokResult {
+    const called = lokCall(
+      this.exp,
+      JSON.stringify({ op: "undoWithdraw", tokenId, amount }),
+      (ptr, len) => this.exp.lok_apply(ptr, len),
+    );
+    let body: ApplyBody;
+    try {
+      body = JSON.parse(called.out) as ApplyBody;
+    } catch {
+      return { ok: false, error: "lok engine returned junk" };
+    }
+    if (!body.ok) return { ok: false, error: body.error || "rejected" };
+    if (body.state) this.state = body.state;
+    this.persistLog();
+    return { ok: true };
   }
 
   itemOf(tokenId: string, itemId: string): string {

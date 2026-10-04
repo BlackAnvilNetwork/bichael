@@ -298,6 +298,48 @@ contract KekVaultTest is Test {
         assertLe(vault.pendingTotal(), kek.balanceOf(address(vault)));
     }
 
+    function test_reassign_receiptIsWithdrawable_and_sentKekIsNot() public {
+        _deposit(100 ether);
+        vault.reassign(TOKEN, 2, 40 ether);
+        assertEq(vault.depositedOf(TOKEN), 60 ether);
+        assertEq(vault.depositedOf(2), 40 ether);
+
+        vm.expectRevert(KekVault.ExceedsTokenDeposits.selector);
+        vault.queueWithdrawal(player, TOKEN, 61 ether);
+        vm.expectRevert(KekVault.ExceedsTokenDeposits.selector);
+        vault.queueWithdrawal(other, 2, 41 ether);
+        vault.queueWithdrawal(player, TOKEN, 60 ether);
+        vault.queueWithdrawal(other, 2, 40 ether);
+        vm.expectRevert(KekVault.InsufficientVault.selector);
+        vault.queueWithdrawal(other, 2, 1 ether);
+        vm.expectRevert(KekVault.InsufficientVault.selector);
+        vault.queueWithdrawal(player, TOKEN, 1 ether);
+        assertEq(vault.depositedOf(TOKEN) + vault.depositedOf(2), 100 ether);
+    }
+
+    function test_sink_removesSpentKekFromTheSpender() public {
+        kek.mint(player, 10_000 ether);
+        _deposit(10_000 ether);
+        vault.sink(TOKEN, 10_000 ether);
+        assertEq(vault.depositedOf(TOKEN), 0);
+        assertEq(kek.balanceOf(address(vault)), 0);
+        assertEq(kek.balanceOf(address(0x000000000000000000000000000000000000dEaD)), 10_000 ether);
+        vm.expectRevert(KekVault.InsufficientVault.selector);
+        vault.queueWithdrawal(player, TOKEN, 1);
+    }
+
+    function test_reassign_cannotMoveReservedOrDoubleSpend() public {
+        _deposit(100 ether);
+        vault.queueWithdrawal(player, TOKEN, 70 ether);
+        vm.expectRevert(KekVault.ExceedsTokenDeposits.selector);
+        vault.reassign(TOKEN, 2, 40 ether);
+        vault.reassign(TOKEN, 2, 30 ether);
+        assertEq(vault.depositedOf(TOKEN), 70 ether);
+        assertEq(vault.depositedOf(2), 30 ether);
+        vm.expectRevert(KekVault.ExceedsTokenDeposits.selector);
+        vault.queueWithdrawal(player, TOKEN, 1 ether);
+    }
+
     function test_implementation_cannotBeInitialized() public {
         KekVault impl = new KekVault();
         vm.expectRevert();

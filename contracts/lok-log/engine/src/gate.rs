@@ -62,10 +62,23 @@ impl Gate {
         if op == "state" {
             return ok_state(&self.world);
         }
-        let value = if op == "fill" { match resolve_fill(&self.world, value) {
-            Ok(v) => v,
-            Err(err) => return fail(&err),
-        } } else { value };
+        if op == "checkpoint" {
+            return checkpoint_json(&self.world, &value);
+        }
+        if op == "undoWithdraw" {
+            return undo_withdraw(&mut self.world, &value);
+        }
+        if op == "withdrawCount" {
+            return withdraw_count_json(&self.world, &value);
+        }
+        let value = if op == "fill" || op == "buy" {
+            match resolve_buy(&self.world, value, op == "fill") {
+                Ok(v) => v,
+                Err(err) => return fail(&err),
+            }
+        } else {
+            value
+        };
         let input = match command_to_input(&value, &op) {
             Ok(input) => input,
             Err(err) => return fail(&err),
@@ -94,19 +107,85 @@ fn dec_field(value: &Value, key: &str) -> Result<U256, String> {
     U256::parse_dec(raw).map_err(|_| format!("bad {key}"))
 }
 
-/// A fill names an item and a bid. The engine selects the ask so the client cannot pick a higher one.
-fn resolve_fill(world: &World, value: Value) -> Result<Value, String> {
-    if value.get("listingId").is_some() {
-        return Ok(value);
-    }
+/// A buy names an item. The engine selects the cheapest ask and sets the price to that ask.
+/// A fill may name a maximum. The recorded amount is rewritten to the ask so the buyer cannot overpay.
+fn resolve_buy(world: &World, value: Value, capped: bool) -> Result<Value, String> {
     let bidder = dec_field(&value, "bidder")?;
     let item_id = dec_field(&value, "itemId")?;
-    let amount = dec_field(&value, "amount")?;
-    let chosen = world.choose_ask(bidder, item_id, amount).map_err(|err| err.to_string())?;
+    let chosen = if capped {
+        let amount = dec_field(&value, "amount")?;
+        world.choose_ask(bidder, item_id, amount).map_err(|err| err.to_string())?
+    } else {
+        world.choose_lowest_ask(bidder, item_id).map_err(|err| err.to_string())?
+    };
     let mut value = value;
     let obj = value.as_object_mut().ok_or_else(|| "command must be an object".to_string())?;
     obj.insert("listingId".to_string(), Value::String(chosen.id.to_dec()));
+    if capped {
+        obj.insert("amount".to_string(), Value::String(chosen.min_price.to_dec()));
+    }
     Ok(value)
+}
+
+fn checkpoint_json(world: &World, value: &Value) -> String {
+    let token = match dec_field(value, "tokenId") {
+        Ok(v) => v,
+        Err(err) => return fail(&err),
+    };
+    let from_index = match value.get("fromIndex").and_then(|v| v.as_str()).map(|s| s.parse::<u64>()) {
+        Some(Ok(n)) => n,
+        Some(Err(_)) => return fail("bad fromIndex"),
+        None => match world.committed_index(&token) {
+            Some(n) => n,
+            None => return fail("character is not spawned"),
+        },
+    };
+    let to_index = match world.character_len(&token) {
+        Some(n) => n,
+        None => return fail("character is not spawned"),
+    };
+    match world.checkpoint_covering(&token, from_index, to_index) {
+        Ok(c) => json!({
+            "ok": true,
+            "prevRoot": hex32(&c.prev_root),
+            "newRoot": hex32(&c.new_root),
+            "fromIndex": c.from_index.to_string(),
+            "toIndex": c.to_index.to_string(),
+            "logHash": hex32(&c.log_hash),
+            "summary": c.summary.to_dec(),
+            "inboundConsumed": c.inbound_consumed.to_string(),
+            "kekOut": c.kek_out.to_dec(),
+        }).to_string(),
+        Err(err) => fail(&err.to_string()),
+    }
+}
+
+
+fn withdraw_count_json(world: &World, value: &Value) -> String {
+    let token = match dec_field(value, "tokenId") {
+        Ok(v) => v,
+        Err(err) => return fail(&err),
+    };
+    let amount = match dec_field(value, "amount") {
+        Ok(v) => v,
+        Err(err) => return fail(&err),
+    };
+    json!({ "ok": true, "count": world.withdraw_count(token, amount) }).to_string()
+}
+
+fn undo_withdraw(world: &mut World, value: &Value) -> String {
+    let token = match dec_field(value, "tokenId") {
+        Ok(v) => v,
+        Err(err) => return fail(&err),
+    };
+    let amount = match dec_field(value, "amount") {
+        Ok(v) => v,
+        Err(err) => return fail(&err),
+    };
+    match world.undo_last_withdraw(token, amount) {
+        Ok(()) => ok_state(world),
+        Err(err) => fail(&err.to_string()),
+    }
 }
 
 fn command_to_input(value: &Value, op: &str) -> Result<Input, String> {
@@ -182,6 +261,9 @@ fn state_body(world: &World) -> serde_json::Map<String, Value> {
             "tokenId": snap.token_id.to_dec(),
             "kek": snap.kek.to_dec(),
             "solvencyKek": snap.solvency_kek.to_dec(),
+            "vaultClaim": world.vault_claim(&snap.token_id).unwrap_or(crate::u256::U256::ZERO).to_dec(),
+            "sunkKek": world.sunk_kek(&snap.token_id).unwrap_or(crate::u256::U256::ZERO).to_dec(),
+            "inboundApplied": world.inbound_applied(&snap.token_id).unwrap_or(0),
             "level": world.level(&snap.token_id).unwrap_or(0),
             "abilities": abilities,
             "crafts": crafts,

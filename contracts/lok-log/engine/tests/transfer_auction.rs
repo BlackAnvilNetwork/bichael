@@ -239,7 +239,7 @@ fn replay_cli_stops_at_the_first_bad_world_hash() {
 }
 
 #[test]
-fn order_book_fills_the_lowest_ask_and_pays_the_bid() {
+fn order_book_fills_the_lowest_ask_and_pays_the_ask() {
     let dust = fungible_id("pale_dust");
     let mut world = two_characters();
     world.append_spawn(n(3), 2).unwrap();
@@ -268,8 +268,10 @@ fn order_book_fills_the_lowest_ask_and_pays_the_bid() {
     assert!(world.listing(&n(10)).is_none(), "the 100 ask is the one that sells");
     assert!(world.listing(&n(11)).is_some());
     assert!(world.listing(&n(12)).is_some());
-    assert_eq!(world.kek_balance(&n(1)), Some(before.checked_add(n(2000)).unwrap()), "seller is paid the bid");
-    assert_eq!(world.kek_balance(&n(4)), Some(n(1000)));
+    assert_eq!(world.kek_balance(&n(1)), Some(before.checked_add(n(100)).unwrap()), "seller is paid the ask");
+    assert_eq!(world.kek_balance(&n(4)), Some(n(2900)), "buyer pays 100, not 2000");
+    assert_eq!(world.vault_claim(&n(1)), Some(before.checked_add(n(100)).unwrap()));
+    assert_eq!(world.vault_claim(&n(4)), Some(n(2900)));
     assert_eq!(world.item_balance(&n(4), &dust), Some(n(0)), "the sale does not enter the bag");
     assert_eq!(world.inbox_balance(&n(4), &dust), Some(n(1)));
 
@@ -293,4 +295,56 @@ fn order_book_fills_the_lowest_ask_and_pays_the_bid() {
     let report = replay_world(&world.to_document()).expect("replay");
     assert_eq!(report.head, world.head());
     assert_eq!(report.entries, world.len());
+}
+
+
+#[test]
+fn buy_pays_the_lowest_ask_not_a_higher_amount_and_rejects_overpay() {
+    let dust = fungible_id("pale_dust");
+    let mut world = two_characters();
+    world.append_spawn(n(3), 2).unwrap();
+    import_item(&mut world, n(1), dust, n(1)).unwrap();
+    import_item(&mut world, n(2), dust, n(1)).unwrap();
+    deposit(&mut world, n(3), n(5000)).unwrap();
+    let t0 = 1_700_000_000u64;
+    world.append_ask(n(10), n(1), dust, n(1), n(100), t0).unwrap();
+    world.append_ask(n(11), n(2), dust, n(1), n(100), t0 + 5).unwrap();
+    let over = world
+        .apply(Input::Fill { bidder: n(3), item_id: dust, amount: n(2000), listing_id: n(10) })
+        .unwrap_err();
+    assert_eq!(over, EngineError::OverAsk);
+    assert_eq!(world.kek_balance(&n(3)), Some(n(5000)));
+    world.append_buy(n(3), dust).unwrap();
+    assert!(world.listing(&n(10)).is_none(), "oldest equal ask fills first");
+    assert!(world.listing(&n(11)).is_some());
+    assert_eq!(world.kek_balance(&n(1)), Some(n(100)));
+    assert_eq!(world.kek_balance(&n(3)), Some(n(4900)));
+    assert_eq!(world.inbox_balance(&n(3), &dust), Some(n(1)));
+    let own = world.append_buy(n(2), dust).unwrap_err();
+    assert_eq!(own, EngineError::NoAsk);
+}
+
+#[test]
+fn sent_kek_is_not_withdrawable_by_the_sender_and_spend_is_sunk() {
+    let mut world = two_characters();
+    deposit(&mut world, n(1), n(10000)).unwrap();
+    world.append_send_kek(n(1), n(2), n(4000)).unwrap();
+    assert_eq!(world.vault_claim(&n(1)), Some(n(6000)));
+    assert_eq!(world.vault_claim(&n(2)), Some(n(4000)));
+    world.apply(Input::SpendKek { token_id: n(1), amount: n(1000) }).unwrap();
+    assert_eq!(world.vault_claim(&n(1)), Some(n(5000)));
+    assert_eq!(world.sunk_kek(&n(1)), Some(n(1000)));
+    world
+        .apply(Input::PaidRespecSkills {
+            token_id: n(1),
+            amount: n(5000),
+            node_ids: vec!["fire".into()],
+        })
+        .unwrap();
+    assert_eq!(world.kek_balance(&n(1)), Some(U256::ZERO));
+    assert_eq!(world.vault_claim(&n(1)), Some(U256::ZERO));
+    assert_eq!(world.sunk_kek(&n(1)), Some(n(6000)));
+    assert_eq!(world.vault_claim(&n(2)), Some(n(4000)));
+    let drafted = world.checkpoint_span(&n(1), world.character_len(&n(1)).unwrap()).unwrap();
+    assert_eq!(drafted.kek_out, U256::ZERO, "a respec is not a withdrawal");
 }
