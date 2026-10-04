@@ -187,7 +187,8 @@ import {
 } from "./lok-vault";
 import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
 import { characterNameKey, normalizeCharacterName } from "./character-name";
-import { issueAuthChallenge, verifyAuthLogin, isEthAddress } from "./wallet-auth";
+import { randomBytes } from "node:crypto";
+import { dropAuthConnection, issueAuthChallenge, verifyAuthLogin, isEthAddress } from "./wallet-auth";
 import { defaultLokDir, LokWorld } from "./lok-world";
 import { readPlayerProgress, reconcileCharacterProgress, playerProgressPath, rememberLedger, chargeSkillRespec, RESPEC_KEK_COST, shouldChargeForAbility, type PlayerProgress } from "./player-progress";
 import { debugCheatsEnabled } from "./debug-cheats";
@@ -4258,7 +4259,11 @@ function onMessage(ws: WebSocket, data: string) {
   }
 
   if (msg.type === "auth/hello") {
-    const challenged = issueAuthChallenge(msg.wallet);
+    const sock = ws as WebSocket & { authConnId?: string; authDomain?: string };
+    const challenged = issueAuthChallenge(msg.wallet, {
+      connectionId: sock.authConnId,
+      domain: sock.authDomain,
+    });
     if (!challenged.ok) {
       send(ws, { type: "error", message: challenged.error });
       return;
@@ -4274,11 +4279,13 @@ function onMessage(ws: WebSocket, data: string) {
   }
 
   if (msg.type === "auth") {
+    const sock = ws as WebSocket & { authConnId?: string };
     void verifyAuthLogin({
       wallet: msg.wallet,
       signature: msg.signature,
       nonce: msg.nonce,
       message: msg.message,
+      connectionId: sock.authConnId,
     }).then((verified) => {
       if (!verified.ok) {
         send(ws, { type: "error", message: verified.error });
@@ -4537,9 +4544,15 @@ function onMessage(ws: WebSocket, data: string) {
 }
 
 const wss = new WebSocketServer({ port: PORT });
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  const sock = ws as WebSocket & { authConnId?: string; authDomain?: string };
+  sock.authConnId = randomBytes(8).toString("hex");
+  const hostHeader = req.headers.host;
+  const host = typeof hostHeader === "string" ? hostHeader.split(":")[0]?.trim() : "";
+  sock.authDomain = host || "localhost";
   ws.on("message", (buf) => onMessage(ws, buf.toString()));
   ws.on("close", () => {
+    if (sock.authConnId) dropAuthConnection(sock.authConnId);
     const wallet = (ws as WebSocket & { wallet?: string }).wallet;
     if (!wallet) return;
     const p = players.get(wallet);

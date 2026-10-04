@@ -469,6 +469,9 @@ pub(crate) fn parse_input(value: &serde_json::Value) -> Result<Input, String> {
                 }
                 node_ids.push(id.to_string());
             }
+            if node_ids.is_empty() {
+                return Err("paid respec needs at least one skill node".to_string());
+            }
             Ok(Input::PaidRespecSkills { token_id, amount, node_ids })
         }
         other => Err(format!("unknown input type {other}")),

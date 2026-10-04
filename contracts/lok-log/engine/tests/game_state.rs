@@ -150,6 +150,14 @@ fn paid_respec_debits_kek_and_drops_nodes_atomically() {
     assert_eq!(w.kek_balance(&n(1)), Some(n(15_000)));
     assert!(w.knows(&n(1), "node_a"));
 
+    assert_eq!(
+        w.append_paid_respec_skills(n(1), n(10_000), vec![])
+            .unwrap_err(),
+        EngineError::BadId
+    );
+    assert_eq!(w.kek_balance(&n(1)), Some(n(15_000)));
+    assert!(w.knows(&n(1), "node_a"));
+
     w.append_paid_respec_skills(n(1), n(10_000), vec!["node_a".into()])
         .unwrap();
     assert_eq!(w.kek_balance(&n(1)), Some(n(5_000)));

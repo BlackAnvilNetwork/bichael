@@ -6,7 +6,12 @@ import test from "node:test";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { LokWorld, MAX_CHARS_PER_WALLET, NAME_RESERVE_MS } from "./lok-world";
 import {
+  __clearPendingChallengesForTests,
+  __expirePendingForTests,
   __resetAuthNoncesForTests,
+  AUTH_HELLO_LIMIT,
+  AUTH_PENDING_GLOBAL,
+  AUTH_PENDING_PER_CONNECTION,
   authMessage,
   issueAuthChallenge,
   verifyAuthLogin,
@@ -166,7 +171,134 @@ test("paid respec debits and clears in one engine event", () => {
   assert.equal(lok.paidRespecSkills(spawned.tokenId, "20000", ["node_a"]).ok, false);
   assert.equal(lok.kekOf(spawned.tokenId), "15000");
   assert.equal(lok.hasAbility(spawned.tokenId, "node_a"), true);
+  assert.equal(lok.paidRespecSkills(spawned.tokenId, "10000", []).ok, false);
+  assert.equal(lok.kekOf(spawned.tokenId), "15000");
+  assert.equal(lok.hasAbility(spawned.tokenId, "node_a"), true);
   assert.equal(lok.paidRespecSkills(spawned.tokenId, "10000", ["node_a"]).ok, true);
   assert.equal(lok.kekOf(spawned.tokenId), "5000");
   assert.equal(lok.hasAbility(spawned.tokenId, "node_a"), false);
+});
+
+test("one nonce cannot authorize two in-flight logins", async () => {
+  __resetAuthNoncesForTests();
+  const account = privateKeyToAccount(generatePrivateKey());
+  const challenged = issueAuthChallenge(account.address, { connectionId: "conn-a", domain: "localhost" });
+  assert.equal(challenged.ok, true);
+  if (!challenged.ok) return;
+  assert.match(challenged.message, /Domain: localhost/);
+  assert.match(challenged.message, /Expiration Time: /);
+  const signature = await account.signMessage({ message: challenged.message });
+  const args = {
+    wallet: account.address,
+    signature,
+    nonce: challenged.nonce,
+    message: challenged.message,
+    connectionId: "conn-a",
+  };
+  const [first, second] = await Promise.all([verifyAuthLogin(args), verifyAuthLogin(args)]);
+  const wins = [first, second].filter((row) => row.ok);
+  assert.equal(wins.length, 1);
+});
+
+test("login rejects a different connection, a different message, and an expired nonce", async () => {
+  __resetAuthNoncesForTests();
+  const account = privateKeyToAccount(generatePrivateKey());
+  const challenged = issueAuthChallenge(account.address, { connectionId: "conn-a", domain: "bellgrave.local" });
+  assert.equal(challenged.ok, true);
+  if (!challenged.ok) return;
+  const signature = await account.signMessage({ message: challenged.message });
+  const otherConn = await verifyAuthLogin({
+    wallet: account.address,
+    signature,
+    nonce: challenged.nonce,
+    message: challenged.message,
+    connectionId: "conn-b",
+  });
+  assert.equal(otherConn.ok, false);
+
+  const loosely = challenged.message + "\nExtra: still has the nonce";
+  assert.equal(loosely.includes(challenged.nonce), true);
+  assert.equal(loosely.toLowerCase().includes(account.address.toLowerCase()), true);
+  const otherText = await verifyAuthLogin({
+    wallet: account.address,
+    signature,
+    nonce: challenged.nonce,
+    message: loosely,
+    connectionId: "conn-a",
+  });
+  assert.equal(otherText.ok, false);
+
+  const ok = await verifyAuthLogin({
+    wallet: account.address,
+    signature,
+    nonce: challenged.nonce,
+    message: challenged.message,
+    connectionId: "conn-a",
+  });
+  assert.equal(ok.ok, true);
+
+  __resetAuthNoncesForTests();
+  const expiring = issueAuthChallenge(account.address, { connectionId: "conn-a" });
+  assert.equal(expiring.ok, true);
+  if (!expiring.ok) return;
+  __expirePendingForTests(expiring.nonce);
+  const signed = await account.signMessage({ message: expiring.message });
+  const expired = await verifyAuthLogin({
+    wallet: account.address,
+    signature: signed,
+    nonce: expiring.nonce,
+    message: expiring.message,
+    connectionId: "conn-a",
+  });
+  assert.equal(expired.ok, false);
+});
+
+test("auth challenges are capped per connection and globally, and hellos are rate limited", () => {
+  __resetAuthNoncesForTests();
+  const wallet = "0x8888888888888888888888888888888888888888";
+  for (let i = 0; i < AUTH_PENDING_PER_CONNECTION; i++) {
+    const issued = issueAuthChallenge(wallet, { connectionId: "capped" });
+    assert.equal(issued.ok, true, String(i));
+  }
+  const overflow = issueAuthChallenge(wallet, { connectionId: "capped" });
+  assert.equal(overflow.ok, false);
+
+  __resetAuthNoncesForTests();
+  let issuedCount = 0;
+  for (let c = 0; c < AUTH_PENDING_GLOBAL / AUTH_PENDING_PER_CONNECTION; c++) {
+    for (let i = 0; i < AUTH_PENDING_PER_CONNECTION; i++) {
+      const issued = issueAuthChallenge(wallet, { connectionId: "g" + c });
+      assert.equal(issued.ok, true);
+      issuedCount += 1;
+    }
+  }
+  assert.equal(issuedCount, AUTH_PENDING_GLOBAL);
+  const globalOverflow = issueAuthChallenge(wallet, { connectionId: "g-extra" });
+  assert.equal(globalOverflow.ok, false);
+
+  __resetAuthNoncesForTests();
+  for (let i = 0; i < AUTH_HELLO_LIMIT; i++) {
+    __clearPendingChallengesForTests();
+    const issued = issueAuthChallenge(wallet, { connectionId: "rate" });
+    assert.equal(issued.ok, true, String(i));
+  }
+  __clearPendingChallengesForTests();
+  const limited = issueAuthChallenge(wallet, { connectionId: "rate" });
+  assert.equal(limited.ok, false);
+});
+
+test("bindWallet does not replace a wallet that is already set", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lok-bind-"));
+  const first = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const second = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const lok = LokWorld.open(dir, undefined, {});
+  const spawned = lok.spawn("char-own", "Owner", 0);
+  assert.equal(spawned.ok, true);
+  lok.bindWallet("char-own", first);
+  lok.bindWallet("char-own", second);
+  assert.equal(lok.charsForWallet(first).length, 1);
+  assert.equal(lok.charsForWallet(second).length, 0);
+  const again = LokWorld.open(dir, undefined, {});
+  assert.equal(again.charsForWallet(first).some((row) => row.charId === "char-own"), true);
+  assert.equal(again.charsForWallet(second).length, 0);
 });

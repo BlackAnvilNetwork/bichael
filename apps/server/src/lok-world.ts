@@ -420,7 +420,7 @@ export class LokWorld {
     const row = this.bind.chars.find((c) => c.charId === charId);
     if (row) {
       row.name = norm.name;
-      if (owner) row.wallet = owner;
+      if (owner && !row.wallet) row.wallet = owner;
       this.bind.reserved = this.bind.reserved.filter((reserved) => reserved.charId !== charId);
       this.saveBind();
       return { ok: true, name: norm.name };
@@ -470,8 +470,7 @@ export class LokWorld {
     const owner = wallet.trim().toLowerCase();
     if (!owner) return;
     const row = this.bind.chars.find((c) => c.charId === charId);
-    if (!row) return;
-    if (row.wallet && row.wallet.toLowerCase() === owner) return;
+    if (!row || row.wallet) return;
     row.wallet = owner;
     this.saveBind();
   }

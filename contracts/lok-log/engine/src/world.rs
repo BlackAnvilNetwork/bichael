@@ -875,6 +875,9 @@ impl World {
                 touch.insert(*token_id);
             }
             Input::PaidRespecSkills { token_id, amount, node_ids } => {
+                if node_ids.is_empty() {
+                    return Err(EngineError::BadId);
+                }
                 if *amount == U256::ZERO {
                     return Err(EngineError::ZeroAmount);
                 }
@@ -1095,6 +1098,9 @@ impl World {
                 Ok(())
             }
             Input::PaidRespecSkills { token_id, amount, node_ids } => {
+                if node_ids.is_empty() {
+                    return Err(EngineError::BadId);
+                }
                 if touch.contains(token_id) {
                     self.debit_kek(*token_id, *amount)?;
                     self.respec_skills(*token_id, node_ids)?;
