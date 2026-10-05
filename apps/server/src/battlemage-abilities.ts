@@ -80,6 +80,8 @@ export type BattleMageMob = {
   diaUntil: number;
   bioUntil: number;
   bioTick: number;
+  /** Wallet that applied Bio, for DoT kill credit (#69). */
+  bioSourceWallet?: string | null;
 };
 
 export type BattleMageHooks = {
@@ -520,6 +522,7 @@ export function resolveBattleMageAbility(
       const tick = Math.max(1, Math.floor((def.potency ?? 8) + combatStats.int * 0.15));
       m.bioUntil = now + dur;
       m.bioTick = tick;
+      m.bioSourceWallet = p.wallet.toLowerCase();
       p.anim = "cast";
       p.animUntil = now + castAnimMs;
       hooks.pushLog(p, `${def.label} — spore rot (${tick}/tick).`);

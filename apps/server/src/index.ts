@@ -178,6 +178,7 @@ import {
 } from "./battlemage-abilities";
 import { playerStance, resolveTimAbility } from "./tim-abilities";
 import { hasKit } from "./support-job";
+import { pickDotKillCredit } from "./dot-credit";
 import { loadLokEnv, startKekDepositWatcher } from "./lok-chain";
 import {
   claimQueuedWithdrawal,
@@ -388,6 +389,8 @@ type Mob = {
   /** Battle Mage Bio — poison DoT */
   bioUntil: number;
   bioTick: number;
+  /** Wallet that applied Bio, for DoT kill credit (#69). */
+  bioSourceWallet: string | null;
   scImpactUntil: number;
   scImpactElement: import("@bellgrave/combat").SorcererElement | null;
   /** Weapon skill Attack Down */
@@ -1333,6 +1336,7 @@ function emptyCombatFields() {
     diaUntil: 0,
     bioUntil: 0,
     bioTick: 0,
+    bioSourceWallet: null as string | null,
     scImpactUntil: 0,
     scImpactElement: null as import("@bellgrave/combat").SorcererElement | null,
     atkDownUntil: 0,
@@ -4061,13 +4065,8 @@ function tickSim() {
     if (mob.alive && now < mob.bioUntil && mob.bioTick > 0 && tick % TICK_HZ === 0) {
       mob.hp = Math.max(0, mob.hp - mob.bioTick);
       if (mob.hp <= 0) {
-        let credited: Player | null = null;
-        for (const p of players.values()) {
-          if (p.targetId === mob.id) {
-            credited = p;
-            break;
-          }
-        }
+        // #69: credit the Bio caster (or another wallet that hit it), not whoever happens to target it.
+        const credited = pickDotKillCredit(mob.bioSourceWallet, mob.hitBy, players.values());
         if (credited) rewardMobKill(credited, mob, now);
         else {
           mob.alive = false;

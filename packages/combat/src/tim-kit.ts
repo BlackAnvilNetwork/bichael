@@ -549,6 +549,20 @@ export const TIM_ABILITIES: Record<TimAbilityId, TimAbilityDef> = {
   },
 };
 
+/** Clockwind (#68): 10 TP per MP, up to 150 MP, never past max MP. Only the TP actually converted is spent. */
+export const CLOCKWIND_TP_PER_MP = 10;
+export const CLOCKWIND_MAX_MP = 150;
+export function clockwindConversion(
+  tp: number,
+  mp: number,
+  maxMp: number,
+): { mpGained: number; tpSpent: number } {
+  const room = Math.max(0, Math.floor(maxMp - mp));
+  const fromTp = Math.floor(Math.max(0, tp) / CLOCKWIND_TP_PER_MP);
+  const mpGained = Math.max(0, Math.min(CLOCKWIND_MAX_MP, fromTp, room));
+  return { mpGained, tpSpent: mpGained * CLOCKWIND_TP_PER_MP };
+}
+
 export function isTimAbilityId(id: string): id is TimAbilityId {
   return Object.prototype.hasOwnProperty.call(TIM_ABILITIES, id);
 }
@@ -734,7 +748,7 @@ export const TIM_ABILITY_BLURBS: Record<TimAbilityId, string> = {
   split_second: "Stun a target for a few seconds.",
   overclock: "Extreme short haste burst (JA).",
   time_seal: "Your next enfeeble or chrona shatter bites harder, then Seal fades.",
-  clockwind: "Convert current TP into MP.",
+  clockwind: "Convert TP into MP (10 TP per MP, up to 150 MP). TP you don't need is kept.",
   perpetual_motion: "For a while, your attacks crit more often and hit harder.",
 };
 

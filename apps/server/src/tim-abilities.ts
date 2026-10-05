@@ -7,6 +7,7 @@ import {
   type TimAbilityId,
   isTimAbilityId,
     isTrainerFreeAbility,
+  clockwindConversion,
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
 import { kitLevel } from "./support-job";
@@ -359,10 +360,19 @@ export function resolveTimAbility(
   }
 
   if (id === "clockwind") {
-    const gained = Math.min(150, Math.floor(p.tp / 10));
-    p.mp = Math.min(p.maxMp, p.mp + gained);
-    p.tp = 0;
-    hooks.pushLog(`Clockwind — converted TP into ${gained} MP.`);
+    // #68: spend only the TP that becomes MP; excess TP is kept, not zeroed.
+    const { mpGained, tpSpent } = clockwindConversion(p.tp, p.mp, p.maxMp);
+    if (mpGained <= 0) {
+      hooks.pushLog(p.mp >= p.maxMp ? "Clockwind — MP is already full." : "Clockwind — not enough TP to convert.");
+      if (!opts.free) {
+        p.mp += def.mp;
+        delete p.recasts[id];
+      }
+      return false;
+    }
+    p.mp = Math.min(p.maxMp, p.mp + mpGained);
+    p.tp -= tpSpent;
+    hooks.pushLog(`Clockwind — converted ${tpSpent} TP into ${mpGained} MP.`);
     return true;
   }
 
