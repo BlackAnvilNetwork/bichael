@@ -988,13 +988,13 @@ function handleLokBuy(p: Player, itemId: number, qty?: number) {
     pushLog(p, "Could not open your log identity.");
     return;
   }
-  void guardedKekMove(token, () => {
+  void guardedKekMove(token, async () => {
     if (qty == null) {
       const res = lok.buy(token, String(itemId));
       if (!res.ok) pushLog(p, res.error);
       else noteBuy(p, token, itemId, res);
     } else {
-      const res = lok.buyQuantity(token, String(itemId), qty);
+      const res = await lok.buyQuantity(token, String(itemId), qty);
       if (!res.ok) pushLog(p, res.error);
       else noteQuantityBuy(p, token, itemId, res);
     }

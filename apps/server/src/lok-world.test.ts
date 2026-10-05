@@ -1,10 +1,10 @@
 import { planQuantityFills, type AskQuote } from "@bellgrave/protocol";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { LokWorld } from "./lok-world";
+import { BUY_FILL_BATCH, LOG_SNAPSHOT_EVERY, LokWorld, MAX_FILLS_PER_BUY_MESSAGE } from "./lok-world";
 
 function noteImport(lok: LokWorld, tokenId: string, itemId: string, amount: string, nonce: string) {
   lok.noteCustodyInbound({ kind: "importItem", tokenId, nonce, itemId, amount });
@@ -127,7 +127,7 @@ test("withdrawKek drops spendable balance and a transfer is stored on both logs"
   assert.equal(lok.kekOf(a.tokenId), "4");
   assert.equal(lok.kekOf(b.tokenId), "2");
 
-  const doc = JSON.parse(readFileSync(lok.logPath, "utf8")) as {
+  const doc = JSON.parse(lok.logDocument()) as {
     type: string;
     characters: { tokenId: string; entries: { hash: string; input: { type: string } }[] }[];
   };
@@ -502,7 +502,7 @@ test("item drop cannot mint an arbitrary credit", () => {
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
 });
 
-test("quantity buy fills cheapest asks first, charges each ask, skips self, and stops when short", () => {
+test("quantity buy fills cheapest asks first, charges each ask, skips self, and stops when short", async () => {
   const dir = mkdtempSync(join(tmpdir(), "lok-qty-"));
   const lok = LokWorld.open(dir, undefined, {});
   const ada = lok.spawn("char-a", "Ada", 0);
@@ -543,11 +543,11 @@ test("quantity buy fills cheapest asks first, charges each ask, skips self, and 
   assert.equal(planned.short, false);
   assert.equal(planned.fills[0]!.price, "8");
 
-  const rejected = lok.buyQuantity(dot.tokenId, dust, 0);
+  const rejected = await lok.buyQuantity(dot.tokenId, dust, 0);
   assert.equal(rejected.ok, false);
   const len = lok.length;
 
-  const first = lok.buyQuantity(dot.tokenId, dust, 3);
+  const first = await lok.buyQuantity(dot.tokenId, dust, 3);
   assert.equal(first.ok, true);
   if (!first.ok) return;
   assert.deepEqual(first.fills.map((fill) => fill.listingId), [askEve.listingId]);
@@ -560,7 +560,7 @@ test("quantity buy fills cheapest asks first, charges each ask, skips self, and 
   assert.equal(lok.kekOf(bea.tokenId), "0");
   assert.equal(lok.view(dot.tokenId).listings.some((row) => row.id === askSelf.listingId), true);
 
-  const tie = lok.buyQuantity(dot.tokenId, dust, 2);
+  const tie = await lok.buyQuantity(dot.tokenId, dust, 2);
   assert.equal(tie.ok, true);
   if (!tie.ok) return;
   assert.deepEqual(tie.fills.map((fill) => fill.listingId), [askBea.listingId]);
@@ -571,7 +571,7 @@ test("quantity buy fills cheapest asks first, charges each ask, skips self, and 
 
   const beforeShort = lok.length;
   const kekBefore = lok.kekOf(dot.tokenId);
-  const rest = lok.buyQuantity(dot.tokenId, dust, 50);
+  const rest = await lok.buyQuantity(dot.tokenId, dust, 50);
   assert.equal(rest.ok, true);
   if (!rest.ok) return;
   assert.equal(rest.short, true);
@@ -590,7 +590,7 @@ test("quantity buy fills cheapest asks first, charges each ask, skips self, and 
   );
 
   const stuck = lok.length;
-  const own = lok.buyQuantity(dot.tokenId, dust, 1);
+  const own = await lok.buyQuantity(dot.tokenId, dust, 1);
   assert.equal(own.ok, false);
   if (!own.ok) assert.match(own.error, /ask/i);
   assert.equal(lok.length, stuck);
@@ -600,4 +600,100 @@ test("quantity buy fills cheapest asks first, charges each ask, skips self, and 
   const buys = lok.explore({ tokenId: dot.tokenId }).events.filter((event) => event.kind === "buy");
   assert.equal(buys.length, 4);
   assert.equal(buys.some((event) => event.kind !== "buy"), false);
+});
+
+test("one event appends a journal line and does not rewrite the world log", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lok-append-"));
+  const lok = LokWorld.open(dir, undefined, {});
+  const spawned = lok.spawn("char-a", "Ada", 0);
+  assert.equal(spawned.ok, true);
+  if (!spawned.ok) return;
+  const token = spawned.tokenId;
+  assert.equal(noteImport(lok, token, "7", "4", "1").ok, true);
+  const depositsBeforeTail = LOG_SNAPSHOT_EVERY - 2;
+  for (let i = 0; i < depositsBeforeTail; i++) {
+    assert.equal(noteDeposit(lok, token, "1", String(i + 2)).ok, true);
+  }
+  assert.equal(lok.length, LOG_SNAPSHOT_EVERY);
+  const snap = readFileSync(lok.logPath);
+  const journalBefore = readFileSync(lok.journalPath);
+  assert.ok(snap.length > 2000);
+  assert.ok(snap.subarray(0, 16).toString("utf8").startsWith('{"journalBytes":'));
+  assert.equal(noteDeposit(lok, token, "1", String(depositsBeforeTail + 2)).ok, true);
+  const snapAfter = readFileSync(lok.logPath);
+  assert.equal(snapAfter.equals(snap), true);
+  const journalAfter = readFileSync(lok.journalPath);
+  const added = journalAfter.subarray(journalBefore.length).toString("utf8");
+  const addedLines = added.split("\n").filter((line) => line.length > 0);
+  assert.equal(addedLines.length, 1);
+  assert.equal(added.includes("\"characters\""), false);
+  assert.ok(added.length < 500);
+  assert.ok(snap.length > added.length * 10);
+  const line = JSON.parse(addedLines[0]!) as { cmd?: { op?: string; nonce?: string } };
+  assert.equal(line.cmd?.op, "depositKek");
+  assert.equal(line.cmd?.nonce, String(depositsBeforeTail + 2));
+  const kek = (BigInt(depositsBeforeTail) + 1n).toString();
+  assert.equal(lok.kekOf(token), kek);
+  assert.equal(lok.itemOf(token, "7"), "4");
+
+  const again = LokWorld.open(dir, undefined, {});
+  assert.equal(again.kekOf(token), kek);
+  assert.equal(again.itemOf(token, "7"), "4");
+  assert.equal(again.length, lok.length);
+
+  const oldDir = mkdtempSync(join(tmpdir(), "lok-old-log-"));
+  const parsed = JSON.parse(snap.toString("utf8")) as { journalBytes?: number };
+  delete parsed.journalBytes;
+  writeFileSync(join(oldDir, "lok-world.json"), JSON.stringify(parsed));
+  assert.equal(existsSync(join(oldDir, "lok-world.jsonl")), false);
+  const old = LokWorld.open(oldDir, undefined, {});
+  assert.equal(old.kekOf(token), depositsBeforeTail.toString());
+  assert.equal(old.itemOf(token, "7"), "4");
+  assert.equal(old.length, LOG_SNAPSHOT_EVERY);
+});
+
+test("one quantity buy cannot fill an unbounded synchronous loop", async () => {
+  const lok = world();
+  const seller = lok.spawn("char-s", "Seller", 0);
+  const buyer = lok.spawn("char-b", "Buyer", 1);
+  assert.equal(seller.ok && buyer.ok, true);
+  if (!seller.ok || !buyer.ok) return;
+  const item = "7";
+  const asks = MAX_FILLS_PER_BUY_MESSAGE + BUY_FILL_BATCH;
+  assert.equal(noteImport(lok, seller.tokenId, item, String(asks), "1").ok, true);
+  assert.equal(noteDeposit(lok, buyer.tokenId, "100000", "1").ok, true);
+  const t0 = 1_700_000_000;
+  for (let i = 0; i < asks; i++) {
+    assert.equal(lok.ask(seller.tokenId, item, "1", "3", t0 + i).ok, true);
+  }
+  const beforeKek = BigInt(lok.kekOf(buyer.tokenId));
+  const beforeSeller = BigInt(lok.kekOf(seller.tokenId));
+  const beforeLen = lok.length;
+  let interleaved = false;
+  const pending = lok.buyQuantity(buyer.tokenId, item, 1_000_000);
+  setImmediate(() => {
+    interleaved = true;
+  });
+  const res = await pending;
+  assert.equal(interleaved, true);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.fills.length, MAX_FILLS_PER_BUY_MESSAGE);
+  assert.equal(res.short, true);
+  assert.match(res.stopped ?? "", new RegExp(String(MAX_FILLS_PER_BUY_MESSAGE)));
+  assert.match(res.stopped ?? "", /nothing further was charged/i);
+  const charged = res.fills.reduce((sum, fill) => sum + BigInt(fill.price || "0"), 0n);
+  assert.equal(charged, BigInt(MAX_FILLS_PER_BUY_MESSAGE) * 3n);
+  assert.equal(lok.kekOf(buyer.tokenId), (beforeKek - charged).toString());
+  assert.equal(lok.kekOf(seller.tokenId), (beforeSeller + charged).toString());
+  assert.equal(lok.length, beforeLen + MAX_FILLS_PER_BUY_MESSAGE);
+  assert.equal(lok.view(buyer.tokenId).listings.length, asks - MAX_FILLS_PER_BUY_MESSAGE);
+
+  const more = await lok.buyQuantity(buyer.tokenId, item, BUY_FILL_BATCH);
+  assert.equal(more.ok, true);
+  if (!more.ok) return;
+  assert.equal(more.fills.length, BUY_FILL_BATCH);
+  assert.equal(more.short, false);
+  assert.equal(lok.kekOf(buyer.tokenId), (beforeKek - charged - BigInt(BUY_FILL_BATCH) * 3n).toString());
+  assert.equal(lok.view(buyer.tokenId).listings.length, 0);
 });

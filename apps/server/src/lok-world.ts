@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LokListingView, LokSnapshot } from "@bellgrave/protocol";
@@ -54,6 +54,34 @@ type BindFile = { nextToken: string; nextListing: string; chars: BindChar[]; res
 export const MAX_CHARS_PER_WALLET = 8;
 export const NAME_RESERVE_MS = 10 * 60_000;
 
+/**
+ * Accepted events between full-document snapshots.
+ * Each applied event appends one JSONL line (lok-world.jsonl). lok-world.json,
+ * the engine document, is rewritten only this often, plus once when the file
+ * is first created. Startup replays at most this many journal lines after the
+ * snapshot, so a crash stays a bounded replay instead of a full rewrite on
+ * every event. 128 keeps that tail well under a tenth of a second even if an
+ * apply costs about a millisecond, and it keeps a multi-megabyte snapshot
+ * (about 2s and 11MB at 20k events in the measured full-file rewrite) off the
+ * path of every action.
+ */
+export const LOG_SNAPSHOT_EVERY = 128;
+
+/**
+ * Whole asks one quantity-buy message may fill.
+ * The previous loop ran up to 10_000 synchronous fills and rewrote the whole
+ * log after each one, so any player could freeze the server for minutes.
+ * 32 asks is a useful commodity sweep. Together with a yield every
+ * BUY_FILL_BATCH fills, one message cannot hold the event loop for that loop.
+ * Past the cap the result is an explicit partial: filled asks were charged at
+ * their own prices, and nothing past the cap is charged. Listings are still
+ * taken whole, so this counts asks, not loose items.
+ */
+export const MAX_FILLS_PER_BUY_MESSAGE = 32;
+
+/** Successful fills applied before a quantity buy lets the event loop run. */
+export const BUY_FILL_BATCH = 8;
+
 /** An inbound the server recorded from custody. The game client cannot insert these. */
 export type CustodyInbound =
   | { kind: "depositKek"; tokenId: string; nonce: string; amount: string }
@@ -94,6 +122,15 @@ function atomicWrite(path: string, text: string) {
   renameSync(tmp, path);
 }
 
+/** Bytes of the append journal already included in a snapshot. Old full-file logs have none. */
+function journalCursor(text: string): number {
+  const head = text.slice(0, 200);
+  const matched = /"journalBytes"\s*:\s*(\d+)/.exec(head);
+  if (!matched) return 0;
+  const n = Number(matched[1]);
+  return Number.isSafeInteger(n) ? n : 0;
+}
+
 function asItemId(raw: string): number | null {
   if (!/^\d+$/.test(raw)) return null;
   const n = Number(raw);
@@ -107,6 +144,7 @@ function asItemId(raw: string): number | null {
  */
 export class LokWorld {
   readonly logPath: string;
+  readonly journalPath: string;
   readonly chain: LokSnapshot["chain"];
   readonly chainNote: string;
   private readonly exp: LokExports;
@@ -115,26 +153,35 @@ export class LokWorld {
   private state: EngineState = { characters: [], listings: [] };
   /** Custody nonces observed by the server. Not loaded from the client and not a chain watcher. */
   private custody = new Map<string, CustodyInbound>();
+  /** Bytes of lok-world.jsonl already folded into the snapshot. */
+  private journalBytes = 0;
+  /** Accepted events since the snapshot on disk was rewritten. */
+  private sinceSnapshot = 0;
+  /** Live document for the explorer. Cleared when an event is appended. */
+  private cachedDoc: string | null = null;
   length = 0;
 
   private constructor(dataDir: string, wasmPath: string, env: NodeJS.ProcessEnv) {
     mkdirSync(dataDir, { recursive: true });
     this.logPath = join(dataDir, "lok-world.json");
+    this.journalPath = join(dataDir, "lok-world.jsonl");
     this.bindPath = join(dataDir, "lok-bind.json");
     const mode = chainModeFromEnv(env);
     this.chain = mode.chain;
     this.chainNote = mode.note;
     this.exp = loadLokExports(wasmPath);
     const text = existsSync(this.logPath) ? readFileSync(this.logPath, "utf8") : "";
+    const cursor = journalCursor(text);
     const opened = lokCall(this.exp, text, (ptr, len) => this.exp.lok_open(ptr, len));
     if (opened.rc !== 0) {
       throw new Error("lok log refused to open: " + opened.out);
     }
+    this.replayJournal(cursor);
     this.bind = this.readBind();
     this.refresh();
     this.reconcileBind();
     this.pruneExpiredReservations();
-    if (!existsSync(this.logPath)) this.persistLog();
+    if (!existsSync(this.logPath)) this.snapshotLog();
     this.saveBind();
   }
 
@@ -354,17 +401,21 @@ export class LokWorld {
   }
 
   /**
-   * Buy whole asks until qty items are taken or the book runs out.
-   * Each step is buy(), so the cheapest ask is charged its own price.
-   * The buyer's own asks are skipped by the engine. A short book is a partial fill.
+   * Buy whole asks until qty items are taken, the book runs out, or this message
+   * hits MAX_FILLS_PER_BUY_MESSAGE. Each step is buy(), so the cheapest ask is
+   * charged its own price. The buyer's own asks are skipped by the engine.
+   * A short book or the per-message cap is an explicit partial: asks that
+   * filled were charged, and nothing past the stop was charged. The loop yields
+   * every BUY_FILL_BATCH fills so other players' messages can run.
    */
-  buyQuantity(
+  async buyQuantity(
     bidder: string,
     itemId: string,
     qty: number,
-  ):
+  ): Promise<
     | { ok: true; fills: { listingId?: string; seller?: string; stack?: string; price?: string }[]; filled: string; short: boolean; stopped?: string }
-    | { ok: false; error: string } {
+    | { ok: false; error: string }
+  > {
     if (!Number.isSafeInteger(qty) || qty < 1 || qty > 1_000_000) {
       return { ok: false, error: "Pick a quantity from 1 to 1000000. Nothing was bought." };
     }
@@ -372,6 +423,23 @@ export class LokWorld {
     let filled = 0n;
     const want = BigInt(qty);
     while (filled < want) {
+      if (fills.length >= MAX_FILLS_PER_BUY_MESSAGE) {
+        return {
+          ok: true,
+          fills,
+          filled: filled.toString(),
+          short: true,
+          stopped:
+            "Stopped after " +
+            MAX_FILLS_PER_BUY_MESSAGE +
+            " asks. This buy message will not fill more than that. " +
+            filled.toString() +
+            " items were bought and each ask was charged. Send another buy for the rest. Nothing further was charged.",
+        };
+      }
+      if (fills.length > 0 && fills.length % BUY_FILL_BATCH === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
       const res = this.buy(bidder, itemId);
       if (!res.ok) {
         if (fills.length === 0) return res;
@@ -394,9 +462,6 @@ export class LokWorld {
         };
       }
       filled += stack;
-      if (fills.length >= 10_000) {
-        return { ok: true, fills, filled: filled.toString(), short: filled < want, stopped: "Stopped after 10000 asks." };
-      }
     }
     return { ok: true, fills, filled: filled.toString(), short: false };
   }
@@ -595,17 +660,24 @@ export class LokWorld {
   }
 
   /**
-   * Read events already on the log. tokenId null is every character, one row per seq.
-   * A set token is that character's own chain. Nothing is appended.
+   * Live engine document, including events not yet copied into the snapshot.
+   * Built on demand so an ordinary event does not serialize the whole world.
+   * tokenId null is every character, one row per seq. Nothing is appended.
    */
+  logDocument(): string {
+    if (this.cachedDoc != null) return this.cachedDoc;
+    this.exp.lok_document();
+    this.cachedDoc = lokOut(this.exp);
+    return this.cachedDoc;
+  }
+
   explore(opts: {
     tokenId: string | null;
     q?: string;
     limit?: number;
     beforeSeq?: number | null;
   }): LokExplorePage {
-    const text = existsSync(this.logPath) ? readFileSync(this.logPath, "utf8") : "";
-    return exploreDocument(text, (id) => this.bind.chars.find((c) => c.tokenId === id)?.name ?? id, opts);
+    return exploreDocument(this.logDocument(), (id) => this.bind.chars.find((c) => c.tokenId === id)?.name ?? id, opts);
   }
 
   view(tokenId: string): LokSnapshot {
@@ -739,20 +811,10 @@ export class LokWorld {
   }
 
   undoWithdraw(tokenId: string, amount: string): LokResult {
-    const called = lokCall(
-      this.exp,
-      JSON.stringify({ op: "undoWithdraw", tokenId, amount }),
-      (ptr, len) => this.exp.lok_apply(ptr, len),
-    );
-    let body: ApplyBody;
-    try {
-      body = JSON.parse(called.out) as ApplyBody;
-    } catch {
-      return { ok: false, error: "lok engine returned junk" };
-    }
-    if (!body.ok) return { ok: false, error: body.error || "rejected" };
-    if (body.state) this.state = body.state;
-    this.persistLog();
+    const cmd = { op: "undoWithdraw", tokenId, amount };
+    const res = this.apply(cmd, false);
+    if (!res.ok) return res;
+    this.notePersisted(cmd);
     return { ok: true };
   }
 
@@ -761,7 +823,7 @@ export class LokWorld {
     return me?.items.find((row) => row.itemId === itemId)?.amount ?? "0";
   }
 
-  private apply(cmd: Record<string, unknown>): LokResult {
+  private apply(cmd: Record<string, unknown>, record = true): LokResult {
     const called = lokCall(this.exp, JSON.stringify(cmd), (ptr, len) => this.exp.lok_apply(ptr, len));
     let body: ApplyBody;
     try {
@@ -772,7 +834,7 @@ export class LokWorld {
     if (!body.ok) return { ok: false, error: body.error || "rejected" };
     if (body.state) this.state = body.state;
     if (typeof body.len === "number") this.length = body.len;
-    if (body.entry) this.persistLog();
+    if (record && body.entry) this.notePersisted(cmd);
     return { ok: true };
   }
 
@@ -784,9 +846,62 @@ export class LokWorld {
     this.length = body.len ?? 0;
   }
 
-  private persistLog() {
+  /** Replay journal lines that were appended after the snapshot's cursor. */
+  private replayJournal(cursor: number) {
+    if (!existsSync(this.journalPath)) {
+      if (cursor !== 0) throw new Error("lok snapshot names a journal that is not on disk");
+      this.journalBytes = 0;
+      return;
+    }
+    const raw = readFileSync(this.journalPath);
+    if (cursor > raw.length) throw new Error("lok journal cursor is past the end of the append log");
+    this.journalBytes = raw.length;
+    const tail = raw.subarray(cursor).toString("utf8");
+    if (!tail) return;
+    const lines = tail.split("\n");
+    let replayed = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      if (!line) continue;
+      let rec: { cmd?: Record<string, unknown> };
+      try {
+        rec = JSON.parse(line) as { cmd?: Record<string, unknown> };
+      } catch {
+        if (i === lines.length - 1) break;
+        throw new Error("lok journal is corrupt");
+      }
+      if (!rec.cmd || typeof rec.cmd !== "object") throw new Error("lok journal line has no command");
+      const res = this.apply(rec.cmd, false);
+      if (!res.ok) throw new Error("lok journal refused: " + res.error);
+      replayed++;
+    }
+    this.sinceSnapshot = replayed;
+    if (this.sinceSnapshot >= LOG_SNAPSHOT_EVERY) this.snapshotLog();
+  }
+
+  /** Append one event. The full document is rewritten only every LOG_SNAPSHOT_EVERY events. */
+  private notePersisted(cmd: Record<string, unknown>) {
+    this.cachedDoc = null;
+    const line = JSON.stringify({ seq: this.length, cmd }) + "\n";
+    const bytes = Buffer.from(line, "utf8");
+    appendFileSync(this.journalPath, bytes);
+    this.journalBytes += bytes.length;
+    this.sinceSnapshot++;
+    if (this.sinceSnapshot >= LOG_SNAPSHOT_EVERY) this.snapshotLog();
+  }
+
+  /**
+   * Rewrite lok-world.json from the engine document and record how much of the
+   * journal is already inside it. An existing full-file log has no journalBytes
+   * field; that still opens, and later events append after it.
+   */
+  private snapshotLog() {
     this.exp.lok_document();
-    atomicWrite(this.logPath, lokOut(this.exp));
+    const doc = lokOut(this.exp);
+    if (!doc.startsWith("{")) throw new Error("lok document was not a JSON object");
+    const text = '{"journalBytes":' + this.journalBytes + "," + doc.slice(1);
+    atomicWrite(this.logPath, text);
+    this.sinceSnapshot = 0;
   }
 
   private readBind(): BindFile {
