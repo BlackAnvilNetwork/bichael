@@ -10,6 +10,7 @@ import {
 } from "@bellgrave/combat";
 import { PH_HUB_SPAWN, paleHollowStandHeight } from "@bellgrave/config";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
+import { kitLevel } from "./support-job";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type SorcererPlayer = {
@@ -156,8 +157,7 @@ export function resolveSorcererAbility(
 
   const def = SORCERER_ABILITIES[id];
   const combatStats = hooks.playerCombatStats(p);
-  const effLevel =
-    p.job === "sorcerer" ? p.level : Math.max(1, Math.floor(p.level / 2));
+  const effLevel = kitLevel(p, "sorcerer");
   if (effLevel < def.unlockLevel) {
     hooks.pushLog(p, `${def.label} unlocks at level ${def.unlockLevel}.`);
     return true;

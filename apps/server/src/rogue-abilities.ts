@@ -12,6 +12,7 @@ import {
   type JobId,
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
+import { kitLevel } from "./support-job";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type RoguePlayer = {
@@ -92,7 +93,7 @@ export function resolveRogueAbility(
   }
 
   const def = ROGUE_ABILITIES[id];
-  if (def.unlockLevel > p.level) {
+  if (def.unlockLevel > kitLevel(p, "rogue")) {
     hooks.pushLog(p, `${def.label} unlocks at level ${def.unlockLevel}.`);
     return true;
   }

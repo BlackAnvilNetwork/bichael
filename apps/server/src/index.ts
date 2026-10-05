@@ -174,6 +174,7 @@ import {
   resolveBattleMageAbility,
 } from "./battlemage-abilities";
 import { playerStance, resolveTimAbility } from "./tim-abilities";
+import { hasKit } from "./support-job";
 import { loadLokEnv, startKekDepositWatcher } from "./lok-chain";
 import {
   claimQueuedWithdrawal,
@@ -2626,8 +2627,9 @@ function ensureJobHubs(p: Player) {
   }
 }
 
+/** Main job, or an active support job (L10+, half level). */
 function playerHasJob(p: Player, job: JobId): boolean {
-  return p.job === job || p.subjob === job;
+  return hasKit(p, job);
 }
 
 /** Spend XP into levels; after max, spend XP into skill echoes (extra tree points). */

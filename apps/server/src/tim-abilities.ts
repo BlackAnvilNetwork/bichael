@@ -9,6 +9,7 @@ import {
     isTrainerFreeAbility,
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
+import { kitLevel } from "./support-job";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type TimPlayer = {
@@ -192,8 +193,7 @@ export function resolveTimAbility(
     return;
   }
   const def = TIM_ABILITIES[id];
-  const effLevel =
-    p.job === "time_mage" ? p.level : Math.max(1, Math.floor(p.level / 2));
+  const effLevel = kitLevel(p, "time_mage");
   if (effLevel < def.unlockLevel) {
     hooks.pushLog(`${def.label} unlocks at level ${def.unlockLevel}.`);
     return;

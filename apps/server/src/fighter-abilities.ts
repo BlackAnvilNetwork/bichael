@@ -15,6 +15,7 @@ import {
 } from "@bellgrave/combat";
 
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
+import { kitLevel } from "./support-job";
 
 import type { AbilityId } from "@bellgrave/protocol";
 
@@ -291,8 +292,7 @@ export function resolveFighterAbility(
 
   const def = FIGHTER_ABILITIES[id];
 
-  const effLevel =
-    p.job === "fighter" ? p.level : Math.max(1, Math.floor(p.level / 2));
+  const effLevel = kitLevel(p, "fighter");
   if (def.unlockLevel > effLevel) {
 
     hooks.pushLog(p, `${def.label} unlocks at level ${def.unlockLevel}.`);

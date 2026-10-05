@@ -8,6 +8,7 @@ import {
   type KnightAbilityId,
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
+import { kitLevel } from "./support-job";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type KnightPlayer = {
@@ -133,7 +134,7 @@ export function resolveKnightAbility(
   }
 
   const def = KNIGHT_ABILITIES[id];
-  if (def.unlockLevel > p.level) {
+  if (def.unlockLevel > kitLevel(p, "knight")) {
     hooks.pushLog(p, `${def.label} unlocks at level ${def.unlockLevel}.`);
     return true;
   }

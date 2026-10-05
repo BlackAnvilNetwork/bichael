@@ -8,6 +8,7 @@ import {
   type BattleMageAbilityId,
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
+import { kitLevel } from "./support-job";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type BattleMagePlayer = {
@@ -158,8 +159,7 @@ export function resolveBattleMageAbility(
 
   const def = BATTLEMAGE_ABILITIES[id];
   const combatStats = hooks.playerCombatStats(p);
-  const effLevel =
-    p.job === "battle_mage" ? p.level : Math.max(1, Math.floor(p.level / 2));
+  const effLevel = kitLevel(p, "battle_mage");
   if (def.unlockLevel > effLevel) {
     hooks.pushLog(p, `${def.label} unlocks at level ${def.unlockLevel}.`);
     return true;
