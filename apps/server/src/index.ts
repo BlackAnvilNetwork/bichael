@@ -123,6 +123,7 @@ import {
   takeStack,
 } from "./starter-kit";
 import { createPaleHollowMobs, createPaleHollowNodes, relocateGatherNode, type FieldNode } from "./pale-hollow-world";
+import { steerMobStep } from "./mob-steer";
 import { GATHER_RANGE, beginGatherChannel, tickGatherChannel, type GatherChannel } from "./gather-channel";
 import {
   MOB_CAST_ANIM_MS,
@@ -3844,14 +3845,17 @@ function mobSwing(mob: Mob, now: number) {
       const grav = now < mob.gravityUntil ? mob.gravityPct : 0;
       const speed = 2.2 * (1 - Math.max(swingSlow, grav));
       const step = (speed * TICK_MS) / 1000;
-      const ang = mob.facing;
-      mob.x += Math.sin(ang) * step;
-      mob.z += Math.cos(ang) * step;
-      const c = clampToHall(mob.x, mob.z);
-      mob.x = c.x;
-      mob.z = c.z;
-      syncUnitY(mob);
-      mob.anim = "walk";
+      // Walkability-aware chase (#73): slide along banks instead of crossing water.
+      const s = steerMobStep(mob.x, mob.z, nearest.x, nearest.z, step);
+      if (s.moved) {
+        mob.x = s.x;
+        mob.z = s.z;
+        mob.facing = s.heading;
+        syncUnitY(mob);
+        mob.anim = "walk";
+      } else {
+        mob.anim = "idle";
+      }
     }
     return;
   }
