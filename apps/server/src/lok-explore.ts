@@ -207,6 +207,12 @@ function describe(entry: RawEntry, logTokenId: string, nameOf: (tokenId: string)
       break;
     }
     case "itemDrop": {
+      // Historical entry: credited the stack onto the log. New appends are closed.
+      character = who(token) || owner;
+      text = `${character} looted ${item} x${amount}`;
+      break;
+    }
+    case "lootDrop": {
       character = who(token) || owner;
       text = `${character} looted ${item} x${amount}`;
       break;

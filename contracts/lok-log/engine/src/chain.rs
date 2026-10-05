@@ -131,7 +131,7 @@ pub fn replay(doc: &LogDocument) -> Result<ReplayReport, ReplayStop> {
             });
         }
         engine
-            .apply(entry.input.clone())
+            .replay_logged(entry.input.clone())
             .map_err(|reason| ReplayStop::Rejected { index, reason })?;
     }
     Ok(ReplayReport {
@@ -438,6 +438,11 @@ pub(crate) fn parse_input(value: &serde_json::Value) -> Result<Input, String> {
             item_id: req_u256(value, "itemId")?,
             amount: req_u256(value, "amount")?,
         }),
+        "lootDrop" => Ok(Input::LootDrop {
+            token_id: req_u256(value, "tokenId")?,
+            item_id: req_u256(value, "itemId")?,
+            amount: req_u256(value, "amount")?,
+        }),
         "craftSkill" => {
             let level = req_u64(value, "level")?;
             if level == 0 || level > u64::from(u32::MAX) {
@@ -661,6 +666,12 @@ Input::CancelAsk { listing_id, seller } => serde_json::json!({
         }),
         Input::ItemDrop { token_id, item_id, amount } => serde_json::json!({
             "type": "itemDrop",
+            "tokenId": s(token_id),
+            "itemId": s(item_id),
+            "amount": s(amount),
+        }),
+        Input::LootDrop { token_id, item_id, amount } => serde_json::json!({
+            "type": "lootDrop",
             "tokenId": s(token_id),
             "itemId": s(item_id),
             "amount": s(amount),

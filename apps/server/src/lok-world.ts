@@ -309,9 +309,17 @@ export class LokWorld {
     return this.apply({ op: "harvest", tokenId, materialId, amount });
   }
 
-  /** Loot drop counter. Like harvest: records the drop without minting spendable items. */
+  /**
+   * Closed for new appends: the engine refuses a new ItemDrop (ClosedMint). ItemDrop entries
+   * already on the log were item credits and still replay that way. Log mob loot with lootDrop.
+   */
   itemDrop(tokenId: string, itemId: string, amount: string): LokResult {
     return this.apply({ op: "itemDrop", tokenId, itemId, amount });
+  }
+
+  /** Loot drop counter. Like harvest: records the drop without minting spendable items. */
+  lootDrop(tokenId: string, itemId: string, amount: string): LokResult {
+    return this.apply({ op: "lootDrop", tokenId, itemId, amount });
   }
 
   /** Explicit bag import. Credits this stack without a chain inbound nonce. */

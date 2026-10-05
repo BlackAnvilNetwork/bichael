@@ -884,7 +884,10 @@ impl World {
                 }
                 touch.insert(*token_id);
             }
-            Input::ItemDrop { token_id, item_id, amount } => {
+            // A new ItemDrop append is closed. Committed ItemDrop entries replay through
+            // load() -> effects(), which never calls affected(), so they still credit.
+            Input::ItemDrop { .. } => return Err(EngineError::ClosedMint),
+            Input::LootDrop { token_id, item_id, amount } => {
                 if *amount == U256::ZERO {
                     return Err(EngineError::ZeroAmount);
                 }
@@ -1183,6 +1186,14 @@ impl World {
                 Ok(())
             }
             Input::ItemDrop { token_id, item_id, amount } => {
+                // Historical log entries still credit. affected() refuses a new append.
+                if touch.contains(token_id) {
+                    self.credit_item(*token_id, *item_id, *amount)?;
+                }
+                Ok(())
+            }
+            Input::LootDrop { token_id, item_id, amount } => {
+                // Counter only, like Harvest. Does not credit spendable items or KEK.
                 if touch.contains(token_id) {
                     self.note_drop(*token_id, *item_id, *amount)?;
                 }

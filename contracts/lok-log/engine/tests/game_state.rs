@@ -69,15 +69,26 @@ fn game_state_events_replay_and_a_bad_event_does_not_append() {
     assert_eq!(world.len(), len);
     assert_eq!(world.harvested(&n(1), "dustgrain"), Some(n(1)));
 
+    // A new ItemDrop append is closed. Mob loot is a LootDrop counter.
+    let len = world.len();
+    let head = world.head();
+    assert_eq!(
+        world.apply(Input::ItemDrop { token_id: n(1), item_id: n(7), amount: n(2) }).unwrap_err(),
+        EngineError::ClosedMint
+    );
+    assert_eq!(world.item_balance(&n(1), &n(7)), Some(U256::ZERO));
+    assert_eq!(world.len(), len);
+    assert_eq!(world.head(), head);
+
     world
-        .apply(Input::ItemDrop { token_id: n(1), item_id: n(7), amount: n(2) })
+        .apply(Input::LootDrop { token_id: n(1), item_id: n(7), amount: n(2) })
         .unwrap();
     assert_eq!(world.dropped(&n(1), &n(7)), Some(n(2)));
     assert_eq!(world.item_balance(&n(1), &n(7)), Some(U256::ZERO));
     assert_eq!(world.kek_balance(&n(1)), Some(U256::ZERO));
     let len = world.len();
     assert_eq!(
-        world.apply(Input::ItemDrop { token_id: n(1), item_id: n(0), amount: n(1) }).unwrap_err(),
+        world.apply(Input::LootDrop { token_id: n(1), item_id: n(0), amount: n(1) }).unwrap_err(),
         EngineError::BadId
     );
     assert_eq!(world.len(), len);
@@ -100,8 +111,12 @@ fn lone_engine_records_level_and_drop_without_minting_kek() {
     let mut engine = Engine::open(n(1), 0);
     engine.apply(Input::Spawn { token_id: n(1), starting_job: 0 }).unwrap();
     engine.apply(Input::LevelUp { token_id: n(1), level: 2 }).unwrap();
+    assert_eq!(
+        engine.apply(Input::ItemDrop { token_id: n(1), item_id: n(4), amount: n(1) }).unwrap_err(),
+        EngineError::ClosedMint
+    );
     engine
-        .apply(Input::ItemDrop { token_id: n(1), item_id: n(4), amount: n(1) })
+        .apply(Input::LootDrop { token_id: n(1), item_id: n(4), amount: n(1) })
         .unwrap();
     engine
         .apply(Input::LearnAbility { token_id: n(1), ability_id: "hub".into() })

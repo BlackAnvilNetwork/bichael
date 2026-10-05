@@ -205,12 +205,16 @@ test("level, ability, craft, harvest, and drop replay and a bad event does not a
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
   assert.equal(lok.kekOf(a.tokenId), "0");
   assert.equal(lok.inboundAppliedOf(a.tokenId), 0);
-  assert.equal(lok.itemDrop(a.tokenId, "7", "3").ok, true);
+  assert.equal(lok.lootDrop(a.tokenId, "7", "3").ok, true);
   assert.equal(lok.dropOf(a.tokenId, "7"), "3");
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
   const before = lok.length;
-  const badDrop = lok.itemDrop(a.tokenId, "0", "1");
+  const badDrop = lok.lootDrop(a.tokenId, "0", "1");
   assert.equal(badDrop.ok, false);
+  assert.equal(lok.length, before);
+  const closedDrop = lok.itemDrop(a.tokenId, "7", "1");
+  assert.equal(closedDrop.ok, false);
+  if (!closedDrop.ok) assert.match(closedDrop.error, /cannot mint/i);
   assert.equal(lok.length, before);
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
 
@@ -492,13 +496,13 @@ test("received KEK is the recipient claim and spent KEK is not withdrawable", ()
   assert.equal(lok.withdrawKek(a.tokenId, "1").ok, false);
 });
 
-test("item drop logs a counter without minting spendable items", () => {
+test("loot drop logs a counter without minting spendable items", () => {
   const lok = world();
   const a = lok.spawn("char-a", "Ada", 0);
   assert.equal(a.ok, true);
   if (!a.ok) return;
   const before = lok.length;
-  const dropped = lok.itemDrop(a.tokenId, "7", "9");
+  const dropped = lok.lootDrop(a.tokenId, "7", "9");
   assert.equal(dropped.ok, true);
   assert.equal(lok.length, before + 1);
   assert.equal(lok.dropOf(a.tokenId, "7"), "9");
@@ -506,6 +510,37 @@ test("item drop logs a counter without minting spendable items", () => {
   assert.equal(lok.importFromBag(a.tokenId, "7", "2").ok, true);
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
   assert.equal(lok.inboundAppliedOf(a.tokenId), 0);
+});
+
+test("a new item drop append cannot mint an arbitrary credit", () => {
+  const lok = world();
+  const a = lok.spawn("char-a", "Ada", 0);
+  assert.equal(a.ok, true);
+  if (!a.ok) return;
+  const before = lok.length;
+  const dropped = lok.itemDrop(a.tokenId, "7", "9");
+  assert.equal(dropped.ok, false);
+  if (!dropped.ok) assert.match(dropped.error, /cannot mint/i);
+  assert.equal(lok.length, before);
+  assert.equal(lok.itemOf(a.tokenId, "7"), "0");
+  assert.equal(lok.dropOf(a.tokenId, "7"), "0");
+});
+
+test("a committed pre-#206 log with minting ItemDrop entries still opens and credits", () => {
+  // Tokens 1 and 4 copied unmodified from the quarantined live log. #206 refused it at seq 21.
+  const fixture = readFileSync(
+    new URL("../../../contracts/lok-log/engine/tests/fixtures/pre-206-item-drop-world.json", import.meta.url),
+    "utf8",
+  );
+  const dir = mkdtempSync(join(tmpdir(), "lok-historical-"));
+  writeFileSync(join(dir, "lok-world.json"), fixture);
+  const lok = LokWorld.open(dir, undefined, {});
+  assert.equal(lok.length, 42);
+  // Every historically credited drop was exported later, so the replayed balances are empty.
+  assert.equal(lok.itemOf("4", "1029"), "0");
+  assert.equal(lok.itemOf("4", "1057"), "0");
+  assert.equal(lok.levelOf("4"), 5);
+  assert.equal(lok.dropOf("4", "1029"), "0");
 });
 
 test("bag import does not consume the chain inbound nonce", () => {

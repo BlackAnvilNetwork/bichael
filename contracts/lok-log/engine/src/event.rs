@@ -40,8 +40,12 @@ pub enum Input {
     Craft { token_id: U256, item_id: U256, amount: U256 },
     /// A successful gather. Counts the material. Does not credit spendable items or KEK.
     Harvest { token_id: U256, material_id: String, amount: U256 },
-    /// Loot drop counter. Like Harvest: records the drop, does not credit spendable items or KEK.
+    /// Historical loot credit. Entries already on a log replay exactly as they were written:
+    /// they credit spendable items (not KEK). New appends are refused with `ClosedMint`;
+    /// mob loot is logged as `LootDrop` instead. Do not reinterpret committed entries.
     ItemDrop { token_id: U256, item_id: U256, amount: U256 },
+    /// Loot drop counter. Like Harvest: records the drop, does not credit spendable items or KEK.
+    LootDrop { token_id: U256, item_id: U256, amount: U256 },
     /// Craft skill level for this character. Must be strictly higher than the logged level.
     /// Does not store XP and does not credit items or KEK.
     CraftSkill { token_id: U256, skill_id: String, level: u32 },
@@ -200,6 +204,12 @@ pub fn event_id(input: &Input) -> [u8; 32] {
         }
         Input::ItemDrop { token_id, item_id, amount } => {
             buf.b256(&domain(b"LOK_ITEM_DROP_V1"));
+            buf.u256(token_id);
+            buf.u256(item_id);
+            buf.u256(amount);
+        }
+        Input::LootDrop { token_id, item_id, amount } => {
+            buf.b256(&domain(b"LOK_LOOT_DROP_V1"));
             buf.u256(token_id);
             buf.u256(item_id);
             buf.u256(amount);

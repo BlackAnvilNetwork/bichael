@@ -1,0 +1,83 @@
+{
+ "tokenId": "1",
+ "startingJob": 0,
+ "entries": [
+  {
+   "hash": "0xb30aa33e02a0d59cc092eff4d18b7eee8fcd84a7b00e08e687ca53af2d715fba",
+   "input": {
+    "startingJob": 0,
+    "tokenId": "1",
+    "type": "spawn"
+   }
+  },
+  {
+   "hash": "0xbce94aa23101883d9bf24806b5a73c6ce50e6b1cb7669f49ee35ad8a7c074b0d",
+   "input": {
+    "abilityId": "time_mage_0",
+    "tokenId": "1",
+    "type": "learnAbility"
+   }
+  },
+  {
+   "hash": "0x5e33334189f94eaa51e3717b25ac7c35f5d94359c9282daa947f118e4e03486b",
+   "input": {
+    "level": 2,
+    "tokenId": "1",
+    "type": "levelUp"
+   }
+  },
+  {
+   "hash": "0xa110d286c63e8032fc8767089e73741a2edefa6b95d2b07d90a125969410cb6b",
+   "input": {
+    "amount": "1",
+    "itemId": "1057",
+    "tokenId": "1",
+    "type": "itemDrop"
+   }
+  },
+  {
+   "hash": "0x92caa9cba3c263b579f6c77224ab0b720f6163eda8ae0957dcdb5f8edbb3c07b",
+   "input": {
+    "amount": "1",
+    "itemId": "1057",
+    "tokenId": "1",
+    "type": "exportItem"
+   }
+  },
+  {
+   "hash": "0x163eb9713a82e30e347b766dbc5e44fed8ce3ee061dc369f7fce353b824cf920",
+   "input": {
+    "level": 3,
+    "tokenId": "1",
+    "type": "levelUp"
+   }
+  },
+  {
+   "hash": "0xb62269f094fe03fd06472b64a9e50a87abb0f1742cb94546b512627a112e3ee9",
+   "input": {
+    "amount": "1",
+    "materialId": "dustgrain",
+    "tokenId": "1",
+    "type": "harvest"
+   }
+  },
+  {
+   "hash": "0x793232c8fd542ef0f4af38c708692e3c7605ec7e9d1912a7d4fdf7a355bb593f",
+   "input": {
+    "amount": "1",
+    "materialId": "copper-ore",
+    "tokenId": "1",
+    "type": "harvest"
+   }
+  },
+  {
+   "hash": "0xc3531a6c414c92a856f91f0c5e412ec257f4176c9aa0dcd3abf51a036d5909c6",
+   "input": {
+    "amount": "1",
+    "materialId": "dustgrain",
+    "tokenId": "1",
+    "type": "harvest"
+   }
+  }
+ ]
+}
