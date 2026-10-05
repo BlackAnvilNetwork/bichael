@@ -67,7 +67,19 @@ export type MobJobPlayer = {
   blindUntil: number;
 };
 
-export type MobJobVitals = { vit: number; agi: number };
+export type MobJobVitals = {
+  vit: number;
+  agi: number;
+  /** Total physical defense (VIT + gear def). Falls back to VIT only. */
+  def?: number;
+};
+
+/** Defense a mob's physical hit is rolled against (#52: includes gear def). */
+export function targetPhysDef(v: MobJobVitals): number {
+  return typeof v.def === "number" && Number.isFinite(v.def)
+    ? Math.max(1, Math.floor(v.def))
+    : defenseFromVit(v.vit);
+}
 
 /** Re-export helper for spawn path. */
 export function resolveMobJob(
@@ -255,7 +267,7 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
     }
     case "mob_shield_bash": {
       const att = Math.max(1, Math.floor(attackFromStats(stats, false, mobWeaponBonus(mob.job), { physical: true }) * atkMul * downMul));
-      const def = defenseFromVit(vitals.vit);
+      const def = targetPhysDef(vitals);
       let dmg = physicalDamage(att, def, fStr(stats.str, vitals.vit), false);
       dmg = Math.max(1, Math.floor(dmg * 1.15));
       if (Math.random() < 0.4) {
@@ -270,7 +282,7 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
     }
     case "mob_backstab": {
       const att = Math.max(1, Math.floor(attackFromStats(stats, false, mobWeaponBonus(mob.job), { physical: true }) * atkMul * downMul));
-      const def = defenseFromVit(vitals.vit);
+      const def = targetPhysDef(vitals);
       const crit = Math.random() < 0.55;
       let dmg = physicalDamage(att, def, meleeFStr("rogue", stats, vitals.vit, "none"), crit);
       dmg = Math.max(1, Math.floor(dmg * (crit ? 1.4 : 1.15)));
@@ -282,7 +294,7 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
     }
     case "mob_power_strike": {
       const att = Math.max(1, Math.floor(attackFromStats(stats, false, mobWeaponBonus(mob.job) + 2, { physical: true }) * atkMul * downMul));
-      const def = defenseFromVit(vitals.vit);
+      const def = targetPhysDef(vitals);
       let dmg = physicalDamage(att, def, fStr(stats.str, vitals.vit), false);
       dmg = Math.max(1, Math.floor(dmg * 1.3));
       mob.anim = "melee";
@@ -300,7 +312,7 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
             downMul,
         ),
       );
-      const def = defenseFromVit(vitals.vit);
+      const def = targetPhysDef(vitals);
       let dmg = physicalDamage(att, def, fStr(stats.str, vitals.vit), false);
       dmg = Math.max(1, Math.floor(dmg * 1.2));
       mob.anim = "melee";
@@ -356,7 +368,7 @@ export function mobAutoAttackRoll(
     1,
     Math.floor(attackFromStats(stats, false, mobWeaponBonus(mob.job), { physical: true }) * atkMul),
   );
-  const def = defenseFromVit(target.vit);
+  const def = targetPhysDef(target);
   let dmg = physicalDamage(att, def, meleeFStr(mob.job, stats, target.vit, "none"), false);
   return { hit: true, dmg, anim: "melee" };
 }

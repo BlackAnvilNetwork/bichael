@@ -9,6 +9,7 @@ import {
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
 import { kitLevel } from "./support-job";
+import { withGearMab } from "./gear-combat";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type ClericPlayer = {
@@ -139,7 +140,7 @@ function divineNuke(p: ClericPlayer, potency: number, double: boolean, stats: { 
   const { mnd } = stats;
   let dmg = Math.max(1, Math.floor(potency * 0.4 + mnd * 2.5));
   if (double) dmg *= 2;
-  return dmg;
+  return withGearMab(p, dmg);
 }
 
 function resolveAlly(

@@ -1,7 +1,8 @@
 import {
   JOBS,
   attackFromStats,
-  defenseFromVit,
+  magicAttackMul,
+  playerDefense,
   deriveCharacterAttributes,
   isJobId,
   meleeUsesWeaponAttack,
@@ -90,7 +91,10 @@ export function EquipPanel({ you, me, onClose }: Props) {
   const attack =
     attackFromStats(stats, stance, weaponBonus, weaponAttack ? { physical: true } : undefined) +
     derived.tree.atk;
-  const defense = defenseFromVit(stats.vit) + (gearStats.def ?? 0);
+  // Same helpers the server uses for mob hits and spell damage (#52).
+  const defense = playerDefense(stats.vit, gearStats.def ?? 0);
+  const gearMab = gearStats.mab ?? 0;
+  const spellBonusPct = Math.round((magicAttackMul(gearMab) - 1) * 100);
   const freeLeft = you.freeStatPoints ?? 0;
   const freeStats = derived.free;
   const treeSpent = skillPointsSpentOnTree(you.skillUnlocked ?? [], job, sub);
@@ -219,6 +223,9 @@ export function EquipPanel({ you, me, onClose }: Props) {
             value={String(defense)}
             hint={(gearStats.def ?? 0) > 0 ? `gear +${gearStats.def}` : undefined}
           />
+          {spellBonusPct > 0 && (
+            <Row label="Spell damage" value={`+${spellBonusPct}%`} hint={`gear MAB ${gearMab}`} />
+          )}
         </div>
 
         <div className="equip-block">

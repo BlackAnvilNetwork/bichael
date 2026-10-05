@@ -9,6 +9,7 @@ import {
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
 import { kitLevel } from "./support-job";
+import { withGearMab } from "./gear-combat";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type BattleMagePlayer = {
@@ -288,7 +289,7 @@ export function resolveBattleMageAbility(
     spend();
     p.facing = hooks.facingTo(p.x, p.z, m.x, m.z);
     const bonus = p.enSpellBonus + combatStats.int * 0.5;
-    const dmg = Math.max(1, Math.floor((def.potency ?? 200) + bonus * 4));
+    const dmg = withGearMab(p, Math.max(1, Math.floor((def.potency ?? 200) + bonus * 4)));
     m.hp -= dmg;
     p.enSpellUntil = 0;
     p.enSpellBonus = 0;
@@ -465,7 +466,7 @@ export function resolveBattleMageAbility(
   if (def.category === "nuke") {
     spend();
     if (p.spontaneityReady) p.spontaneityReady = false;
-    let dmg = elementalNuke(def.potency ?? 40, false, combatStats);
+    let dmg = withGearMab(p, elementalNuke(def.potency ?? 40, false, combatStats));
     if (id === "bm_firaga") {
       const r = def.aoe ?? 8;
       let total = 0;

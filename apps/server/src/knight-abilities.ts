@@ -9,6 +9,7 @@ import {
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
 import { kitLevel } from "./support-job";
+import { withGearMab } from "./gear-combat";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type KnightPlayer = {
@@ -114,7 +115,7 @@ function pullMob(p: KnightPlayer, m: KnightMob, amount: number) {
 
 function divineNuke(p: KnightPlayer, potency: number, stats: { mnd: number; str: number }): number {
   const { mnd, str } = stats;
-  return Math.max(1, Math.floor(potency * 0.35 + mnd * 2.2 + str * 0.4));
+  return withGearMab(p, Math.max(1, Math.floor(potency * 0.35 + mnd * 2.2 + str * 0.4)));
 }
 
 /**

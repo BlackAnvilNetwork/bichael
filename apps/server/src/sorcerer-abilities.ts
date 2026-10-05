@@ -11,6 +11,7 @@ import {
 import { PH_HUB_SPAWN, paleHollowStandHeight } from "@bellgrave/config";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
 import { kitLevel } from "./support-job";
+import { withGearMab } from "./gear-combat";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type SorcererPlayer = {
@@ -100,7 +101,7 @@ function elementalDamage(
   if (now < p.elementalSealUntil) base *= 1.45;
   if (now < p.focalNeveUntil) base *= 1.22;
   if (cascadeBonus) base *= 1.35;
-  return Math.max(1, Math.floor(base));
+  return withGearMab(p, Math.max(1, Math.floor(base)));
 }
 
 function spendMp(p: SorcererPlayer, cost: number, now: number): boolean {

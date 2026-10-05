@@ -24,6 +24,33 @@ export function defenseFromVit(vit: number): number {
   return Math.floor(vit * 1.5);
 }
 
+/**
+ * Physical defense used when a mob hits a player: VIT defense plus the
+ * equipped catalog `def`. The character sheet shows this same number (#52).
+ * It feeds `physicalDamage`, whose 0.1 attack/defense ratio floor and
+ * 1-damage minimum keep heavy armor from ever zeroing a hit.
+ */
+export function playerDefense(vit: number, gearDef = 0): number {
+  const gear = Number.isFinite(gearDef) ? Math.max(0, Math.floor(gearDef)) : 0;
+  return defenseFromVit(vit) + gear;
+}
+
+/** Gear Magic Attack Bonus: each point of `mab` is +1% spell damage. */
+export const MAB_PCT_PER_POINT = 0.01;
+/** Gear MAB caps at +100% spell damage. */
+export const MAB_MAX_BONUS = 1;
+
+/** Spell damage multiplier from gear MAB (1 = no bonus, never below 1). */
+export function magicAttackMul(mab = 0): number {
+  const m = Number.isFinite(mab) ? Math.max(0, mab) : 0;
+  return 1 + Math.min(MAB_MAX_BONUS, m * MAB_PCT_PER_POINT);
+}
+
+/** Scale finished spell damage by gear MAB. Always at least 1. */
+export function applyMagicAttackBonus(dmg: number, mab = 0): number {
+  return Math.max(1, Math.floor(dmg * magicAttackMul(mab)));
+}
+
 export function evasionFromAgi(agi: number): number {
   return Math.floor(agi / 2);
 }

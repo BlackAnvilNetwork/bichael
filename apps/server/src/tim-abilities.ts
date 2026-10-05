@@ -10,6 +10,7 @@ import {
 } from "@bellgrave/combat";
 import { SIGNATURE_WEAPON_IDS, signatureWeaponEquipped } from "./starter-kit";
 import { kitLevel } from "./support-job";
+import { withGearMab } from "./gear-combat";
 import type { AbilityId } from "@bellgrave/protocol";
 
 export type TimPlayer = {
@@ -103,7 +104,7 @@ function temporalDistortionDamage(
   const { mnd, int } = stats;
   let base = 80 + mnd * 6 + int * 2;
   if (now < target.frazzleUntil) base = Math.floor(base * 1.35);
-  return Math.max(1, Math.floor(base * aetherAmp(p)));
+  return withGearMab(p, Math.max(1, Math.floor(base * aetherAmp(p))));
 }
 
 /** Chrona shatter — interrupt windup + MND damage. Does not strip your enfeebles. */
@@ -117,6 +118,7 @@ function chronaShatter(
   const { mnd } = stats;
   let dmg = Math.floor((28 + mnd * 2.2) * aetherAmp(p));
   if (sealBonus) dmg = Math.floor(dmg * 1.2);
+  dmg = withGearMab(p, dmg);
   const interruptMs = sealBonus ? 2800 : 2000;
   m.hp = Math.max(0, m.hp - dmg);
   m.nextSwingAt = Math.max(m.nextSwingAt, now + interruptMs);

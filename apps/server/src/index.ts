@@ -21,6 +21,7 @@ import {
   combinedJobVitals,
   deriveCharacterAttributes,
   defenseFromVit,
+  playerDefense,
   evasionFromAgi,
   critFromAgi,
   freeSkillHubs,
@@ -3889,6 +3890,8 @@ function mobSwing(mob: Mob, now: number) {
   const vitals = {
     vit: defStats.vit,
     agi: Math.max(0, defStats.agi - fighterEvaPenalty(nearest, now)),
+    // Gear armor counts against physical hits, same as the character sheet (#52).
+    def: playerDefense(defStats.vit, playerEquipmentStats(nearest).def ?? 0),
   };
 
   const applyMobDamage = (rawDmg: number, hitLog: string) => {
