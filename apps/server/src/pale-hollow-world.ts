@@ -4,9 +4,11 @@ import {
   PH_ALL_NODES,
   PH_GATHER_RELOCATE_CHANCE,
   PH_HUB,
+  clampPaleHollow,
   paleHollowHeight,
   paleHollowNodeSpawnPoints,
   paleHollowMobJob,
+  paleHollowWalkable,
   type PaleHollowMobDef,
   type PaleHollowMobJob,
   type PaleHollowNodeDef,
@@ -94,6 +96,51 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+/** How far an authored gather point may be nudged to reach dry land (#74). */
+const GATHER_SPAWN_SNAP_MAX = 8;
+
+function inBounds(x: number, z: number): boolean {
+  const c = clampPaleHollow(x, z);
+  return Math.abs(c.x - x) < 1e-6 && Math.abs(c.z - z) < 1e-6;
+}
+
+/**
+ * Nearest walkable, in-bounds spot to an authored gather point. Some authored
+ * points sit in the river or inside a river wall, where nobody can stand to
+ * gather them. Returns null when no dry land is within GATHER_SPAWN_SNAP_MAX.
+ */
+export function snapGatherSpawn(x: number, z: number): { x: number; z: number } | null {
+  if (inBounds(x, z) && paleHollowWalkable(x, z)) return { x, z };
+  for (let r = 0.5; r <= GATHER_SPAWN_SNAP_MAX + 1e-9; r += 0.5) {
+    const steps = Math.max(12, Math.ceil((Math.PI * 2 * r) / 0.4));
+    for (let i = 0; i < steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      const sx = Math.round((x + Math.sin(a) * r) * 100) / 100;
+      const sz = Math.round((z + Math.cos(a) * r) * 100) / 100;
+      if (inBounds(sx, sz) && paleHollowWalkable(sx, sz)) return { x: sx, z: sz };
+    }
+  }
+  return null;
+}
+
+let spawnPoolCache: PaleHollowNodeDef[] | null = null;
+
+/** Authored gather points moved onto walkable ground; unreachable points are dropped. */
+export function gatherSpawnPool(): PaleHollowNodeDef[] {
+  if (spawnPoolCache) return spawnPoolCache;
+  const pool: PaleHollowNodeDef[] = [];
+  for (const def of PH_ALL_NODES) {
+    const spot = snapGatherSpawn(def.x, def.z);
+    if (!spot) {
+      console.warn(`[pale-hollow] gather point ${def.id} (${def.x}, ${def.z}) has no walkable ground nearby; skipped`);
+      continue;
+    }
+    pool.push(spot.x === def.x && spot.z === def.z ? def : { ...def, x: spot.x, z: spot.z });
+  }
+  spawnPoolCache = pool;
+  return pool;
+}
+
 /**
  * Live gather nodes: authored PH_ALL_NODES coords are the spawn pool.
  * We activate PH_ACTIVE_GATHER_COUNT of them; gathered nodes may relocate.
@@ -105,8 +152,9 @@ export function createPaleHollowNodes(): FieldNode[] {
       pool.map((p) => `  ${p.id.padEnd(18)} ${p.kind.padEnd(8)} (${p.x.toFixed(1)}, ${p.z.toFixed(1)})  ${p.name}`).join("\n"),
   );
 
-  const count = Math.min(PH_ACTIVE_GATHER_COUNT, PH_ALL_NODES.length);
-  const picked = shuffle(PH_ALL_NODES).slice(0, count);
+  const spawnable = gatherSpawnPool();
+  const count = Math.min(PH_ACTIVE_GATHER_COUNT, spawnable.length);
+  const picked = shuffle(spawnable).slice(0, count);
   const nodes: FieldNode[] = picked.map((def, i) => ({
     ...def,
     id: `ph-live-${i}`,
@@ -125,7 +173,7 @@ export function createPaleHollowNodes(): FieldNode[] {
 export function relocateGatherNode(nodes: FieldNode[], node: FieldNode, chance = PH_GATHER_RELOCATE_CHANCE): boolean {
   if (Math.random() > chance) return false;
   const occupied = new Set(nodes.map((n) => n.spawnPointId));
-  const candidates = PH_ALL_NODES.filter((s) => !occupied.has(s.id));
+  const candidates = gatherSpawnPool().filter((s) => !occupied.has(s.id));
   if (candidates.length === 0) return false;
   const next = candidates[Math.floor(Math.random() * candidates.length)]!;
   const prev = node.spawnPointId;

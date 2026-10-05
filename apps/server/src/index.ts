@@ -123,6 +123,7 @@ import {
   takeStack,
 } from "./starter-kit";
 import { createPaleHollowMobs, createPaleHollowNodes, relocateGatherNode, type FieldNode } from "./pale-hollow-world";
+import { GATHER_RANGE, beginGatherChannel, tickGatherChannel, type GatherChannel } from "./gather-channel";
 import {
   MOB_CAST_ANIM_MS,
   MOB_CAST_WINDUP_MS,
@@ -259,6 +260,8 @@ type Player = {
   skillUnlocked: string[];
   /** Unspent skill-tree points (bank; grant on level-up / echoes, spend on unlock). */
   skillPoints: number;
+  /** Gather in progress; the item is granted when the channel completes (#67). */
+  gathering?: GatherChannel | null;
   /** Prestige points after max level (0â€“100). */
   skillPrestige: number;
   freeStatPoints: number;
@@ -4041,6 +4044,9 @@ function tickSim() {
     // Auto-close to melee while engaged
     chaseEngaged(p);
 
+    // Gather channel (#67): grant only after interactMs, break on move/damage/engage
+    tickGathering(p, now);
+
     if (p.moveTo) {
       stopRest(p, "You stand and break your rest.");
       const speed = playerMoveSpeed(p, now);
@@ -4229,23 +4235,54 @@ function handleGather(p: Player, nodeId: string) {
     pushLog(p, "Nothing to gather there.");
     return;
   }
+  if (p.gathering?.nodeId === nodeId) {
+    pushLog(p, `Already gathering ${node.name}.`);
+    return;
+  }
   const d = dist(p.x, p.z, node.x, node.z);
-  if (d > 3.2) {
+  if (d > GATHER_RANGE) {
     pushLog(p, "Move closer to gather.");
     p.moveTo = clampPlayerMove(p.x, p.z, node.x, node.z);
     return;
   }
   const now = Date.now();
   if (now < node.readyAt) {
-    pushLog(p, `${node.name} is depleted — wait for regrowth.`);
+    pushLog(p, `${node.name} is depleted. Wait for regrowth.`);
     return;
   }
   stopRest(p, "You break rest to gather.");
   p.targetId = null;
   p.moveTo = null;
   p.facing = facingTo(p.x, p.z, node.x, node.z);
+  // Channel: the yield is granted by tickGathering once interactMs has elapsed.
+  p.gathering = beginGatherChannel(node, p, now);
   p.anim = "cast";
-  p.animUntil = now + Math.min(node.interactMs, 1200);
+  p.animUntil = p.gathering.readyAt;
+  pushLog(p, `Gathering ${node.name}...`);
+  send(p.ws, snapshotFor(p));
+}
+
+/** Finish or break an in-progress gather channel. Runs every sim tick. */
+function tickGathering(p: Player, now: number) {
+  const ch = p.gathering;
+  if (!ch) return;
+  const step = tickGatherChannel(ch, { x: p.x, z: p.z, hp: p.hp, engaged: !!p.targetId }, now);
+  if (step.kind === "pending") return;
+  p.gathering = null;
+  if (step.kind === "cancel") {
+    if (p.anim === "cast" && p.animUntil > now) p.animUntil = now;
+    pushLog(p, step.reason);
+    return;
+  }
+  const node = fieldNodes.find((n) => n.id === ch.nodeId);
+  if (!node || node.spawnPointId !== ch.spawnPointId || now < node.readyAt) {
+    pushLog(p, `Someone else gathered ${ch.nodeName} first.`);
+    return;
+  }
+  if (dist(p.x, p.z, node.x, node.z) > GATHER_RANGE) {
+    pushLog(p, "Move closer to gather.");
+    return;
+  }
   const yieldId = node.yields[Math.floor(Math.random() * node.yields.length)] ?? node.yields[0];
   grantBaseMat(p, yieldId, 1);
   logLokHarvest(p, yieldId, 1);
