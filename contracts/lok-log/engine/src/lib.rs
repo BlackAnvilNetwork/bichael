@@ -6,8 +6,8 @@
 //! transfers cannot create it. `WithdrawKek` decreases spendable KEK and does not
 //! submit an onchain withdrawal. `SpendKek` debits spendable KEK for an in-game
 //! price, leaves escrowed bids locked, is not `kekOut`, and does not mint.
-//! Level-up, ability, craft, harvest, and item-drop events are per character and
-//! do not mint KEK. Each character has their own hash chain.
+//! Level-up, ability, craft, harvest, item-drop counters, and bag imports are per character and
+//! do not mint KEK. Bag imports credit items without a chain inbound nonce. Each character has their own hash chain.
 //! A KEK deposit or item import carries that character's inbound nonce and is rejected
 //! if the same nonce is applied again. The nonce must be the next one (`inboundCount`).
 

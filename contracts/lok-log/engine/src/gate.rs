@@ -247,6 +247,11 @@ fn state_body(world: &World) -> serde_json::Map<String, Value> {
             .into_iter()
             .map(|(item_id, amount)| json!({"itemId": item_id.to_dec(), "amount": amount.to_dec()}))
             .collect();
+        let drops: Vec<Value> = world
+            .drops_of(&snap.token_id)
+            .into_iter()
+            .map(|(item_id, amount)| json!({"itemId": item_id.to_dec(), "amount": amount.to_dec()}))
+            .collect();
         let harvests: Vec<Value> = world
             .harvests_of(&snap.token_id)
             .into_iter()
@@ -269,6 +274,7 @@ fn state_body(world: &World) -> serde_json::Map<String, Value> {
             "crafts": crafts,
             "craftSkills": craft_skills,
             "harvests": harvests,
+            "drops": drops,
             "inbox": world.inbox_of(&snap.token_id).into_iter().map(|(item_id, amount)| json!({"itemId": item_id.to_dec(), "amount": amount.to_dec()})).collect::<Vec<_>>(),
             "droppedSkills": world.dropped_skills_of(&snap.token_id),
             "logLen": self_log_len(world, &snap.token_id),

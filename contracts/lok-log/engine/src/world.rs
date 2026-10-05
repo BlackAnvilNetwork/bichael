@@ -190,6 +190,14 @@ impl World {
         self.character_state(token_id).map(|state| state.crafts()).unwrap_or_default()
     }
 
+    pub fn dropped(&self, token_id: &U256, item_id: &U256) -> Option<U256> {
+        self.characters.get(token_id).map(|c| c.state.get(&Key::Drop(*item_id)))
+    }
+
+    pub fn drops_of(&self, token_id: &U256) -> Vec<(U256, U256)> {
+        self.character_state(token_id).map(|state| state.drops()).unwrap_or_default()
+    }
+
     pub fn harvested(&self, token_id: &U256, material_id: &str) -> Option<U256> {
         self.characters.get(token_id).map(|c| c.harvests.get(material_id).copied().unwrap_or(U256::ZERO))
     }
@@ -333,6 +341,16 @@ impl World {
         nonce: u64,
     ) -> Result<AppliedEvent, EngineError> {
         self.apply(Input::ImportItem { token_id, item_id, amount, nonce })
+    }
+
+    /// Credit a bag stack onto the log without a chain inbound nonce.
+    pub fn append_bag_import(
+        &mut self,
+        token_id: U256,
+        item_id: U256,
+        amount: U256,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::BagImport { token_id, item_id, amount })
     }
 
     pub fn append_export_item(
@@ -866,7 +884,30 @@ impl World {
                 }
                 touch.insert(*token_id);
             }
-            Input::ItemDrop { .. } => return Err(EngineError::ClosedMint),
+            Input::ItemDrop { token_id, item_id, amount } => {
+                if *amount == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                if *item_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*token_id);
+            }
+            Input::BagImport { token_id, item_id, amount } => {
+                if *amount == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                if *item_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*token_id);
+            }
             Input::Craft { token_id, item_id, amount } => {
                 if *amount == U256::ZERO {
                     return Err(EngineError::ZeroAmount);
@@ -1142,7 +1183,12 @@ impl World {
                 Ok(())
             }
             Input::ItemDrop { token_id, item_id, amount } => {
-                // Historical log entries still credit. affected() refuses a new append.
+                if touch.contains(token_id) {
+                    self.note_drop(*token_id, *item_id, *amount)?;
+                }
+                Ok(())
+            }
+            Input::BagImport { token_id, item_id, amount } => {
                 if touch.contains(token_id) {
                     self.credit_item(*token_id, *item_id, *amount)?;
                 }
@@ -1275,6 +1321,18 @@ impl World {
         Ok(())
     }
 
+    fn note_drop(&mut self, token_id: U256, item_id: U256, amount: U256) -> Result<(), EngineError> {
+        if item_id == U256::ZERO {
+            return Err(EngineError::BadId);
+        }
+        if amount == U256::ZERO {
+            return Err(EngineError::ZeroAmount);
+        }
+        let ch = self.characters.get_mut(&token_id).ok_or(EngineError::NotSpawned)?;
+        ch.state.add_count(Key::Drop(item_id), amount).map_err(|_| EngineError::Overflow)?;
+        Ok(())
+    }
+
     fn link_at(&mut self, input: &Input, touch: &BTreeSet<U256>, seq: u64) -> AppliedEvent {
         let mut links = Vec::new();
         for token in touch {
@@ -1334,8 +1392,11 @@ impl World {
     ) -> Result<(), EngineError> {
         let ch = self.characters.get(&token_id).ok_or(EngineError::NotSpawned)?;
         let next = ch.inbound_applied.checked_add(1).ok_or(EngineError::Overflow)?;
-        if nonce == 0 || nonce != next {
+        if nonce == 0 || nonce < next {
             return Err(EngineError::ReplayInbound);
+        }
+        if nonce > next {
+            return Err(EngineError::OutOfOrderInbound);
         }
         credit(self)?;
         self.characters.get_mut(&token_id).expect("inbound character").inbound_applied = nonce;

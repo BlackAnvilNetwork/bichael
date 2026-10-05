@@ -3,7 +3,29 @@ import test from "node:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowPlayerDeposit, checkpointReady, debitAfterQueue, depositCastArgs, depositKekOnchain, loadQueues, LOCAL_MOCK_KEK, PLAYER_DEPOSIT_CAP, playerDepositGate, queueKekWithdrawal, vaultWithdrawalMatches, withdrawalById, writeTextAtomic, type CastFn, type LogCheckpoint } from "./lok-vault";
+import {
+  allowPlayerDeposit,
+  checkpointReady,
+  debitAfterQueue,
+  depositCastArgs,
+  depositKekOnchain,
+  enqueueVaultSync,
+  flushVaultPending,
+  listVaultPending,
+  loadQueues,
+  loadVaultPending,
+  LOCAL_MOCK_KEK,
+  PLAYER_DEPOSIT_CAP,
+  playerDepositGate,
+  queueKekWithdrawal,
+  vaultPendingPath,
+  vaultWithdrawalMatches,
+  withKeyQueue,
+  withdrawalById,
+  writeTextAtomic,
+  type CastFn,
+  type LogCheckpoint,
+} from "./lok-vault";
 
 const PLAYER = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const SERVER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
@@ -316,4 +338,30 @@ test("a withdrawal without a real checkpoint is refused", async () => {
   assert.equal(serverPlayer.ok, false);
   const invented = checkpointReady(checkpointBody("1", { prevRoot: "0x" + "44".repeat(32), newRoot: "0x" + "44".repeat(32) }), "1", SERVER);
   assert.equal(invented.ok, false);
+});
+
+test("vault pending sink survives restart and is retried", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "lok-pending-"));
+  const path = vaultPendingPath(dir);
+  loadVaultPending(path);
+  const row = enqueueVaultSync({ kind: "sink", tokenId: "6", amount: "25" }, dir);
+  assert.equal(row.status, "pending");
+  assert.equal(listVaultPending().length, 1);
+  const again = loadVaultPending(path);
+  assert.equal(again.length, 1);
+  assert.equal(again[0]?.kind, "sink");
+  assert.equal(again[0]?.amount, "25");
+});
+
+test("withKeyQueue serializes concurrent work for one key", async () => {
+  const order: number[] = [];
+  const tasks = [1, 2, 3].map((n) =>
+    withKeyQueue("k", async () => {
+      order.push(n);
+      await new Promise((r) => setTimeout(r, 5));
+      order.push(n + 10);
+    }),
+  );
+  await Promise.all(tasks);
+  assert.deepEqual(order, [1, 11, 2, 12, 3, 13]);
 });

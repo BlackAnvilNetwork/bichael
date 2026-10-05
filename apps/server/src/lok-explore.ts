@@ -211,6 +211,11 @@ function describe(entry: RawEntry, logTokenId: string, nameOf: (tokenId: string)
       text = `${character} looted ${item} x${amount}`;
       break;
     }
+    case "bagImport": {
+      character = who(token) || owner;
+      text = `${character} imported ${item} x${amount} from the bag`;
+      break;
+    }
     case "ask": {
       const seller = field(input, "seller");
       character = who(seller) || seller || owner;

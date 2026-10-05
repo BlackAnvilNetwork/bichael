@@ -29,9 +29,11 @@ pub enum EngineError {
     BadRange,
     /// Two character logs give the same sequence number a different payload.
     ConflictingLog,
-    /// Deposit or import nonce was already consumed, skipped, or zero.
+    /// Deposit or import nonce was already consumed or is zero.
     /// Inbounds for one character are the chain's `inboundCount` and apply in order.
     ReplayInbound,
+    /// Deposit or import nonce is above the next expected one (a gap).
+    OutOfOrderInbound,
     /// The event does not name this character. Auction events are still applied by `World`
     /// onto every affected character's own chain; a lone engine has no shared listing book.
     NotOnCharacterLog,
@@ -77,7 +79,8 @@ impl fmt::Display for EngineError {
             Self::BadRange => write!(f, "checkpoint span is empty or out of order"),
             Self::ConflictingLog => write!(f, "character logs disagree on an event"),
             Self::NotOnCharacterLog => write!(f, "event does not involve this character"),
-            Self::ReplayInbound => write!(f, "inbound nonce was already consumed or is out of order"),
+            Self::ReplayInbound => write!(f, "inbound nonce was already consumed"),
+            Self::OutOfOrderInbound => write!(f, "inbound nonce is out of order"),
             Self::BadLevel => write!(f, "level is not the next level"),
             Self::AlreadyKnown => write!(f, "already known"),
             Self::BadId => write!(f, "id is empty or invalid"),
@@ -187,6 +190,7 @@ impl Engine {
             Input::ImportItem { token_id, item_id, amount, nonce } => {
                 self.credit_inbound(*token_id, *nonce, |engine| engine.credit_item(*token_id, *item_id, *amount))
             }
+            Input::BagImport { token_id, item_id, amount } => self.credit_item(*token_id, *item_id, *amount),
             Input::ExportItem { token_id, item_id, amount } => self.debit_item(*token_id, *item_id, *amount),
             Input::SendKek { from, to, amount } => self.transfer_kek(*from, *to, *amount),
             Input::SendItem { from, to, item_id, amount } => self.transfer_item(*from, *to, *item_id, *amount),
@@ -205,7 +209,7 @@ impl Engine {
             Input::LearnAbility { token_id, ability_id } => self.learn(*token_id, ability_id),
             Input::Craft { token_id, item_id, amount } => self.note_craft(*token_id, *item_id, *amount),
             Input::Harvest { token_id, material_id, amount } => self.note_harvest(*token_id, material_id, *amount),
-            Input::ItemDrop { .. } => Err(EngineError::ClosedMint),
+            Input::ItemDrop { token_id, item_id, amount } => self.note_drop(*token_id, *item_id, *amount),
             Input::CraftSkill { token_id, skill_id, level } => self.note_craft_skill(*token_id, skill_id, *level),
             Input::RespecSkills { token_id, node_ids } => self.respec_skills(*token_id, node_ids),
             Input::PaidRespecSkills { token_id, amount, node_ids } => {
@@ -265,6 +269,20 @@ impl Engine {
         Ok(())
     }
 
+    fn note_drop(&mut self, token_id: U256, item_id: U256, amount: U256) -> Result<(), EngineError> {
+        self.involves(&token_id)?;
+        if item_id == U256::ZERO {
+            return Err(EngineError::BadId);
+        }
+        if amount == U256::ZERO {
+            return Err(EngineError::ZeroAmount);
+        }
+        self.state
+            .add_count(Key::Drop(item_id), amount)
+            .map_err(|_| EngineError::Overflow)?;
+        Ok(())
+    }
+
     fn note_craft_skill(&mut self, token_id: U256, skill_id: &str, level: u32) -> Result<(), EngineError> {
         self.involves(&token_id)?;
         parse_label(skill_id)?;
@@ -292,13 +310,6 @@ impl Engine {
         Ok(())
     }
 
-    fn drop_item(&mut self, token_id: U256, item_id: U256, amount: U256) -> Result<(), EngineError> {
-        if item_id == U256::ZERO {
-            return Err(EngineError::BadId);
-        }
-        self.credit_item(token_id, item_id, amount)
-    }
-
     /// Check the nonce, apply the credit, then record it. A failed credit does not consume the nonce.
     fn credit_inbound(
         &mut self,
@@ -308,8 +319,11 @@ impl Engine {
     ) -> Result<(), EngineError> {
         self.involves(&token_id)?;
         let next = self.inbound_applied.checked_add(1).ok_or(EngineError::Overflow)?;
-        if nonce == 0 || nonce != next {
+        if nonce == 0 || nonce < next {
             return Err(EngineError::ReplayInbound);
+        }
+        if nonce > next {
+            return Err(EngineError::OutOfOrderInbound);
         }
         credit(self)?;
         self.inbound_applied = nonce;

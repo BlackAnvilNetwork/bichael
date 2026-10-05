@@ -204,10 +204,13 @@ test("level, ability, craft, harvest, and drop replay and a bad event does not a
   assert.equal(lok.importFromBag(a.tokenId, "7", "2").ok, true);
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
   assert.equal(lok.kekOf(a.tokenId), "0");
+  assert.equal(lok.inboundAppliedOf(a.tokenId), 0);
+  assert.equal(lok.itemDrop(a.tokenId, "7", "3").ok, true);
+  assert.equal(lok.dropOf(a.tokenId, "7"), "3");
+  assert.equal(lok.itemOf(a.tokenId, "7"), "2");
   const before = lok.length;
   const badDrop = lok.itemDrop(a.tokenId, "0", "1");
   assert.equal(badDrop.ok, false);
-  if (!badDrop.ok) assert.match(badDrop.error, /cannot mint/i);
   assert.equal(lok.length, before);
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
 
@@ -216,8 +219,10 @@ test("level, ability, craft, harvest, and drop replay and a bad event does not a
   assert.equal(again.hasAbility(a.tokenId, "fire"), true);
   assert.equal(again.craftOf(a.tokenId, "9"), "1");
   assert.equal(again.harvestOf(a.tokenId, "dustgrain"), "2");
+  assert.equal(again.dropOf(a.tokenId, "7"), "3");
   assert.equal(again.itemOf(a.tokenId, "7"), "2");
   assert.equal(again.kekOf(a.tokenId), "0");
+  assert.equal(again.inboundAppliedOf(a.tokenId), 0);
   assert.equal(again.length, lok.length);
 });
 
@@ -487,19 +492,36 @@ test("received KEK is the recipient claim and spent KEK is not withdrawable", ()
   assert.equal(lok.withdrawKek(a.tokenId, "1").ok, false);
 });
 
-test("item drop cannot mint an arbitrary credit", () => {
+test("item drop logs a counter without minting spendable items", () => {
   const lok = world();
   const a = lok.spawn("char-a", "Ada", 0);
   assert.equal(a.ok, true);
   if (!a.ok) return;
   const before = lok.length;
   const dropped = lok.itemDrop(a.tokenId, "7", "9");
-  assert.equal(dropped.ok, false);
-  if (!dropped.ok) assert.match(dropped.error, /cannot mint/i);
-  assert.equal(lok.length, before);
+  assert.equal(dropped.ok, true);
+  assert.equal(lok.length, before + 1);
+  assert.equal(lok.dropOf(a.tokenId, "7"), "9");
   assert.equal(lok.itemOf(a.tokenId, "7"), "0");
   assert.equal(lok.importFromBag(a.tokenId, "7", "2").ok, true);
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
+  assert.equal(lok.inboundAppliedOf(a.tokenId), 0);
+});
+
+test("bag import does not consume the chain inbound nonce", () => {
+  const lok = world();
+  const a = lok.spawn("char-a", "Ada", 0);
+  assert.equal(a.ok, true);
+  if (!a.ok) return;
+  assert.equal(lok.importFromBag(a.tokenId, "7", "2").ok, true);
+  assert.equal(lok.importFromBag(a.tokenId, "8", "1").ok, true);
+  assert.equal(lok.inboundAppliedOf(a.tokenId), 0);
+  assert.equal(lok.itemOf(a.tokenId, "7"), "2");
+  // A real chain deposit still takes nonce 1.
+  lok.noteCustodyInbound({ kind: "depositKek", tokenId: a.tokenId, nonce: "1", amount: "50" });
+  assert.equal(lok.depositKek(a.tokenId, "50", "1").ok, true);
+  assert.equal(lok.kekOf(a.tokenId), "50");
+  assert.equal(lok.inboundAppliedOf(a.tokenId), 1);
 });
 
 test("quantity buy fills cheapest asks first, charges each ask, skips self, and stops when short", async () => {

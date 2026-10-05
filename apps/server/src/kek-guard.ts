@@ -305,8 +305,8 @@ export async function guardedWithdraw(args: {
 }
 
 /** Serialize any other spend of this character's KEK behind an in-flight withdrawal. */
-export function guardedKekMove<T>(token: string, fn: () => T): Promise<T> {
-  return withKekLock(token, async () => fn());
+export function guardedKekMove<T>(token: string, fn: () => T | Promise<T>): Promise<T> {
+  return withKekLock(token, async () => await fn());
 }
 
 export function beginClaim(token: string, now: number): { ok: true } | { ok: false; error: string } {

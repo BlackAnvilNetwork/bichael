@@ -25,6 +25,8 @@ pub enum Key {
     Craft(U256),
     /// Total amount gathered of a material. Key data is keccak256 of the material id. Not spendable.
     Harvest(U256),
+    /// Total amount looted of an item. Not a spendable balance and not a mint.
+    Drop(U256),
     /// Craft skill level. Key data is keccak256 of the skill id. Value is the level, not XP.
     CraftSkill(U256),
 }
@@ -114,6 +116,13 @@ impl State {
         })
     }
 
+    pub fn drops(&self) -> Vec<(U256, U256)> {
+        self.rows(|key| match key {
+            Key::Drop(id) => Some(*id),
+            _ => None,
+        })
+    }
+
     fn rows(&self, pick: impl Fn(&Key) -> Option<U256>) -> Vec<(U256, U256)> {
         self.map
             .iter()
@@ -178,13 +187,14 @@ fn key_tag(key: &Key) -> u8 {
         Key::Ability(_) => 10,
         Key::Craft(_) => 11,
         Key::Harvest(_) => 12,
-        Key::CraftSkill(_) => 13,
+        Key::Drop(_) => 13,
+        Key::CraftSkill(_) => 14,
     }
 }
 
 fn leaf(key: &Key, value: &U256) -> [u8; 32] {
     let key_data = match key {
-        Key::Item(id) | Key::Ability(id) | Key::Craft(id) | Key::Harvest(id) | Key::CraftSkill(id) => *id,
+        Key::Item(id) | Key::Ability(id) | Key::Craft(id) | Key::Harvest(id) | Key::Drop(id) | Key::CraftSkill(id) => *id,
         _ => U256::ZERO,
     };
     let mut buf = Buf::new();

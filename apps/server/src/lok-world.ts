@@ -11,6 +11,7 @@ export type LokResult = { ok: true } | { ok: false; error: string };
 type EngineItem = { itemId: string; amount: string };
 type EngineCraft = { itemId: string; amount: string };
 type EngineHarvest = { materialId: string; amount: string };
+type EngineDrop = { itemId: string; amount: string };
 type EngineCraftSkill = { skillId: string; level: number };
 type EngineCharacter = {
   tokenId: string;
@@ -23,6 +24,7 @@ type EngineCharacter = {
   crafts?: EngineCraft[];
   craftSkills?: EngineCraftSkill[];
   harvests?: EngineHarvest[];
+  drops?: EngineDrop[];
   inbox?: EngineItem[];
   droppedSkills?: string[];
   items: EngineItem[];
@@ -307,17 +309,14 @@ export class LokWorld {
     return this.apply({ op: "harvest", tokenId, materialId, amount });
   }
 
-  /** Closed. An item drop must not credit an arbitrary stack onto the log. */
-  itemDrop(_tokenId: string, _itemId: string, _amount: string): LokResult {
-    return { ok: false, error: "Item drop cannot mint items onto the log." };
+  /** Loot drop counter. Like harvest: records the drop without minting spendable items. */
+  itemDrop(tokenId: string, itemId: string, amount: string): LokResult {
+    return this.apply({ op: "itemDrop", tokenId, itemId, amount });
   }
 
-  /** Explicit bag import. Credits only this stack, through the next inbound nonce, not ItemDrop. */
+  /** Explicit bag import. Credits this stack without a chain inbound nonce. */
   importFromBag(tokenId: string, itemId: string, amount: string): LokResult {
-    const applied = this.state.characters.find((c) => c.tokenId === tokenId)?.inboundApplied ?? 0;
-    const nonce = String(applied + 1);
-    this.noteCustodyInbound({ kind: "importItem", tokenId, nonce, itemId, amount });
-    return this.importItem(tokenId, itemId, amount, nonce);
+    return this.apply({ op: "bagImport", tokenId, itemId, amount });
   }
 
   levelOf(tokenId: string): number {
@@ -343,6 +342,16 @@ export class LokWorld {
   harvestOf(tokenId: string, materialId: string): string {
     const me = this.state.characters.find((c) => c.tokenId === tokenId);
     return me?.harvests?.find((row) => row.materialId === materialId)?.amount ?? "0";
+  }
+
+  dropOf(tokenId: string, itemId: string): string {
+    const me = this.state.characters.find((c) => c.tokenId === tokenId);
+    return me?.drops?.find((row) => row.itemId === itemId)?.amount ?? "0";
+  }
+
+  /** How many chain inbound nonces this character has consumed. */
+  inboundAppliedOf(tokenId: string): number {
+    return this.state.characters.find((c) => c.tokenId === tokenId)?.inboundApplied ?? 0;
   }
 
   sendItem(from: string, to: string, itemId: string, amount: string): LokResult {

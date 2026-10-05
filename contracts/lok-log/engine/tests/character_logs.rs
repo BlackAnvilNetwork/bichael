@@ -195,7 +195,7 @@ fn deposit_nonce_rejects_replay_and_credits_two_nonces() {
     let len = world.character_len(&n(1)).unwrap();
     assert_eq!(
         world.append_deposit_kek(n(1), n(1), 3).unwrap_err(),
-        EngineError::ReplayInbound,
+        EngineError::OutOfOrderInbound,
         "a gap is not the next inbound"
     );
     assert_eq!(world.character_len(&n(1)), Some(len));

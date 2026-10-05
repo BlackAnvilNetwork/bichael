@@ -14,6 +14,9 @@ pub enum Input {
     /// Log image of an item import. Credits items already burned into the log. Not a mint of KEK.
     /// `nonce` is that character's inbound id (shared with KEK deposits) and may be applied once.
     ImportItem { token_id: U256, item_id: U256, amount: U256, nonce: u64 },
+    /// Move a stack from the in-game bag onto the log. No chain inbound nonce.
+    /// Not counted in inboundConsumed. Credits spendable items; does not mint KEK.
+    BagImport { token_id: U256, item_id: U256, amount: U256 },
     /// Burns spendable items out of the log (the export side of a checkpoint). Escrowed listings are not spendable.
     ExportItem { token_id: U256, item_id: U256, amount: U256 },
     /// Decreases spendable KEK. Escrowed bids are not spendable, so they cannot be withdrawn.
@@ -37,7 +40,7 @@ pub enum Input {
     Craft { token_id: U256, item_id: U256, amount: U256 },
     /// A successful gather. Counts the material. Does not credit spendable items or KEK.
     Harvest { token_id: U256, material_id: String, amount: U256 },
-    /// Loot into this character's log inventory. Not a KEK mint.
+    /// Loot drop counter. Like Harvest: records the drop, does not credit spendable items or KEK.
     ItemDrop { token_id: U256, item_id: U256, amount: U256 },
     /// Craft skill level for this character. Must be strictly higher than the logged level.
     /// Does not store XP and does not credit items or KEK.
@@ -115,6 +118,12 @@ pub fn event_id(input: &Input) -> [u8; 32] {
             buf.u256(item_id);
             buf.u256(amount);
             buf.u64(*nonce);
+        }
+        Input::BagImport { token_id, item_id, amount } => {
+            buf.b256(&domain(b"LOK_BAG_IMPORT_V1"));
+            buf.u256(token_id);
+            buf.u256(item_id);
+            buf.u256(amount);
         }
         Input::ExportItem { token_id, item_id, amount } => {
             buf.b256(&domain(b"LOK_EXPORT_ITEM_V1"));

@@ -186,8 +186,9 @@ import {
   linkCharacterNft,
   loadQueues,
   queueKekWithdrawal,
-  reassignKekOnchain,
-  sinkKekOnchain,
+  enqueueVaultSync,
+  startVaultSyncWorker,
+  vaultClaimBlocked,
   queuesFor,
   readWithdrawDelay,
   vaultDelaySec,
@@ -488,6 +489,7 @@ const lok: LokWorld = await (async (): Promise<LokWorld> => {
       "[bellgrave] lok log " + world.logPath + " entries=" + world.length + ". " + world.chainNote,
     );
     startKekDepositWatcher(world);
+    startVaultSyncWorker(defaultLokDir());
     loadQueues(defaultLokDir());
     await reconcileQueuedWithdrawals(world);
     const moved = reconcilePlayers(world);
@@ -646,6 +648,14 @@ function logLokHarvest(p: Player, materialId: string, amount: number) {
   if (!res.ok) pushLog(p, "Gather was not written to your log: " + res.error);
 }
 
+function logLokDrop(p: Player, itemId: number, amount: number) {
+  if (!Number.isInteger(itemId) || itemId <= 0 || amount <= 0) return;
+  const token = lokToken(p);
+  if (!token) return;
+  const res = lok.itemDrop(token, String(itemId), String(amount));
+  if (!res.ok) pushLog(p, "Loot was not written to your log: " + res.error);
+}
+
 function itemLabel(tokenId: number): string {
   return getItem(tokenId)?.name ?? "item " + tokenId;
 }
@@ -795,7 +805,13 @@ function handleLokSendKek(p: Player, to: string, amount: string) {
     pushLog(p, dest.error);
     return;
   }
-  void guardedKekMove(token, () => {
+  void guardedKekMove(token, async () => {
+    const gate = await vaultClaimBlocked();
+    if (gate.blocked) {
+      pushLog(p, gate.error);
+      send(p.ws, snapshotFor(p));
+      return;
+    }
     let free = 0n;
     let cost = 0n;
     try {
@@ -814,7 +830,7 @@ function handleLokSendKek(p: Player, to: string, amount: string) {
     const res = lok.sendKek(token, dest.tokenId, amount);
     if (!res.ok) pushLog(p, res.error);
     else {
-      void sinkOrMove(reassignKekOnchain(token, dest.tokenId, amount));
+      sinkOrMove({ kind: "reassign", fromId: token, toId: dest.tokenId, amount });
       pushLog(p, "Sent " + amount + " KEK to " + dest.name + ".");
       tellToken(dest.tokenId, p.name + " sent you " + amount + " KEK.");
     }
@@ -837,7 +853,9 @@ function spendLogKek(p: Player, amount: number): Promise<{ ok: true } | { ok: fa
   if (amount === 0) return Promise.resolve({ ok: true });
   const token = lokToken(p);
   if (!token) return Promise.resolve({ ok: false, error: "Could not open your log identity." });
-  return guardedKekMove(token, () => {
+  return guardedKekMove(token, async () => {
+    const gate = await vaultClaimBlocked();
+    if (gate.blocked) return { ok: false, error: gate.error };
     let bal: bigint;
     let cost: bigint;
     try {
@@ -848,7 +866,7 @@ function spendLogKek(p: Player, amount: number): Promise<{ ok: true } | { ok: fa
     }
     if (bal < cost) return { ok: false, error: "Need " + amount + " KEK (you have " + bal.toString() + ")." };
     const spent = lok.spendKek(token, String(amount));
-    if (spent.ok) void sinkOrMove(sinkKekOnchain(token, String(amount)));
+    if (spent.ok) sinkOrMove({ kind: "sink", tokenId: token, amount: String(amount) });
     return spent;
   });
 }
@@ -946,8 +964,8 @@ function handleLokList(p: Player, tokenId: number, amount: number, minPrice: str
 }
 
 
-function sinkOrMove(task: Promise<void>): void {
-  task.catch(() => undefined);
+function sinkOrMove(op: { kind: "sink"; tokenId: string; amount: string } | { kind: "reassign"; fromId: string; toId: string; amount: string }): void {
+  enqueueVaultSync(op);
 }
 
 function noteBuy(
@@ -962,7 +980,7 @@ function noteBuy(
     return;
   }
   if (res.seller && res.seller !== token) {
-    void sinkOrMove(reassignKekOnchain(token, res.seller, paid));
+    sinkOrMove({ kind: "reassign", fromId: token, toId: res.seller, amount: paid });
     tellToken(res.seller, "Your " + itemLabel(itemId) + " ask sold for " + paid + " KEK.");
   }
   pushLog(p, "Bought the lowest " + itemLabel(itemId) + " ask for " + paid + " KEK. It is in your Provisioner inbox.");
@@ -980,7 +998,7 @@ function noteQuantityBuy(
     if (!paid) continue;
     prices.push(paid + " KEK");
     if (fill.seller && fill.seller !== token) {
-      void sinkOrMove(reassignKekOnchain(token, fill.seller, paid));
+      sinkOrMove({ kind: "reassign", fromId: token, toId: fill.seller, amount: paid });
       tellToken(fill.seller, "Your " + itemLabel(itemId) + " ask sold for " + paid + " KEK.");
     }
   }
@@ -1160,7 +1178,9 @@ function handleSkillRespec(p: Player) {
     payAndClear: async (amount, nodeIds) => {
       const token = lokToken(p);
       if (!token) return { ok: false, error: "Could not open your log identity." };
-      return guardedKekMove(token, () => {
+      return guardedKekMove(token, async () => {
+        const gate = await vaultClaimBlocked();
+        if (gate.blocked) return { ok: false, error: gate.error };
         let bal: bigint;
         let cost: bigint;
         try {
@@ -1171,7 +1191,7 @@ function handleSkillRespec(p: Player) {
         }
         if (bal < cost) return { ok: false, error: "Need " + amount + " KEK (you have " + bal.toString() + ")." };
         const spent = lok.paidRespecSkills(token, String(amount), nodeIds);
-        if (spent.ok) void sinkOrMove(sinkKekOnchain(token, String(amount)));
+        if (spent.ok) sinkOrMove({ kind: "sink", tokenId: token, amount: String(amount) });
         return spent;
       });
     },
@@ -1235,7 +1255,7 @@ function handleLokSettle(p: Player, listingId: string) {
     return;
   }
   if (row?.highBidder && row.highBid && row.highBid !== "0") {
-    void sinkOrMove(reassignKekOnchain(row.highBidder, row.seller, row.highBid));
+    sinkOrMove({ kind: "reassign", fromId: row.highBidder, toId: row.seller, amount: row.highBid });
   }
   pushLog(p, "Settled listing #" + listingId + ".");
   if (row?.highBidder) {
@@ -2727,6 +2747,7 @@ function rewardMobKill(p: Player, mob: Mob, now: number) {
     if (Math.random() < 0.65) {
       grantBaseMat(p, mat, 1);
       const def = CATALOG_BY_SLUG[mat];
+      if (def) logLokDrop(p, def.id, 1);
       dropNotes.push(matDisplayName(mat));
     }
   }
@@ -2735,9 +2756,12 @@ function rewardMobKill(p: Player, mob: Mob, now: number) {
       const def = CATALOG_BY_SLUG[rare.slug];
       if (def) {
         addItem(p.inventory, def.id, 1);
+        logLokDrop(p, def.id, 1);
         dropNotes.push(def.name);
       } else {
         grantBaseMat(p, rare.slug, 1);
+        const rareDef = CATALOG_BY_SLUG[rare.slug];
+        if (rareDef) logLokDrop(p, rareDef.id, 1);
         dropNotes.push(matDisplayName(rare.slug));
       }
     }
@@ -2748,6 +2772,7 @@ function rewardMobKill(p: Player, mob: Mob, now: number) {
     if (shinyMat) {
       grantBaseMat(p, shinyMat, 1);
       const def = CATALOG_BY_SLUG[shinyMat];
+      if (def) logLokDrop(p, def.id, 1);
       dropNotes.push(matDisplayName(shinyMat));
     }
     despawnShinyClones(mob, now);

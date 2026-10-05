@@ -3,7 +3,20 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { applyKekDeposit, decodeKekDeposit, depositCursorPath, loadLokEnv, readDepositCursor, scanKekDeposits, writeDepositCursor } from "./lok-chain";
+import {
+  applyKekDeposit,
+  classifyInboundFailure,
+  decodeItemImport,
+  decodeKekDeposit,
+  depositAlreadyConsumed,
+  depositCursorPath,
+  ITEM_IMPORT_TOPIC,
+  loadLokEnv,
+  readDepositCursor,
+  scanChainInbounds,
+  scanKekDeposits,
+  writeDepositCursor,
+} from "./lok-chain";
 import { chainModeFromEnv, LokWorld } from "./lok-world";
 
 const SAMPLE = {
@@ -62,8 +75,64 @@ test("a consumed nonce does not freeze the deposit cursor", async () => {
       if (method === "eth_getLogs") return [{ ...SAMPLE, blockNumber: "0x10", logIndex: "0x0" }];
       throw new Error(method);
     },
-    apply: () => ({ ok: false, error: "inbound nonce was already consumed or is out of order" }),
+    expectedNonce: () => 2,
+    apply: () => ({ ok: false, error: "inbound nonce was already consumed" }),
   });
+  assert.equal(next.cursor, 19n);
+});
+
+test("a gap freezes the deposit cursor at that block", async () => {
+  assert.equal(depositAlreadyConsumed("inbound nonce was already consumed"), true);
+  assert.equal(depositAlreadyConsumed("inbound nonce was already consumed or is out of order"), false);
+  assert.equal(classifyInboundFailure(1, "3", "inbound nonce is out of order"), "gap");
+  assert.equal(classifyInboundFailure(2, "1", "inbound nonce was already consumed"), "replay");
+
+  const next = await scanChainInbounds({
+    cursor: 0n,
+    checkpoint: "0xabc",
+    rpcCall: async (method) => {
+      if (method === "eth_blockNumber") return "0x14";
+      if (method === "eth_getLogs") return [{ ...SAMPLE, blockNumber: "0x10", logIndex: "0x0" }];
+      throw new Error(method);
+    },
+    expectedNonce: () => 1,
+    apply: () => ({ ok: false, error: "inbound nonce is out of order" }),
+  });
+  assert.equal(next.cursor, 16n);
+});
+
+test("item import logs are decoded and watched with deposits", async () => {
+  const importLog = {
+    topics: [
+      ITEM_IMPORT_TOPIC,
+      "0x0000000000000000000000000000000000000000000000000000000000000006",
+      "0x0000000000000000000000000000000000000000000000000000000000000002",
+    ],
+    data:
+      "0x" +
+      "0000000000000000000000000000000000000000000000000000000000000007" +
+      "0000000000000000000000000000000000000000000000000000000000000003" +
+      "000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    blockNumber: "0x11",
+    logIndex: "0x0",
+  };
+  assert.deepEqual(decodeItemImport(importLog), { tokenId: "6", nonce: "2", itemId: "7", amount: "3" });
+  const seen: string[] = [];
+  const next = await scanChainInbounds({
+    cursor: 0n,
+    checkpoint: "0xabc",
+    rpcCall: async (method) => {
+      if (method === "eth_blockNumber") return "0x14";
+      if (method === "eth_getLogs") return [{ ...SAMPLE, blockNumber: "0x10", logIndex: "0x0" }, importLog];
+      throw new Error(method);
+    },
+    expectedNonce: () => 1,
+    apply: (inbound) => {
+      seen.push(inbound.kind + ":" + inbound.nonce);
+      return { ok: true };
+    },
+  });
+  assert.deepEqual(seen, ["depositKek:1", "importItem:2"]);
   assert.equal(next.cursor, 19n);
 });
 

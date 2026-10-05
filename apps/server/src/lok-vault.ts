@@ -353,16 +353,23 @@ export async function reassignKekOnchain(
   amount: string,
   envIn: NodeJS.ProcessEnv = process.env,
   cast: CastFn = spawnCast(envOf(envIn).castBin),
-): Promise<void> {
-  if (!/^[1-9][0-9]{0,18}$/.test(amount) || fromId === toId) return;
+): Promise<{ ok: true } | { ok: false; error: string; paused?: boolean }> {
+  if (!/^[1-9][0-9]{0,18}$/.test(amount) || fromId === toId) {
+    return { ok: false, error: "bad reassign" };
+  }
   const ready = await localVaultReady(envIn, cast);
-  if (!ready) return;
+  if (!ready) return { ok: false, error: "vault not ready" };
   try {
-    await cast(
-      sendArgs(ready.env.checkpoint, "reassignKek(uint256,uint256,uint256)", [fromId, toId, amount], ready.env.rpc, ready.env.ownerKey),
+    await withKeyQueue(ready.env.ownerKey, () =>
+      cast(
+        sendArgs(ready.env.checkpoint, "reassignKek(uint256,uint256,uint256)", [fromId, toId, amount], ready.env.rpc, ready.env.ownerKey),
+      ),
     );
+    return { ok: true };
   } catch (err) {
-    console.error("[bellgrave] vault reassign was not submitted: " + redact(String(err), [ready.env.ownerKey, ready.env.rotatorKey]));
+    const text = redact(String(err), [ready.env.ownerKey, ready.env.rotatorKey]);
+    console.error("[bellgrave] vault reassign was not submitted: " + text);
+    return { ok: false, error: text, paused: isPausedError(text) };
   }
 }
 
@@ -371,15 +378,229 @@ export async function sinkKekOnchain(
   amount: string,
   envIn: NodeJS.ProcessEnv = process.env,
   cast: CastFn = spawnCast(envOf(envIn).castBin),
-): Promise<void> {
-  if (!/^[1-9][0-9]{0,18}$/.test(amount)) return;
+): Promise<{ ok: true } | { ok: false; error: string; paused?: boolean }> {
+  if (!/^[1-9][0-9]{0,18}$/.test(amount)) return { ok: false, error: "bad sink" };
   const ready = await localVaultReady(envIn, cast);
-  if (!ready) return;
+  if (!ready) return { ok: false, error: "vault not ready" };
   try {
-    await cast(sendArgs(ready.env.checkpoint, "sinkKek(uint256,uint256)", [tokenId, amount], ready.env.rpc, ready.env.ownerKey));
+    await withKeyQueue(ready.env.ownerKey, () =>
+      cast(sendArgs(ready.env.checkpoint, "sinkKek(uint256,uint256)", [tokenId, amount], ready.env.rpc, ready.env.ownerKey)),
+    );
+    return { ok: true };
   } catch (err) {
-    console.error("[bellgrave] vault sink was not submitted: " + redact(String(err), [ready.env.ownerKey, ready.env.rotatorKey]));
+    const text = redact(String(err), [ready.env.ownerKey, ready.env.rotatorKey]);
+    console.error("[bellgrave] vault sink was not submitted: " + text);
+    return { ok: false, error: text, paused: isPausedError(text) };
   }
+}
+
+export type VaultSyncOp =
+  | {
+      id: string;
+      kind: "sink";
+      tokenId: string;
+      amount: string;
+      status: "pending" | "stranded";
+      attempts: number;
+      lastError?: string;
+      updatedAt: number;
+    }
+  | {
+      id: string;
+      kind: "reassign";
+      fromId: string;
+      toId: string;
+      amount: string;
+      status: "pending" | "stranded";
+      attempts: number;
+      lastError?: string;
+      updatedAt: number;
+    };
+
+const STRAND_AFTER = 12;
+const keyQueues = new Map<string, Promise<unknown>>();
+let pendingOps: VaultSyncOp[] = [];
+let pendingPath = "";
+let syncBusy = false;
+let syncTimer: ReturnType<typeof setInterval> | null = null;
+
+function isPausedError(text: string): boolean {
+  return /EnforcedPause|Pausable:\s*paused|contract is paused/i.test(text);
+}
+
+/** Serialize cast sends that share one private key so nonces never race. */
+export function withKeyQueue<T>(keyId: string, task: () => Promise<T>): Promise<T> {
+  const prev = keyQueues.get(keyId) ?? Promise.resolve();
+  const next = prev.then(task, task);
+  keyQueues.set(
+    keyId,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+
+export function vaultPendingPath(dataDir: string): string {
+  return join(dataDir, "lok-vault-pending.json");
+}
+
+export function loadVaultPending(path: string): VaultSyncOp[] {
+  pendingPath = path;
+  if (!existsSync(path)) {
+    pendingOps = [];
+    return pendingOps;
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as { ops?: VaultSyncOp[] };
+    pendingOps = Array.isArray(parsed.ops) ? parsed.ops : [];
+  } catch {
+    pendingOps = [];
+  }
+  return pendingOps;
+}
+
+function saveVaultPending(): void {
+  if (!pendingPath) return;
+  writeTextAtomic(pendingPath, JSON.stringify({ ops: pendingOps }));
+}
+
+export function listVaultPending(): VaultSyncOp[] {
+  return pendingOps.slice();
+}
+
+export function enqueueVaultSync(
+  op:
+    | { kind: "sink"; tokenId: string; amount: string }
+    | { kind: "reassign"; fromId: string; toId: string; amount: string },
+  dataDir?: string,
+): VaultSyncOp {
+  if (dataDir && !pendingPath) loadVaultPending(vaultPendingPath(dataDir));
+  if (!pendingPath && dataDir) pendingPath = vaultPendingPath(dataDir);
+  const row: VaultSyncOp =
+    op.kind === "sink"
+      ? {
+          id: "sink-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+          kind: "sink",
+          tokenId: op.tokenId,
+          amount: op.amount,
+          status: "pending",
+          attempts: 0,
+          updatedAt: Date.now(),
+        }
+      : {
+          id: "reassign-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+          kind: "reassign",
+          fromId: op.fromId,
+          toId: op.toId,
+          amount: op.amount,
+          status: "pending",
+          attempts: 0,
+          updatedAt: Date.now(),
+        };
+  pendingOps.push(row);
+  saveVaultPending();
+  void flushVaultPending();
+  return row;
+}
+
+async function runOneVaultOp(op: VaultSyncOp): Promise<"done" | "retry" | "strand"> {
+  const res =
+    op.kind === "sink"
+      ? await sinkKekOnchain(op.tokenId, op.amount)
+      : await reassignKekOnchain(op.fromId, op.toId, op.amount);
+  op.attempts += 1;
+  op.updatedAt = Date.now();
+  if (res.ok) return "done";
+  op.lastError = res.error;
+  if (res.paused) return "retry";
+  if (op.attempts >= STRAND_AFTER) {
+    op.status = "stranded";
+    return "strand";
+  }
+  return "retry";
+}
+
+export async function flushVaultPending(
+  envIn: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  if (syncBusy) return;
+  syncBusy = true;
+  try {
+    let i = 0;
+    while (i < pendingOps.length) {
+      const op = pendingOps[i]!;
+      if (op.status === "stranded") {
+        i += 1;
+        continue;
+      }
+      const outcome = await runOneVaultOp(op);
+      if (outcome === "done") {
+        pendingOps.splice(i, 1);
+        saveVaultPending();
+        continue;
+      }
+      saveVaultPending();
+      if (outcome === "strand") {
+        console.error(
+          "[bellgrave] vault sync stranded " + op.id + ": " + (op.lastError ?? "unknown"),
+        );
+      }
+      i += 1;
+    }
+  } finally {
+    syncBusy = false;
+  }
+}
+
+/** Resume persisted sink/reassign ops after restart. Retries until confirmed or stranded. */
+export function startVaultSyncWorker(dataDir: string, envIn: NodeJS.ProcessEnv = process.env): void {
+  loadVaultPending(vaultPendingPath(dataDir));
+  if (pendingOps.length) {
+    console.log("[bellgrave] vault pending ops=" + pendingOps.length);
+  }
+  void flushVaultPending(envIn).catch((err) => console.error("[bellgrave] vault sync", err));
+  if (syncTimer) return;
+  syncTimer = setInterval(() => {
+    void flushVaultPending(envIn).catch((err) => console.error("[bellgrave] vault sync", err));
+  }, 5000);
+  syncTimer.unref?.();
+}
+
+/** True when the checkpoint is paused (or unknown). Callers should not advance vault_claim further. */
+export async function checkpointPaused(
+  envIn: NodeJS.ProcessEnv = process.env,
+  cast: CastFn = spawnCast(envOf(envIn).castBin),
+): Promise<boolean | null> {
+  const env = envOf(envIn);
+  if (!env.rpc || !env.checkpoint) return null;
+  try {
+    const out = await call(cast, env.rpc, env.checkpoint, "paused()(bool)");
+    return out === "true";
+  } catch {
+    return null;
+  }
+}
+
+/** Refuse in-engine claim when the chain is paused or a stranded sync still needs operator review. */
+export async function vaultClaimBlocked(
+  envIn: NodeJS.ProcessEnv = process.env,
+): Promise<{ blocked: false } | { blocked: true; error: string }> {
+  if (pendingOps.some((op) => op.status === "stranded")) {
+    return {
+      blocked: true,
+      error: "A vault sink/reassign is stranded. Operator review is required before more vault claims.",
+    };
+  }
+  const paused = await checkpointPaused(envIn);
+  if (paused === true) {
+    return {
+      blocked: true,
+      error: "The vault is paused. In-game KEK claims that need chain sync are held until it unpauses.",
+    };
+  }
+  return { blocked: false };
 }
 
 export async function ensureLocalRuleset(
