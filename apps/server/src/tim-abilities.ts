@@ -163,6 +163,10 @@ export type AbilityHooks = {
   dist?: (ax: number, az: number, bx: number, bz: number) => number;
 };
 
+/**
+ * resolveTimAbility returns true when the ability actually went off and
+ * false when it was refused (locked, cooldown, MP, no target, out of range...).
+ */
 export type ResolveOpts = {
   /** Metronome: skip recast gate + MP cost. */
   free?: boolean;
@@ -185,57 +189,57 @@ export function resolveTimAbility(
   now: number,
   hooks: AbilityHooks,
   opts: ResolveOpts = {},
-): void {
+): boolean {
   if (p.job !== "time_mage" && (p as { subjob?: string }).subjob !== "time_mage") {
     hooks.pushLog("Only a Time Mage (main or support) can weave chrona.");
-    return;
+    return false;
   }
   if (!isTimAbilityId(id)) {
     hooks.pushLog("Unknown ability.");
-    return;
+    return false;
   }
   const def = TIM_ABILITIES[id];
   const effLevel = kitLevel(p, "time_mage");
   if (effLevel < def.unlockLevel) {
     hooks.pushLog(`${def.label} unlocks at level ${def.unlockLevel}.`);
-    return;
+    return false;
   }
   if (!isTrainerFreeAbility(id) && !p.learned.includes(id)) {
     hooks.pushLog(`You have not learned ${def.label}. Visit the Trainer.`);
-    return;
+    return false;
   }
   if (!opts.free) {
     const recastUntil = p.recasts[id] ?? 0;
     if (now < recastUntil) {
       hooks.pushLog(`${def.label} on cooldown.`);
-      return;
+      return false;
     }
   }
   // Signature staff only when this job is main (support dual-job skips it).
   if (def.staffRequired && p.job === "time_mage" && !staffEquipped(p)) {
     hooks.pushLog(`Equip Ashbeam Staff to use ${def.label}.`);
-    return;
+    return false;
   }
   if (!opts.free && p.mp < def.mp) {
     hooks.pushLog("Not enough MP.");
-    return;
+    return false;
   }
 
   // Rest toggle
   if (id === "rest") {
     if (p.anim === "rest") {
       hooks.stopRest();
-      return;
+      return true;
     }
     if (p.moveTo) {
       hooks.pushLog("Stop moving before you rest.");
-      return;
+      return false;
     }
     p.targetId = null;
     p.anim = "rest";
     p.animUntil = Number.POSITIVE_INFINITY;
     hooks.pushLog("You kneel and rest — HP/MP recover, TP fades.");
-    return;
+    return true;
   }
 
   hooks.stopRest();
@@ -249,7 +253,7 @@ export function resolveTimAbility(
     p.recasts.flux = now + def.recastMs;
     p.recasts.aether = now + def.recastMs;
     hooks.pushLog(p.flux ? "Flux Stance: ON — MND attack, +move." : "Flux Stance: OFF");
-    return;
+    return true;
   }
   if (id === "aether") {
     p.aether = !p.aether;
@@ -259,23 +263,32 @@ export function resolveTimAbility(
     p.recasts.aether = now + def.recastMs;
     p.recasts.flux = now + def.recastMs;
     hooks.pushLog(p.aether ? "Aether Stance: ON — magic potency up, melee suppressed." : "Aether Stance: OFF");
-    return;
+    return true;
   }
 
-  // Metronome: free re-cast last enfeeble
+  // Metronome: free re-cast of the last enfeeble. The cooldown starts only
+  // after the repeated spell actually goes off (#71). A failed repeat (no
+  // target, out of range, nothing in the area) leaves Metronome ready.
   if (id === "metronome") {
-    if (!p.lastEnfeeble) {
+    if (opts.free) return false; // never chain Metronome into itself
+    const repeat = p.lastEnfeeble;
+    if (!repeat) {
       hooks.pushLog("Metronome — no enfeeble to repeat.");
-      return;
+      return false;
+    }
+    const label = TIM_ABILITIES[repeat].label;
+    const landed = resolveTimAbility(p, repeat, targetId ?? p.targetId ?? undefined, mobs, now, hooks, {
+      free: true,
+    });
+    if (!landed) {
+      hooks.pushLog(`Metronome — ${label} did not go off, so Metronome is still ready.`);
+      return false;
     }
     p.recasts.metronome = now + def.recastMs;
     p.anim = "cast";
     p.animUntil = now + 400;
-    hooks.pushLog(`Metronome — repeating ${TIM_ABILITIES[p.lastEnfeeble].label} (free).`);
-    resolveTimAbility(p, p.lastEnfeeble, targetId ?? p.targetId ?? undefined, mobs, now, hooks, {
-      free: true,
-    });
-    return;
+    hooks.pushLog(`Metronome — repeated ${label} (free).`);
+    return true;
   }
 
   if (!opts.free) {
@@ -294,7 +307,7 @@ export function resolveTimAbility(
     const heal = Math.floor((def.heal + mnd * 1.5) * (p.aether ? 1.05 : 1));
     p.hp = Math.min(p.maxHp, p.hp + heal);
     hooks.pushLog(`${def.label} restores ${heal} HP.`);
-    return;
+    return true;
   }
 
   // Self time / enhance / JA buffs
@@ -336,13 +349,13 @@ export function resolveTimAbility(
     } else {
       hooks.pushLog(`${def.label} — haste surges through you.`);
     }
-    return;
+    return true;
   }
 
   if (id === "time_seal") {
     p.timeSealUntil = now + (def.durationMs ?? 60_000);
     hooks.pushLog("Time Seal — next enfeeble/time spell bites harder.");
-    return;
+    return true;
   }
 
   if (id === "clockwind") {
@@ -350,13 +363,13 @@ export function resolveTimAbility(
     p.mp = Math.min(p.maxMp, p.mp + gained);
     p.tp = 0;
     hooks.pushLog(`Clockwind — converted TP into ${gained} MP.`);
-    return;
+    return true;
   }
 
   if (id === "perpetual_motion") {
     p.perpetualUntil = now + (def.durationMs ?? 90_000);
     hooks.pushLog("Perpetual Motion — allegro carriers surge with attack power.");
-    return;
+    return true;
   }
 
   // Targeted / AoE vs mobs
@@ -379,7 +392,7 @@ export function resolveTimAbility(
           p.mp += def.mp;
           delete p.recasts[id];
         }
-        return;
+        return false;
       }
       const focus = hits.find((m) => m.id === tid) ?? hits[0]!;
       p.facing = hooks.facingTo(p.x, p.z, focus.x, focus.z);
@@ -404,7 +417,7 @@ export function resolveTimAbility(
           killed ? ` (${killed} fall)` : "; petrify!"
         }`,
       );
-      return;
+      return true;
     }
 
     // AoE enfeebles (ga): hit all in radius of caster
@@ -416,7 +429,7 @@ export function resolveTimAbility(
           p.mp += def.mp;
           delete p.recasts[id];
         }
-        return;
+        return false;
       }
       const focus = hits.find((m) => m.id === tid) ?? hits[0]!;
       p.facing = hooks.facingTo(p.x, p.z, focus.x, focus.z);
@@ -438,14 +451,14 @@ export function resolveTimAbility(
         hooks.pushLog(
           `Dispelga shatters chrona — ${total} damage across ${hits.length}${killed ? ` (${killed} fall)` : ""}.`,
         );
-        return;
+        return true;
       }
 
       const dur = Math.floor((def.durationMs ?? 30_000) * aetherAmp(p) * (sealBonus ? 1.15 : 1));
       for (const m of hits) applyEnfeeble(m, id, def, now, dur);
       if (sealBonus) p.timeSealUntil = 0;
       hooks.pushLog(`${def.label} hits ${hits.length} enem${hits.length === 1 ? "y" : "ies"}.`);
-      return;
+      return true;
     }
 
     // Single-target
@@ -455,7 +468,7 @@ export function resolveTimAbility(
         p.mp += def.mp;
         delete p.recasts[id];
       }
-      return;
+      return false;
     }
     const d = dist(p.x, p.z, primary.x, primary.z);
     if (d > range) {
@@ -464,7 +477,7 @@ export function resolveTimAbility(
         p.mp += def.mp;
         delete p.recasts[id];
       }
-      return;
+      return false;
     }
     p.facing = hooks.facingTo(p.x, p.z, primary.x, primary.z);
     p.targetId = primary.id;
@@ -472,7 +485,7 @@ export function resolveTimAbility(
     if (id === "split_second") {
       primary.stunUntil = now + (def.durationMs ?? 6_000);
       hooks.pushLog(`Split Second — ${primary.id} is stunned!`);
-      return;
+      return true;
     }
 
     if (id === "dispel") {
@@ -481,7 +494,7 @@ export function resolveTimAbility(
       if (sealBonus) p.timeSealUntil = 0;
       hooks.pushLog(`Dispel shatters chrona — ${dmg} damage, interrupt ${Math.round(interruptMs / 100) / 10}s.`);
       if (primary.hp <= 0) hooks.onMobKill?.(primary);
-      return;
+      return true;
     }
 
     if (def.category === "enfeeble") p.lastEnfeeble = id;
@@ -489,10 +502,11 @@ export function resolveTimAbility(
     applyEnfeeble(primary, id, def, now, dur);
     if (sealBonus) p.timeSealUntil = 0;
     hooks.pushLog(enfeebleLog(id, def.label));
-    return;
+    return true;
   }
 
   hooks.pushLog(`${def.label} has no effect yet.`);
+  return false;
 }
 
 function enfeebleLog(id: TimAbilityId, label: string): string {
