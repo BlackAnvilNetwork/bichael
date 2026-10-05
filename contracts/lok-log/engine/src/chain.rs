@@ -131,7 +131,7 @@ pub fn replay(doc: &LogDocument) -> Result<ReplayReport, ReplayStop> {
             });
         }
         engine
-            .replay_logged(entry.input.clone())
+            .replay_logged(entry.input.clone(), entry.seq)
             .map_err(|reason| ReplayStop::Rejected { index, reason })?;
     }
     Ok(ReplayReport {

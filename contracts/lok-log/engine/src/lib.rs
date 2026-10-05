@@ -9,7 +9,8 @@
 //! Level-up, ability, craft, harvest, loot-drop counters, and bag imports are per character and
 //! do not mint KEK. Bag imports credit items without a chain inbound nonce. Each character has their own hash chain.
 //! `LootDrop` is the loot counter and never credits items. `ItemDrop` is closed for new appends
-//! (`ClosedMint`); entries already on a log replay as the item credit they were when written.
+//! (`ClosedMint`); entries already on a log at `seq <= HISTORICAL_ITEM_DROP_MAX_SEQ` replay as the
+//! item credit they were when written, and any later one is refused even on replay.
 //! A KEK deposit or item import carries that character's inbound nonce and is rejected
 //! if the same nonce is applied again. The nonce must be the next one (`inboundCount`).
 
@@ -34,7 +35,7 @@ pub use chain::{
 };
 pub use checkpoint::{checkpoint_body_hash, eip712_digest, Checkpoint, Export};
 pub use engine::{Engine, EngineError};
-pub use event::{entry_hash, event_id, Input, Outcome};
+pub use event::{entry_hash, event_id, item_drop_credits_at, Input, Outcome, HISTORICAL_ITEM_DROP_MAX_SEQ};
 pub use ids::{fungible_id, genesis_root, genesis_tag, spawn_tag, unique_id, world_genesis};
 pub use state::{commit_entries, label_key, Key, State};
 pub use u256::{parse_address, parse_b256, U256};

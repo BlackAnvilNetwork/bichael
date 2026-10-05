@@ -46,6 +46,14 @@ Exit 0 prints the head, state root, and summary. Exit 1 is a bad hash. Exit 2 is
 
 `cargo test` fails if the genesis root, item ids (`iron_sword` / 42 and `iron_ore`), or checkpoint body hash drift from the Solidity pins. The digest from `verify.mjs` is pinned too (chain id 31337, verifying contract `0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9`).
 
+## Loot: ItemDrop and LootDrop
+
+`lootDrop` is the loot counter. Like `harvest` it counts and never credits items or KEK; mob loot is logged with it. `itemDrop` is closed for new appends (`ClosedMint`). `itemDrop` entries already on a log at `seq <= HISTORICAL_ITEM_DROP_MAX_SEQ` (174, the last seq of the quarantined pre-#206 live log) replay as the item credit they were when written. A logged `itemDrop` past that seq is refused on replay too, so it cannot mint. Committed entries are never rewritten into `lootDrop`; that would change their hashes. `tests/historical_item_drop.rs` replays fixtures copied from that log.
+
+## Wasm pin
+
+`apps/server/src/lok-vault.ts` pins the sha256 of `pkg/lok_engine.wasm` as `LOCAL_RULESET_WASM_SHA256` next to `LOCAL_RULESET_HASH`, and `apps/server/src/lok-ruleset-pin.test.ts` fails when they disagree. After an engine change, run `node scripts/check-wasm-pin.mjs --install` (rebuilds, copies into `pkg/`, prints the digest), update the pin, and off-local propose a new ruleset hash. `node scripts/check-wasm-pin.mjs` rebuilds and diffs against `pkg/` without installing. A rebuild is byte-identical only on the same toolchain and host paths.
+
 ## Per-character logs
 
 `World` is the API the game server calls. It does not talk to the chain.

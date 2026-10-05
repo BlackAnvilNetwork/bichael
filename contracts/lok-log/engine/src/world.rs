@@ -17,7 +17,7 @@ use crate::abi::keccak256;
 use crate::chain::{Chain, CharacterLogDocument, LoggedEntry, ReplayStop, WorldDocument};
 use crate::checkpoint::{Checkpoint, Export};
 use crate::engine::{parse_label, EngineError};
-use crate::event::{entry_hash, Input};
+use crate::event::{entry_hash, item_drop_credits_at, Input};
 use crate::ids::{genesis_root, world_genesis};
 use crate::state::{label_key, Key, State};
 use crate::u256::U256;
@@ -482,7 +482,7 @@ impl World {
         let touch = self.affected(&input)?;
         let characters = self.characters.clone();
         let listings = self.listings.clone();
-        if let Err(err) = self.effects(&input, &touch) {
+        if let Err(err) = self.effects(&input, &touch, None) {
             self.characters = characters;
             self.listings = listings;
             return Err(err);
@@ -761,7 +761,9 @@ impl World {
                     });
                 }
             }
-            world.effects(&input, &touch).map_err(|reason| ReplayStop::Rejected { index: seq, reason })?;
+            world
+                .effects(&input, &touch, Some(seq))
+                .map_err(|reason| ReplayStop::Rejected { index: seq, reason })?;
             let event = world.link_at(&input, &touch, seq);
             for link in &event.links {
                 let expected = tokens[&link.token_id];
@@ -884,8 +886,9 @@ impl World {
                 }
                 touch.insert(*token_id);
             }
-            // A new ItemDrop append is closed. Committed ItemDrop entries replay through
-            // load() -> effects(), which never calls affected(), so they still credit.
+            // A new ItemDrop append is closed. Logged ItemDrop entries replay through
+            // load() -> effects(), which never calls affected(); effects() credits them only at
+            // seq <= HISTORICAL_ITEM_DROP_MAX_SEQ.
             Input::ItemDrop { .. } => return Err(EngineError::ClosedMint),
             Input::LootDrop { token_id, item_id, amount } => {
                 if *amount == U256::ZERO {
@@ -1083,7 +1086,8 @@ impl World {
         Ok(touch)
     }
 
-    fn effects(&mut self, input: &Input, touch: &BTreeSet<U256>) -> Result<(), EngineError> {
+    /// `logged_seq` is the entry's seq when replaying a log (`load`) and `None` for a new append.
+    fn effects(&mut self, input: &Input, touch: &BTreeSet<U256>, logged_seq: Option<u64>) -> Result<(), EngineError> {
         match input {
             Input::Spawn { token_id, starting_job } => {
                 if !touch.contains(token_id) {
@@ -1186,7 +1190,11 @@ impl World {
                 Ok(())
             }
             Input::ItemDrop { token_id, item_id, amount } => {
-                // Historical log entries still credit. affected() refuses a new append.
+                // Historical log entries (seq <= HISTORICAL_ITEM_DROP_MAX_SEQ) still credit.
+                // A later logged ItemDrop is refused even on replay. affected() refuses a new append.
+                if !logged_seq.is_some_and(item_drop_credits_at) {
+                    return Err(EngineError::ClosedMint);
+                }
                 if touch.contains(token_id) {
                     self.credit_item(*token_id, *item_id, *amount)?;
                 }

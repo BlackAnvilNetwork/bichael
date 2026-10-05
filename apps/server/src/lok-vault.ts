@@ -5,6 +5,16 @@ import { join } from "node:path";
 /** Accepted on the local anvil only. Not a mainnet ruleset. */
 export const LOCAL_RULESET_HASH = "0x5d9ceefcea8710b7a205f925e26aecb17a3c83aa4b668d12fb76ffafeda3bd38";
 
+/**
+ * sha256 of the checked-in engine bundle (contracts/lok-log/engine/pkg/lok_engine.wasm) that
+ * checkpoints signed under LOCAL_RULESET_HASH are computed with. LOCAL_RULESET_HASH is an opaque id
+ * registered on the local anvil; it is not derived from the wasm, so this pin is the binding.
+ * lok-ruleset-pin.test.ts fails when the checked-in wasm drifts from it. When the engine changes on
+ * purpose: rebuild the wasm, run contracts/lok-log/engine/scripts/check-wasm-pin.mjs, update this pin,
+ * and on any non-local network propose a new ruleset hash for the new bundle.
+ */
+export const LOCAL_RULESET_WASM_SHA256 = "ee51c9a825f974715f4fa34d6d45137c88a9e44df676e624dd5298c850805fd2";
+
 const CHECKPOINT_TUPLE =
   "(bytes32,bytes32,uint64,uint64,bytes32,bytes32,uint256,uint64,uint256,(uint256,uint32)[])";
 

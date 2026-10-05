@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::chain::Chain;
-use crate::event::{entry_hash, Input, Outcome};
+use crate::event::{entry_hash, item_drop_credits_at, Input, Outcome};
 use crate::ids::genesis_root;
 use crate::state::{label_key, Key, State};
 use crate::u256::U256;
@@ -53,8 +53,9 @@ pub enum EngineError {
     InsufficientInbox,
     /// The ask was recorded without a server timestamp.
     BadClock,
-    /// A new ItemDrop append must not credit an arbitrary item onto the log.
-    /// ItemDrop entries already on a log still replay as the credit they were. New loot is `LootDrop`.
+    /// A new ItemDrop append must not credit an arbitrary item onto the log, and neither may a
+    /// logged ItemDrop past `HISTORICAL_ITEM_DROP_MAX_SEQ`. Earlier logged ItemDrop entries still
+    /// replay as the credit they were. New loot is `LootDrop`.
     ClosedMint,
     /// A fill priced above the selected ask. The buyer pays the ask.
     OverAsk,
@@ -148,16 +149,17 @@ impl Engine {
 
     /// Append a new event. A new `ItemDrop` is refused (`ClosedMint`); mob loot is `LootDrop`.
     pub fn apply(&mut self, input: Input) -> Result<Outcome, EngineError> {
-        self.apply_with(input, false)
+        self.apply_with(input, None)
     }
 
-    /// Re-apply an entry that is already on a committed log. It applies exactly as it did when it
-    /// was written, so a historical `ItemDrop` still credits spendable items.
-    pub fn replay_logged(&mut self, input: Input) -> Result<Outcome, EngineError> {
-        self.apply_with(input, true)
+    /// Re-apply an entry that is already on a log, at its global `seq`. It applies exactly as it
+    /// did when it was written, so an `ItemDrop` at `seq <= HISTORICAL_ITEM_DROP_MAX_SEQ` still
+    /// credits spendable items. A later `ItemDrop` is refused (`ClosedMint`).
+    pub fn replay_logged(&mut self, input: Input, seq: u64) -> Result<Outcome, EngineError> {
+        self.apply_with(input, Some(seq))
     }
 
-    fn apply_with(&mut self, input: Input, logged: bool) -> Result<Outcome, EngineError> {
+    fn apply_with(&mut self, input: Input, logged: Option<u64>) -> Result<Outcome, EngineError> {
         let saved = self.state.clone();
         if let Err(err) = self.apply_local(&input, logged) {
             self.state = saved;
@@ -182,7 +184,8 @@ impl Engine {
     /// Sends debit or credit only this side. The counterparty's log carries the same payload
     /// and applies the other side. List, bid, cancel, and settle need the shared listing book,
     /// so they are appended by `World` rather than here.
-    fn apply_local(&mut self, input: &Input, logged: bool) -> Result<(), EngineError> {
+    /// `logged` is the entry's global seq on the replay path and `None` for a new append.
+    fn apply_local(&mut self, input: &Input, logged: Option<u64>) -> Result<(), EngineError> {
         match input {
             Input::Spawn { token_id, starting_job } => {
                 if token_id != &self.token_id || *starting_job != self.starting_job {
@@ -221,8 +224,11 @@ impl Engine {
             Input::LearnAbility { token_id, ability_id } => self.learn(*token_id, ability_id),
             Input::Craft { token_id, item_id, amount } => self.note_craft(*token_id, *item_id, *amount),
             Input::Harvest { token_id, material_id, amount } => self.note_harvest(*token_id, material_id, *amount),
-            // Historical entries keep their original meaning (credit). New appends are closed.
-            Input::ItemDrop { token_id, item_id, amount } if logged => self.drop_item(*token_id, *item_id, *amount),
+            // Historical entries keep their original meaning (credit). New appends, and any
+            // logged ItemDrop past HISTORICAL_ITEM_DROP_MAX_SEQ, are closed.
+            Input::ItemDrop { token_id, item_id, amount } if logged.is_some_and(item_drop_credits_at) => {
+                self.drop_item(*token_id, *item_id, *amount)
+            }
             Input::ItemDrop { .. } => Err(EngineError::ClosedMint),
             Input::LootDrop { token_id, item_id, amount } => self.note_drop(*token_id, *item_id, *amount),
             Input::CraftSkill { token_id, skill_id, level } => self.note_craft_skill(*token_id, skill_id, *level),

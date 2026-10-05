@@ -4,6 +4,25 @@ use crate::abi::{keccak256, Buf};
 use crate::ids::spawn_tag;
 use crate::u256::U256;
 
+/// Last global `seq` of the quarantined pre-#206 live log
+/// (`apps/server/data/lok-world.json.bak-pre-aacc7c8-20261005-151212`: 175 entries, seq 0..=174,
+/// 32 `ItemDrop` entries, the last at seq 72).
+///
+/// A logged `ItemDrop` at or below this seq replays as the item credit it was when written.
+/// An `ItemDrop` above it is refused with `ClosedMint` even on the replay path, so an entry added
+/// later with a valid hash chain cannot mint items. New appends are refused at any seq; mob loot
+/// is `LootDrop`. Never raise this value.
+///
+/// `seq` is replay order and is not part of the entry hash. This bound stops new and later
+/// `ItemDrop` entries; it does not authenticate a log rebuilt from genesis. Committed
+/// `logHash` / `stateRoot` checkpoints do that.
+pub const HISTORICAL_ITEM_DROP_MAX_SEQ: u64 = 174;
+
+/// True when a logged `ItemDrop` at `seq` keeps its historical meaning (credit).
+pub fn item_drop_credits_at(seq: u64) -> bool {
+    seq <= HISTORICAL_ITEM_DROP_MAX_SEQ
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input {
     /// First log event. Must name the same token and job the genesis anchor was built from.
@@ -40,9 +59,10 @@ pub enum Input {
     Craft { token_id: U256, item_id: U256, amount: U256 },
     /// A successful gather. Counts the material. Does not credit spendable items or KEK.
     Harvest { token_id: U256, material_id: String, amount: U256 },
-    /// Historical loot credit. Entries already on a log replay exactly as they were written:
-    /// they credit spendable items (not KEK). New appends are refused with `ClosedMint`;
-    /// mob loot is logged as `LootDrop` instead. Do not reinterpret committed entries.
+    /// Historical loot credit. Entries already on a log at `seq <= HISTORICAL_ITEM_DROP_MAX_SEQ`
+    /// replay exactly as they were written: they credit spendable items (not KEK). Any later
+    /// `ItemDrop`, and every new append, is refused with `ClosedMint`; mob loot is `LootDrop`.
+    /// Do not reinterpret committed entries.
     ItemDrop { token_id: U256, item_id: U256, amount: U256 },
     /// Loot drop counter. Like Harvest: records the drop, does not credit spendable items or KEK.
     LootDrop { token_id: U256, item_id: U256, amount: U256 },
