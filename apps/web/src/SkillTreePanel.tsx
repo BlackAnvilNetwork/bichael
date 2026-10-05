@@ -9,6 +9,8 @@ import {
   freeSkillHubs,
   skillHubForJob,
   skillPointsEarned,
+  skillNodeCost,
+  skillPointsSpentOnTree,
   type JobId,
   type SkillNode,
 } from "@bellgrave/combat";
@@ -101,7 +103,7 @@ export function SkillTreePanel({ onClose }: Props) {
     () => new Set(you ? freeSkillHubs(you.job, you.subjob, you.skillUnlocked) : []),
     [you?.job, you?.subjob, you?.skillUnlocked],
   );
-  const spent = you ? you.skillUnlocked.filter((id) => !freeHubs.has(id)).length : 0;
+  const spent = you ? skillPointsSpentOnTree(you.skillUnlocked, you.job, you.subjob) : 0;
   const earned = you ? skillPointsEarned(you.level, you.skillPrestige) : 0;
   const remaining =
     you && typeof you.skillPoints === "number"
@@ -484,10 +486,14 @@ export function SkillTreePanel({ onClose }: Props) {
                   <button
                     type="button"
                     className="cmd-mini-btn on skill-tree-unlock"
-                    disabled={remaining <= 0}
+                    disabled={remaining < skillNodeCost(selectedNode.id)}
                     onClick={() => send({ type: "skill/unlock", nodeId: selectedNode.id })}
                   >
-                    {remaining > 0 ? "Unlock · 1 point" : "No points left"}
+                    {skillNodeCost(selectedNode.id) === 0
+                      ? "Unlock · free heart"
+                      : remaining >= skillNodeCost(selectedNode.id)
+                        ? `Unlock · ${skillNodeCost(selectedNode.id)} point`
+                        : "No points left"}
                   </button>
                 ) : (
                   <div className="skill-tree-status locked">Reach a connected node first</div>

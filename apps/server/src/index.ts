@@ -46,6 +46,8 @@ import {
   skillPointsEarned,
   skillPointsGrantedForLevels,
   skillPointsSpentOnTree,
+  skillNodeCost,
+  skillPointsAvailable,
   subjobLevel,
   swingDelayMs,
   resolveSwingDelayMs,
@@ -512,6 +514,8 @@ function reconcilePlayers(world: LokWorld): number {
     abilitiesOf: (id) => world.abilitiesOf(id),
     isLearnedAbility: (id) => isAbilityId(id),
     isSkillNode: (id) => isSkillNodeId(id),
+    // Same cost table as unlocks: hearts are free, other nodes cost 1 (#75).
+    isFreeNode: (id) => skillNodeCost(id) === 0,
     craftSkillsOf: (id) => world.craftSkillsOf(id),
     droppedOf: (id) => world.droppedSkillsOf(id),
     recordNode: (id, nodeId) => world.learnAbility(id, nodeId),
@@ -577,7 +581,7 @@ function rememberPlayer(p: Player) {
       craftSkills: p.craftSkills,
       learned: [...p.learned],
       skillUnlocked: [...p.skillUnlocked],
-      skillPoints: p.skillPoints,
+      skillPoints: skillPointsRemaining(p),
       skillPrestige: p.skillPrestige,
       freeStats: { ...p.freeStats },
       freeStatPoints: p.freeStatPoints,
@@ -2323,7 +2327,7 @@ function snapshotFor(p: Player): SnapshotMessage {
       unlocked,
       learned: learned as AbilityId[],
       skillUnlocked: [...p.skillUnlocked],
-      skillPoints: p.skillPoints,
+      skillPoints: skillPointsRemaining(p),
       skillPrestige: p.skillPrestige,
       freeStatPoints: p.freeStatPoints,
       freeStats: { ...p.freeStats },
@@ -2594,22 +2598,25 @@ function playerTreeBonuses(p: Player) {
   return aggregateSkillBonuses(p.skillUnlocked);
 }
 
+/**
+ * Unspent tree points. Always recomputed from level, echoes, and the owned
+ * nodes priced by skillNodeCost, so the bank, the UI, and respec agree and a
+ * heart can never burn a point (#75). Also repairs older saves.
+ */
 function skillPointsRemaining(p: Player): number {
-  ensureSkillPointBank(p);
-  return Math.max(0, p.skillPoints);
+  p.skillPoints = skillPointsAvailable(p.level, p.skillPrestige, p.skillUnlocked);
+  return p.skillPoints;
 }
 
-/** Backfill bank for older sessions that only tracked level/spent. */
+/** Backfill / repair the bank for older sessions. */
 function ensureSkillPointBank(p: Player) {
-  if (typeof p.skillPoints === "number" && Number.isFinite(p.skillPoints)) return;
-  const spent = skillPointsSpentOnTree(p.skillUnlocked, p.job, p.subjob);
-  p.skillPoints = Math.max(0, skillPointsEarned(p.level, p.skillPrestige) - spent);
+  skillPointsRemaining(p);
 }
 
+/** Level-ups and echoes raise lifetime points; the bank follows from them. */
 function grantSkillPoints(p: Player, amount: number) {
   if (amount <= 0) return;
-  ensureSkillPointBank(p);
-  p.skillPoints += amount;
+  skillPointsRemaining(p);
 }
 
 function ensureMainHub(p: Player) {
@@ -3182,12 +3189,15 @@ function handleSkillUnlock(p: Player, nodeId: string) {
     pushLog(p, "That node is not connected to your path yet.");
     return;
   }
-  if (skillPointsRemaining(p) <= 0) {
+  // One cost table for server and UI (#75): hearts are free, other nodes cost 1.
+  const cost = skillNodeCost(nodeId);
+  if (cost > skillPointsRemaining(p)) {
     pushLog(p, "No skill points left. Level up or earn echoes after max level.");
     return;
   }
-  p.skillPoints -= 1;
   p.skillUnlocked.push(nodeId);
+  // Deduct by recomputing from the same table, in the same synchronous step.
+  skillPointsRemaining(p);
   logLokAbility(p, nodeId);
   syncVitals(p, false);
   const node = SKILL_NODES[nodeId]!;

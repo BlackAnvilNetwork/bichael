@@ -538,10 +538,34 @@ export function skillPointsGrantedForLevels(fromLevel: number, toLevel: number):
   return Math.max(0, b - a) * SKILL_POINTS_PER_LEVEL;
 }
 
+/** @deprecated Use skillPointsSpentOnTree — same cost table. */
 export function skillPointsSpent(unlocked: readonly string[]): number {
-  // Hub for main is free — counted only if we track freeHub separately.
-  // Callers pass unlocked excluding free hub, OR we subtract hubs.
-  return unlocked.length;
+  return skillPointsSpentOnTree(unlocked);
+}
+
+/** Points a normal (non-heart) node costs. */
+export const SKILL_NODE_COST = 1;
+
+/**
+ * The one skill-tree cost table (#75). Server unlocks, the bank, respec,
+ * log hydration, and the UI all read node prices from here.
+ * Hearts (job hubs) are always free: the main and support hearts are granted,
+ * and any other heart opens once you own a linked skill. Every other node
+ * costs SKILL_NODE_COST. Unknown ids cost nothing.
+ */
+export function skillNodeCost(nodeId: string): number {
+  const node = SKILL_NODES[nodeId];
+  if (!node) return 0;
+  return node.hub ? 0 : SKILL_NODE_COST;
+}
+
+/** Unspent points: lifetime earned minus what the owned nodes cost. Never negative. */
+export function skillPointsAvailable(
+  level: number,
+  prestige: number,
+  unlocked: readonly string[],
+): number {
+  return Math.max(0, skillPointsEarned(level, prestige) - skillPointsSpentOnTree(unlocked));
 }
 
 export function aggregateSkillBonuses(unlocked: readonly string[]): AggregatedSkillBonuses {
@@ -604,8 +628,9 @@ export function initialUnlockedForJob(job: JobId): string[] {
 }
 
 /**
- * Hearts that do not cost points: current main + support, plus any heart
- * already unlocked (survives main/support swaps — never strip progress).
+ * Hearts the player has (or is granted) for free: current main + support,
+ * plus any heart already unlocked (survives main/support swaps — never strip
+ * progress). Every heart costs 0 in skillNodeCost, so this agrees with it.
  */
 export function freeSkillHubs(
   main: JobId,
@@ -620,13 +645,20 @@ export function freeSkillHubs(
   return [...hubs];
 }
 
+/** Points spent on the owned nodes, priced by skillNodeCost. Duplicates count once. */
 export function skillPointsSpentOnTree(
   unlocked: readonly string[],
-  main: JobId,
-  sub?: JobId | null,
+  _main?: JobId | string,
+  _sub?: JobId | string | null,
 ): number {
-  const free = new Set(freeSkillHubs(main, sub, unlocked));
-  return unlocked.filter((id) => !free.has(id)).length;
+  let spent = 0;
+  const seen = new Set<string>();
+  for (const id of unlocked) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    spent += skillNodeCost(id);
+  }
+  return spent;
 }
 
 export type FreeStatAlloc = Partial<Record<AttrKey, number>>;
