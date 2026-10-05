@@ -124,6 +124,7 @@ import {
 } from "./starter-kit";
 import { createPaleHollowMobs, createPaleHollowNodes, relocateGatherNode, type FieldNode } from "./pale-hollow-world";
 import { steerMobStep } from "./mob-steer";
+import { withinEngageRange } from "./engage-range";
 import { GATHER_RANGE, beginGatherChannel, tickGatherChannel, type GatherChannel } from "./gather-channel";
 import {
   MOB_CAST_ANIM_MS,
@@ -4581,7 +4582,10 @@ function onMessage(ws: WebSocket, data: string) {
       break;
     case "engage": {
       const mob = findMob(msg.targetId);
-      if (mob && mob.alive) {
+      if (mob && mob.alive && !withinEngageRange(p.x, p.z, mob.x, mob.z)) {
+        // #62: no pulling or hate on mobs across the map.
+        pushLog(p, `${mob.name} is too far away to engage.`);
+      } else if (mob && mob.alive) {
         stopRest(p, "You break rest to engage.");
         p.targetId = mob.id;
         pullMobOn(mob, p.wallet, Date.now());
