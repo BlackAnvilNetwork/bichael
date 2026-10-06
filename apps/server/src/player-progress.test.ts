@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { LokWorld } from "./lok-world";
 import {
@@ -9,6 +9,9 @@ import {
   hydrateCraftSkills,
   hydrateLearnedFromLog,
   hydrateSkillTree,
+  isPlaceholderCharId,
+  playerProgressPath,
+  progressFileName,
   readPlayerProgress,
   reconcileCharacterProgress,
   rememberLedger,
@@ -446,4 +449,41 @@ test("payAndClear failure spends nothing and does not apply", async () => {
   assert.equal(failed.ok, false);
   assert.equal(calls, 1);
   assert.equal(applied, false);
+});
+
+test("progress file names never carry a colon or a path separator", () => {
+  assert.equal(progressFileName("c_murp47qz_sstxhf"), "c_murp47qz_sstxhf.json");
+  assert.equal(progressFileName("replayed:1"), "replayed%3A1.json");
+  assert.equal(progressFileName("../x"), "%2E%2E%2Fx.json");
+  assert.equal(progressFileName("a\\b"), "a%5Cb.json");
+  const p = playerProgressPath(join("data"), "replayed:11");
+  assert.equal(basename(p), "replayed%3A11.json");
+  assert.ok(!basename(p).includes(":"));
+  assert.ok(isPlaceholderCharId("replayed:3"));
+  assert.ok(!isPlaceholderCharId("c_mutk12kh_u0b829"));
+});
+
+test("a replayed placeholder row gets no save and exports nothing off the log", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lok-placeholder-"));
+  const lok = LokWorld.open(dir, undefined, {});
+  assert.ok(lok.spawn("c_real", "Real", 0).ok);
+  const token = lok.tokenFor("c_real")!;
+  let exports = 0;
+  const args = reconcileArgs(dir, lok);
+  const rows = reconcileCharacterProgress({
+    ...args,
+    chars: [{ charId: "replayed:" + token, tokenId: token }, ...args.chars],
+    exportItem: (id: string, itemId: string, amount: string) => {
+      exports++;
+      return lok.exportItem(id, itemId, amount);
+    },
+  });
+  assert.deepEqual(
+    rows.map((r) => r.charId),
+    ["c_real"],
+  );
+  const files = existsSync(join(dir, "players")) ? readdirSync(join(dir, "players")) : [];
+  assert.ok(files.every((f) => !f.startsWith("replayed")), "no placeholder save: " + files.join(","));
+  assert.ok(files.includes("c_real.json"));
+  assert.equal(exports, 0);
 });

@@ -35,8 +35,24 @@ export type PlayerProgress = {
   logCopied?: Record<string, number>;
 };
 
+/** Bind rows the log replayed without a known character. They have no save of their own. */
+export const PLACEHOLDER_CHAR_PREFIX = "replayed:";
+
+export function isPlaceholderCharId(charId: string): boolean {
+  return charId.startsWith(PLACEHOLDER_CHAR_PREFIX);
+}
+
+/**
+ * Character ids become file names. Anything outside [A-Za-z0-9_-] is percent-escaped, so a colon
+ * (an NTFS stream separator) or a path separator can never reach the file system.
+ * Ordinary ids such as `c_murp47qz_sstxhf` map to the same file name as before.
+ */
+export function progressFileName(charId: string): string {
+  return charId.replace(/[^A-Za-z0-9_-]/g, (ch) => "%" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")) + ".json";
+}
+
 export function playerProgressPath(dataDir: string, charId: string): string {
-  return join(dataDir, "players", charId + ".json");
+  return join(dataDir, "players", progressFileName(charId));
 }
 
 function atomicWrite(path: string, text: string): void {
@@ -383,6 +399,9 @@ export function reconcileCharacterProgress(args: {
 }): { charId: string; moved: number; learned: number }[] {
   const moved: { charId: string; moved: number; learned: number }[] = [];
   for (const row of args.chars) {
+    // A replayed placeholder has no character to load. Writing a save or exporting log items
+    // for it would strand them in a bag nobody can open, so it is left for a real bind.
+    if (isPlaceholderCharId(row.charId)) continue;
     const path = playerProgressPath(args.dir, row.charId);
     const rawAbilities = args.abilitiesOf(row.tokenId);
     const learnedIds = rawAbilities.filter((id) => {
