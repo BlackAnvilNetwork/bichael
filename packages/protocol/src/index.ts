@@ -85,7 +85,7 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("party/leave") }),
   z.object({ type: z.literal("party/kick"), targetId: z.string().min(1).max(64) }),
   z.object({ type: z.literal("party/disband") }),
-  /** Refused by the server. Item credits require a custody nonce the client cannot supply. Not a KEK mint. */
+  /** Moves a stack from the character bag into its log (ImportItem with no inbound nonce, #206). Not a KEK mint. */
   z.object({
     type: z.literal("lok/import"),
     tokenId: z.number().int().positive(),
@@ -110,7 +110,7 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
     to: z.string().min(1).max(64),
     amount: z.string().regex(/^[1-9][0-9]{0,18}$/),
   }),
-  /** Refused until a vault withdrawal is queued. Does not debit in-game KEK. */
+  /** Appends the WithdrawKek debit, then queues the vault withdrawal. A definite refusal undoes the debit. */
   z.object({
     type: z.literal("lok/withdrawKek"),
     amount: z.string().regex(/^[1-9][0-9]{0,18}$/),
@@ -586,5 +586,5 @@ export function emptyBuffs(): BuffState {
   };
 }
 
-export { compareAsks, planQuantityFills } from "./auction-book";
+export { compareAsks, MAX_QUANTITY_FILLS, planQuantityFills } from "./auction-book";
 export type { AskQuote, PlannedFill, QuantityPlan } from "./auction-book";

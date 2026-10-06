@@ -1,8 +1,18 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LokListingView, LokSnapshot } from "@bellgrave/protocol";
 import { characterNameKey, normalizeCharacterName } from "./character-name";
+import { acquireDataDirLock } from "./data-dir-lock";
 import { exploreDocument, type LokExplorePage } from "./lok-explore";
 import { defaultWasmPath, loadLokExports, lokCall, lokOut, type LokExports } from "./lok-engine";
 
@@ -118,6 +128,11 @@ export function chainModeFromEnv(env: NodeJS.ProcessEnv = process.env): {
   };
 }
 
+/** Filesystem-safe timestamp for backup file names (no ':' so it works on Windows). */
+function fileStamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
 function atomicWrite(path: string, text: string) {
   const tmp = path + ".tmp";
   writeFileSync(tmp, text);
@@ -165,6 +180,7 @@ export class LokWorld {
 
   private constructor(dataDir: string, wasmPath: string, env: NodeJS.ProcessEnv) {
     mkdirSync(dataDir, { recursive: true });
+    acquireDataDirLock(dataDir, env);
     this.logPath = join(dataDir, "lok-world.json");
     this.journalPath = join(dataDir, "lok-world.jsonl");
     this.bindPath = join(dataDir, "lok-bind.json");
@@ -860,15 +876,28 @@ export class LokWorld {
     this.length = body.len ?? 0;
   }
 
-  /** Replay journal lines that were appended after the snapshot's cursor. */
+  /**
+   * Replay journal lines that were appended after the snapshot's cursor.
+   *
+   * A crash mid-append can leave a torn final line. That line never reached the
+   * engine, so it is dropped: the file is backed up to lok-world.jsonl.torn-<stamp>
+   * and truncated to the last newline, so the next append starts on a clean line
+   * instead of concatenating onto the fragment (which made the following restart
+   * throw "lok journal is corrupt" and lose that next event).
+   *
+   * Every line carries the log length after it was applied (`seq`). Replay checks
+   * it, so a duplicated line, a reordered tail, or a snapshot paired with the wrong
+   * journal fails loudly instead of silently re-applying an event.
+   */
   private replayJournal(cursor: number) {
     if (!existsSync(this.journalPath)) {
       if (cursor !== 0) throw new Error("lok snapshot names a journal that is not on disk");
       this.journalBytes = 0;
       return;
     }
-    const raw = readFileSync(this.journalPath);
+    let raw: Buffer = readFileSync(this.journalPath);
     if (cursor > raw.length) throw new Error("lok journal cursor is past the end of the append log");
+    raw = this.repairJournalTail(raw, cursor);
     this.journalBytes = raw.length;
     const tail = raw.subarray(cursor).toString("utf8");
     if (!tail) return;
@@ -877,20 +906,55 @@ export class LokWorld {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
       if (!line) continue;
-      let rec: { cmd?: Record<string, unknown> };
+      let rec: { seq?: unknown; cmd?: Record<string, unknown> };
       try {
-        rec = JSON.parse(line) as { cmd?: Record<string, unknown> };
+        rec = JSON.parse(line) as { seq?: unknown; cmd?: Record<string, unknown> };
       } catch {
-        if (i === lines.length - 1) break;
         throw new Error("lok journal is corrupt");
       }
       if (!rec.cmd || typeof rec.cmd !== "object") throw new Error("lok journal line has no command");
       const res = this.apply(rec.cmd, false);
       if (!res.ok) throw new Error("lok journal refused: " + res.error);
+      if (typeof rec.seq === "number" && rec.seq !== this.length) {
+        throw new Error(
+          `lok journal seq mismatch: line ${replayed + 1} after the snapshot says seq ${rec.seq} but the log is at ${this.length}. ` +
+            "The journal does not belong to this snapshot or has a duplicated line.",
+        );
+      }
       replayed++;
     }
     this.sinceSnapshot = replayed;
     if (this.sinceSnapshot >= LOG_SNAPSHOT_EVERY) this.snapshotLog();
+  }
+
+  /**
+   * Make the journal end on a newline before anything is replayed or appended.
+   * An unparseable fragment after the last newline is backed up and cut off. A
+   * complete final record that only lacks its newline gets one appended.
+   */
+  private repairJournalTail(raw: Buffer, cursor: number): Buffer {
+    if (raw.length === 0 || raw[raw.length - 1] === 0x0a) return raw;
+    const start = raw.lastIndexOf(0x0a) + 1;
+    const fragment = raw.subarray(start).toString("utf8");
+    let complete = false;
+    try {
+      const rec = JSON.parse(fragment) as { cmd?: unknown };
+      complete = !!rec && typeof rec === "object" && !!rec.cmd && typeof rec.cmd === "object";
+    } catch {
+      complete = false;
+    }
+    if (complete) {
+      appendFileSync(this.journalPath, "\n");
+      return Buffer.concat([raw, Buffer.from("\n")]);
+    }
+    if (start < cursor) throw new Error("lok journal tail is torn inside the snapshot's cursor");
+    const backup = this.journalPath + ".torn-" + fileStamp();
+    copyFileSync(this.journalPath, backup);
+    truncateSync(this.journalPath, start);
+    console.error(
+      `[lok] dropped a torn final journal line (${raw.length - start} bytes) that never reached the engine. Backup: ${backup}`,
+    );
+    return raw.subarray(0, start);
   }
 
   /** Append one event. The full document is rewritten only every LOG_SNAPSHOT_EVERY events. */
@@ -949,6 +1013,17 @@ export class LokWorld {
 
   private reconcileBind() {
     const live = new Set(this.state.characters.map((c) => c.tokenId));
+    const dropped = this.bind.chars.filter((c) => !live.has(c.tokenId));
+    if (dropped.length > 0) {
+      // Rows whose token is not in the log are removed (a recovery to an older
+      // log would otherwise point wallets at tokens that do not exist). Keep a
+      // copy first: those rows are the only record of the wallet and name.
+      const backup = this.bindPath.replace(/\.json$/, "") + ".dropped-" + fileStamp() + ".json";
+      atomicWrite(backup, JSON.stringify({ droppedAt: new Date().toISOString(), logLength: this.length, chars: dropped }, null, 2));
+      console.error(
+        `[lok] ${dropped.length} lok-bind row(s) name tokens that are not in the world log and were removed. Backup: ${backup}`,
+      );
+    }
     this.bind.chars = this.bind.chars.filter((c) => live.has(c.tokenId));
     for (const c of this.state.characters) {
       if (!this.bind.chars.some((row) => row.tokenId === c.tokenId)) {

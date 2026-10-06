@@ -462,12 +462,22 @@ export function loadVaultPending(path: string): VaultSyncOp[] {
     pendingOps = [];
     return pendingOps;
   }
+  let parsed: { ops?: VaultSyncOp[] };
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as { ops?: VaultSyncOp[] };
-    pendingOps = Array.isArray(parsed.ops) ? parsed.ops : [];
+    parsed = JSON.parse(readFileSync(path, "utf8")) as { ops?: VaultSyncOp[] };
   } catch {
+    // Starting with an empty list would overwrite the file on the next enqueue
+    // and silently drop queued sinks/reassigns. Fail loudly like loadQueues.
     pendingOps = [];
+    pendingPath = "";
+    throw new Error(path + " could not be read. Refusing to start with an empty vault pending queue.");
   }
+  if (!parsed || !Array.isArray(parsed.ops)) {
+    pendingOps = [];
+    pendingPath = "";
+    throw new Error(path + " is not a vault pending queue.");
+  }
+  pendingOps = parsed.ops;
   return pendingOps;
 }
 
@@ -711,6 +721,13 @@ export type WithdrawHooks = {
   body?: LogCheckpoint;
   /** Build the body after the on-chain log index is known. A missing body is refused. */
   prepare?: (chain: { fromIndex: string; prevRoot: string }) => LogCheckpoint | undefined;
+  /**
+   * Append the log debit. When set it runs after the read-only chain checks that
+   * commonly refuse (chain id, ruleset accepted) and immediately before `prepare`,
+   * so a refusal does not leave a debit that later has to be popped. The caller
+   * owns undoing it if the result is a definite failure.
+   */
+  debit?: () => { ok: true } | { ok: false; error: string };
 };
 
 export async function queueKekWithdrawal(
@@ -748,6 +765,16 @@ async function queueKekWithdrawalNow(
     const prevRoot = (await call(cast, env.rpc, env.checkpoint, "stateRoot(uint256)(bytes32)", [tokenId])).toLowerCase();
     const fromIndex = await call(cast, env.rpc, env.checkpoint, "logIndex(uint256)(uint64)", [tokenId]);
     const version = await call(cast, env.rpc, env.checkpoint, "version(uint256)(uint32)", [tokenId]);
+    let rulesetChecked = false;
+    if (hooks?.debit) {
+      const acceptedEarly = await call(cast, env.rpc, env.rulesets, "isAccepted(bytes32)(bool)", [LOCAL_RULESET_HASH]);
+      if (acceptedEarly !== "true") {
+        return { ok: false, error: "The local ruleset is not accepted yet. No in-game KEK was spent." };
+      }
+      rulesetChecked = true;
+      const debited = hooks.debit();
+      if (!debited.ok) return { ok: false, error: debited.error };
+    }
     const drafted = hooks?.body ?? hooks?.prepare?.({ fromIndex, prevRoot });
     const ready = checkpointReady(drafted, amount, server);
     if (!ready.ok) return ready;
@@ -761,7 +788,9 @@ async function queueKekWithdrawalNow(
     if (nftOwner !== player) {
       return { ok: false, error: "This character NFT is not held by the player wallet. No in-game KEK was spent." };
     }
-    const accepted = await call(cast, env.rpc, env.rulesets, "isAccepted(bytes32)(bool)", [LOCAL_RULESET_HASH]);
+    const accepted = rulesetChecked
+      ? "true"
+      : await call(cast, env.rpc, env.rulesets, "isAccepted(bytes32)(bool)", [LOCAL_RULESET_HASH]);
     if (accepted !== "true") {
       return { ok: false, error: "The local ruleset is not accepted yet. No in-game KEK was spent." };
     }

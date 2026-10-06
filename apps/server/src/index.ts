@@ -1022,6 +1022,14 @@ function handleLokBuy(p: Player, itemId: number, qty?: number) {
     return;
   }
   void guardedKekMove(token, async () => {
+    // A buy moves vault claims (seller credit, buyer debit) and enqueues a
+    // reassign, so it waits on the same gate as sendKek, spend, and respec.
+    const gate = await vaultClaimBlocked();
+    if (gate.blocked) {
+      pushLog(p, gate.error);
+      send(p.ws, snapshotFor(p));
+      return;
+    }
     if (qty == null) {
       const res = lok.buy(token, String(itemId));
       if (!res.ok) pushLog(p, res.error);
@@ -1050,9 +1058,18 @@ async function queuePlayerWithdrawal(p: Player, token: string, amount: string) {
       error: "Only KEK still credited to this character can be withdrawn. Nothing was queued.",
     };
   }
-  const logged = lok.withdrawKek(token, amount);
-  if (!logged.ok) return { ok: false as const, error: logged.error };
+  // The log debit is appended by the vault hook after the read-only chain checks
+  // (chain id, ruleset accepted), not before them. undoWithdraw can only pop the
+  // last entry, so the shorter the gap between debit and a definite refusal, the
+  // less likely a level-up, loot drop, or incoming send lands in between and
+  // strands the debit. Undo only what this attempt actually appended.
+  let debited = false;
   const res = await queueKekWithdrawal(token, amount, process.env, undefined, {
+    debit: () => {
+      const logged = lok.withdrawKek(token, amount);
+      if (logged.ok) debited = true;
+      return logged;
+    },
     beforeSend: (id) => upsertWithdrawIntent(withdrawIntentPath(defaultLokDir()), { token, amount, id }),
     prepare: (chain) => {
       const drafted = lok.checkpointFor(token, chain.fromIndex);
@@ -1062,7 +1079,7 @@ async function queuePlayerWithdrawal(p: Player, token: string, amount: string) {
       return { player: p.wallet, ...drafted.body };
     },
   });
-  if (!res.ok && !res.uncertain) {
+  if (!res.ok && !res.uncertain && debited) {
     const undone = lok.undoWithdraw(token, amount);
     if (!undone.ok) {
       return {
@@ -1081,7 +1098,13 @@ function handleLokBid(p: Player, itemId: number, amount: string) {
     pushLog(p, "Could not open your log identity.");
     return;
   }
-  void guardedKekMove(token, () => {
+  void guardedKekMove(token, async () => {
+    const gate = await vaultClaimBlocked();
+    if (gate.blocked) {
+      pushLog(p, gate.error);
+      send(p.ws, snapshotFor(p));
+      return;
+    }
     let free = 0n;
     let cost = 0n;
     try {
@@ -2815,6 +2838,16 @@ function handleDiscard(p: Player, tokenId: number, starter: boolean) {
     pushLog(p, "Nothing to discard.");
     return;
   }
+  // Base mats are tracked twice (bag row + baseMats for craft math), and
+  // syncBaseMatsToInventory refills the bag from baseMats on every snapshot.
+  // Without this the discarded stack came straight back and stayed craftable.
+  const discarded = getItem(tokenId);
+  if (!starter && discarded && discarded.kind === "base") {
+    const left = stackAmount(p.inventory, tokenId) - starterAmount(p.inventory, tokenId);
+    if (left > 0) p.baseMats[discarded.slug] = left;
+    else delete p.baseMats[discarded.slug];
+  }
+  rememberPlayer(p);
   if (invAmount(p.inventory, tokenId) <= 0) {
     for (const slot of EQUIP_SLOTS) {
       if (p.equip[slot] === tokenId) p.equip[slot] = null;
@@ -4517,6 +4550,12 @@ function onMessage(ws: WebSocket, data: string) {
         characters,
         character: primary,
       });
+    }).catch((err) => {
+      // A throw after the signature check (for example a corrupt save read by
+      // adoptOrphanLogs/createPlayer) used to be an unhandled rejection, which
+      // terminates the whole Node process and drops every connected player.
+      console.error("[bellgrave] auth handler failed", err);
+      send(ws, { type: "error", message: "Login failed on the server. Nothing was changed; try again." });
     });
     return;
   }
@@ -4563,7 +4602,7 @@ function onMessage(ws: WebSocket, data: string) {
         if (p.ws.readyState !== p.ws.OPEN) return;
         pushLog(p, res.ok ? "Linked character NFT #" + res.tokenId + " on the local checkpoint." : res.error);
         send(p.ws, snapshotFor(p));
-      });
+      }).catch((err) => console.error("[bellgrave] character NFT link failed", err));
     }
     pushLog(
       p,

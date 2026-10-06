@@ -1,5 +1,5 @@
 import { CATALOG, EQUIP_SLOTS, getItem, type EquipSlot, type ItemDef, type ItemKind } from "@bellgrave/items";
-import { compareAsks, planQuantityFills, type AskQuote, type LokListingView, type QuantityPlan } from "@bellgrave/protocol";
+import { compareAsks, MAX_QUANTITY_FILLS, planQuantityFills, type AskQuote, type LokListingView, type QuantityPlan } from "@bellgrave/protocol";
 import { useState } from "react";
 import { ItemCatalogDetails, ItemTipHost } from "./itemTip";
 import { send } from "./net";
@@ -173,7 +173,11 @@ function buyNote(plan: QuantityPlan, qty: number): string {
   if (plan.fills.length === 0) return "No ask you can buy. Your own listings are skipped.";
   const total = sumPrices(plan.fills);
   const over = BigInt(plan.filled) > BigInt(qty) ? " The last stack is taken whole at its own ask." : "";
-  const short = plan.short ? " The book runs out after " + plan.filled + "." : "";
+  const short = plan.capped
+    ? " One buy fills at most " + MAX_QUANTITY_FILLS + " asks, so this click stops after " + plan.filled + ". Buy again for the rest."
+    : plan.short
+      ? " The book runs out after " + plan.filled + "."
+      : "";
   return "Total " + total + " KEK across " + plan.fills.length + " asks. Each ask is charged its own price, not a blended rate." + over + short;
 }
 

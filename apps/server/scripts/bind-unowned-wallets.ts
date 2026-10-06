@@ -6,10 +6,14 @@
  *   pnpm exec tsx scripts/bind-unowned-wallets.ts <0x-wallet> [dataDir]
  *
  * Does not open the lok log, player saves, or any env file.
+ * Refuses while a server holds the data-dir lock: the server keeps lok-bind.json
+ * in memory and rewrites it on the next spawn or rename, so an edit made while
+ * it runs is silently lost (or the server's own update is).
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { dataDirLockedByOther } from "../src/data-dir-lock";
 
 type BindChar = { charId?: string; wallet?: string };
 type BindFile = { chars?: BindChar[] };
@@ -21,6 +25,14 @@ const bindPath = join(dataDir, "lok-bind.json");
 
 if (!/^0x[0-9a-f]{40}$/.test(walletArg)) {
   console.error("Wallet must be a 0x address. Nothing was written.");
+  process.exit(1);
+}
+
+const holder = dataDirLockedByOther(dataDir);
+if (holder) {
+  console.error(
+    "A server (pid " + holder.pid + ", since " + holder.startedAt + ") has this data dir open. Stop it first. Nothing was written.",
+  );
   process.exit(1);
 }
 

@@ -263,7 +263,17 @@ export async function guardedWithdraw(args: {
             /* boot will see the id is not this withdrawal */
           }
           if (!back.ok) return { ok: false, error: "Withdrawal was not on chain and the reserve could not be returned." };
-          return { ok: false, error: "Withdrawal was not queued. Reserved KEK was returned." };
+          // Only the in-process reserve is released here. Any log debit this
+          // attempt appended stays: the send may still land later (a dropped
+          // receipt is not a revert), and undoing the debit then would pay out
+          // the vault withdrawal while leaving the KEK spendable in game.
+          return {
+            ok: false,
+            error:
+              "The vault does not show withdrawal #" +
+              queued.id +
+              " yet. The log debit was kept until an operator checks the chain; spendable KEK was not returned.",
+          };
         }
       }
       return queued;
