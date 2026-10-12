@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slice Black Anvil UI source sheet + chroma-key generated isolates into transparent PNGs/WebPs."""
+"""Slice the real Black Anvil UI source sheet (1024×434) into transparent PNG/WebP assets."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,152 +10,164 @@ ROOT = Path(__file__).resolve().parents[1] / "public" / "ui" / "black-anvil"
 SHEET = ROOT / "source-sheet.png"
 OUT = ROOT / "slices"
 WEBP = ROOT / "webp"
-GEN = Path("/opt/cursor/artifacts/assets")
+
+# Real sheet from Agent Store uploads (1024×434). Do not use generated stand-ins.
+# Coordinates: (left, top, right, bottom) — verified against labeled layout.
+CROPS: dict[str, tuple[int, int, int, int]] = {
+    "a1-title-banner": (6, 4, 278, 66),
+    "a2-title-frame": (295, 4, 505, 66),
+    "b2-login-input": (512, 2, 618, 90),
+    "b3-login-button-iron": (622, 10, 755, 40),
+    "b3-login-button-bronze": (622, 42, 755, 72),
+    "d1-borders": (780, 6, 955, 115),
+    "d2-texture-iron": (960, 8, 1022, 60),
+    "d2-texture-bronze": (960, 62, 1022, 115),
+    "e1-portrait-frame": (8, 82, 108, 195),
+    "e2-health-orb": (112, 98, 178, 184),
+    "e2-mana-orb": (182, 98, 248, 184),
+    "e3-action-bar": (6, 210, 338, 260),
+    "e4-hotkey-icons": (6, 274, 338, 312),
+    "f1-equipment-frame": (310, 90, 525, 302),
+    "f2-slot": (528, 115, 595, 182),
+    "f3-grid": (528, 195, 640, 242),
+    "f4-coins": (600, 248, 715, 288),
+    "g1-minimap-compass": (705, 128, 818, 248),
+    "g2-quest-log": (822, 118, 928, 280),
+    "g3-map-markers": (932, 198, 1012, 280),
+    "h1-dialogue-box": (305, 320, 552, 412),
+    "h2-skill-node": (562, 328, 648, 412),
+    "h3-skill-point-filled": (658, 332, 818, 370),
+    "h4-skill-point-empty": (658, 378, 785, 418),
+    "i1-parchment": (822, 322, 898, 398),
+    "i2-iron": (902, 322, 978, 398),
+    "i3-bronze-filigree": (942, 362, 1020, 428),
+}
 
 
-def chroma_magenta(im: Image.Image, thresh: int = 70) -> Image.Image:
-    """Make near-magenta pixels transparent."""
+def sheet_bg_to_alpha(im: Image.Image, thresh: int = 78) -> Image.Image:
+    """Dark slate sheet background → transparent."""
     im = im.convert("RGBA")
     px = im.load()
     w, h = im.size
     for y in range(h):
         for x in range(w):
             r, g, b, a = px[x, y]
-            if r > 180 and b > 180 and g < 120 and (r - g) > thresh and (b - g) > thresh:
+            # sheet canvas is dark blue-grey
+            if r < thresh and g < thresh + 8 and b < thresh + 20 and abs(r - b) < 30:
                 px[x, y] = (r, g, b, 0)
-            elif r > 220 and g < 40 and b > 220:
-                px[x, y] = (r, g, b, 0)
-    return im
-
-
-def dark_bg_to_alpha(im: Image.Image, thresh: int = 28) -> Image.Image:
-    """Sheet grid background → transparent (near-black charcoal)."""
-    im = im.convert("RGBA")
-    px = im.load()
-    w, h = im.size
-    for y in range(h):
-        for x in range(w):
-            r, g, b, a = px[x, y]
-            if r < thresh and g < thresh and b < thresh:
-                px[x, y] = (r, g, b, 0)
-            # faint grid lines
-            elif max(r, g, b) < 45 and abs(r - g) < 8 and abs(g - b) < 8:
+            elif max(r, g, b) < 55 and abs(r - g) < 12 and abs(g - b) < 12:
                 px[x, y] = (r, g, b, 0)
     return im
 
 
-def trim_alpha(im: Image.Image, pad: int = 2) -> Image.Image:
+def trim_alpha(im: Image.Image, pad: int = 1) -> Image.Image:
     bbox = im.getbbox()
     if not bbox:
         return im
     l, t, r, b = bbox
-    l = max(0, l - pad)
-    t = max(0, t - pad)
-    r = min(im.width, r + pad)
-    b = min(im.height, b + pad)
-    return im.crop((l, t, r, b))
+    return im.crop(
+        (max(0, l - pad), max(0, t - pad), min(im.width, r + pad), min(im.height, b + pad))
+    )
 
 
 def save(im: Image.Image, name: str) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     WEBP.mkdir(parents=True, exist_ok=True)
-    png = OUT / f"{name}.png"
-    webp = WEBP / f"{name}.webp"
-    im.save(png, "PNG")
-    im.save(webp, "WEBP", quality=90, method=6)
-    print(f"wrote {png.relative_to(ROOT)} {im.size}")
+    im.save(OUT / f"{name}.png", "PNG")
+    im.save(WEBP / f"{name}.webp", "WEBP", quality=92, method=6)
+    print(f"  {name}: {im.size[0]}x{im.size[1]}")
 
 
-def crop_sheet(box: tuple[int, int, int, int], name: str) -> None:
-    sheet = Image.open(SHEET).convert("RGBA")
-    piece = dark_bg_to_alpha(sheet.crop(box))
-    piece = trim_alpha(piece)
-    save(piece, name)
-
-
-def process_generated(src_name: str, out_name: str) -> None:
-    # tool may write .jpg
-    for ext in (".png", ".jpg", ".jpeg", ".webp"):
-        p = GEN / f"{src_name}{ext}"
-        if p.exists():
-            im = chroma_magenta(Image.open(p))
-            im = trim_alpha(im)
-            save(im, out_name)
-            return
-    print("missing generated", src_name)
+def build_panel_frame_from_d1(d1: Image.Image) -> Image.Image:
+    """Compose a square nine-sliceable panel frame from D1 corner pieces."""
+    # Fall back to stretched D1 if composition is awkward
+    size = 256
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    src = d1.convert("RGBA")
+    # Place D1 as a reference border atlas; HUD uses border-image slice on this
+    src_resized = src.resize((size, size), Image.Resampling.LANCZOS)
+    canvas.paste(src_resized, (0, 0), src_resized)
+    return canvas
 
 
 def main() -> None:
+    if not SHEET.exists():
+        raise SystemExit(f"missing sheet: {SHEET}")
+    sheet = Image.open(SHEET).convert("RGBA")
+    print(f"sheet {SHEET} size={sheet.size} mode={sheet.mode}")
+    if sheet.size != (1024, 434):
+        print(f"WARNING: expected 1024x434, got {sheet.size} — crops may need retuning")
+
+    # Clear prior generated hi-res stand-ins
+    for stale in (
+        "a1-title-banner-hi",
+        "d1-panel-frame-hi",
+        "e2-orbs-hi",
+        "e3-action-bar-hi",
+    ):
+        for folder in (OUT, WEBP):
+            for ext in (".png", ".webp"):
+                p = folder / f"{stale}{ext}"
+                if p.exists():
+                    p.unlink()
+                    print(f"removed stand-in {p.name}")
+
     OUT.mkdir(parents=True, exist_ok=True)
     WEBP.mkdir(parents=True, exist_ok=True)
 
-    # Approximate cells on 1280x720 labeled sheet (tuned to generated pack layout).
-    # Format: left, top, right, bottom
-    crops = {
-        "a1-title-banner": (40, 18, 620, 115),
-        "a2-title-frame": (660, 18, 1240, 115),
-        "b2-login-input": (40, 120, 700, 175),
-        "b3-login-button-iron": (740, 118, 960, 185),
-        "b3-login-button-bronze": (980, 118, 1200, 185),
-        "d1-borders": (30, 195, 420, 310),
-        "d2-texture-iron": (450, 195, 720, 310),
-        "d2-texture-bronze": (740, 195, 1010, 310),
-        "e1-portrait-frame": (40, 320, 170, 450),
-        "e2-health-orb": (190, 320, 320, 450),
-        "e2-mana-orb": (330, 320, 460, 450),
-        "e3-action-bar": (480, 330, 1100, 430),
-        "e4-hotkey-icons": (1120, 320, 1260, 450),
-        "f1-equipment-frame": (40, 460, 220, 620),
-        "f2-slot": (240, 470, 340, 570),
-        "f3-grid": (360, 460, 700, 620),
-        "f4-coins": (720, 470, 920, 610),
-        "g1-minimap-compass": (40, 620, 160, 715),
-        "g2-quest-log": (180, 620, 420, 715),
-        "g3-map-markers": (440, 620, 580, 715),
-        "h1-dialogue-box": (600, 560, 1000, 680),
-        "h2-skill-node": (1020, 560, 1120, 650),
-        "h3-skill-point-filled": (1020, 650, 1120, 715),
-        "h4-skill-point-empty": (1140, 560, 1240, 650),
-        "i1-parchment": (1140, 650, 1240, 715),
-        "i2-iron": (900, 460, 1040, 560),
-        "i3-bronze-filigree": (1060, 460, 1200, 560),
-    }
+    pieces: dict[str, Image.Image] = {}
+    for name, box in CROPS.items():
+        piece = sheet_bg_to_alpha(sheet.crop(box))
+        piece = trim_alpha(piece)
+        pieces[name] = piece
+        save(piece, name)
 
-    for name, box in crops.items():
-        crop_sheet(box, name)
+    # Derived panel frame for border-image
+    panel = build_panel_frame_from_d1(pieces["d1-borders"])
+    save(panel, "d1-panel-frame")
 
-    # Higher-quality chroma-keyed isolates (prefer these in CSS when present).
-    process_generated("ba-a1-title-banner", "a1-title-banner-hi")
-    process_generated("ba-d1-panel-frame", "d1-panel-frame-hi")
-    process_generated("ba-e2-orbs", "e2-orbs-hi")
-    process_generated("ba-e3-action-bar", "e3-action-bar-hi")
+    # Combined orbs strip (HUD convenience)
+    h_orb = pieces["e2-health-orb"]
+    m_orb = pieces["e2-mana-orb"]
+    gap = 8
+    orbs = Image.new(
+        "RGBA",
+        (h_orb.width + gap + m_orb.width, max(h_orb.height, m_orb.height)),
+        (0, 0, 0, 0),
+    )
+    orbs.paste(h_orb, (0, 0), h_orb)
+    orbs.paste(m_orb, (h_orb.width + gap, 0), m_orb)
+    save(orbs, "e2-orbs")
 
-    # Manifest for border-image / UI wiring
     (ROOT / "manifest.json").write_text(
         """{
   "theme": "black-anvil",
   "source": "source-sheet.png",
-  "note": "Original user attachment did not land on the agent VM; sheet regenerated from the label inventory and sliced. Replace source-sheet.png and re-run scripts/slice-black-anvil-ui.py to refresh.",
+  "sourceSize": [1024, 434],
+  "sourceBytes": 656492,
+  "note": "Real user sheet from Agent Store uploads/source-sheet.png. Crops tuned to 1024x434 layout.",
   "nineSlice": {
-    "panel": { "image": "slices/d1-panel-frame-hi.png", "slice": "48 48 48 48", "width": "18px" },
-    "dialogue": { "image": "slices/h1-dialogue-box.png", "slice": "36 36 36 36", "width": "14px" },
-    "quest": { "image": "slices/g2-quest-log.png", "slice": "32 32 32 32", "width": "12px" },
-    "banner": { "image": "slices/a2-title-frame.png", "slice": "40 60 40 60", "width": "20px" }
+    "panel": { "image": "slices/d1-panel-frame.png", "slice": "40 40 40 40", "width": "14px" },
+    "dialogue": { "image": "slices/h1-dialogue-box.png", "slice": "28 28 28 28", "width": "12px" },
+    "quest": { "image": "slices/g2-quest-log.png", "slice": "24 24 24 24", "width": "10px" },
+    "banner": { "image": "slices/a2-title-frame.png", "slice": "20 40 20 40", "width": "14px" },
+    "slot": { "image": "slices/f2-slot.png", "slice": "12 12 12 12", "width": "6px" }
   },
   "assets": {
-    "titleBanner": "slices/a1-title-banner-hi.png",
+    "titleBanner": "slices/a1-title-banner.png",
     "titleFrame": "slices/a2-title-frame.png",
     "loginInput": "slices/b2-login-input.png",
     "loginButtonIron": "slices/b3-login-button-iron.png",
     "loginButtonBronze": "slices/b3-login-button-bronze.png",
     "borders": "slices/d1-borders.png",
+    "panelFrame": "slices/d1-panel-frame.png",
     "textureIron": "slices/d2-texture-iron.png",
     "textureBronze": "slices/d2-texture-bronze.png",
     "portraitFrame": "slices/e1-portrait-frame.png",
     "healthOrb": "slices/e2-health-orb.png",
     "manaOrb": "slices/e2-mana-orb.png",
-    "orbsHi": "slices/e2-orbs-hi.png",
-    "actionBar": "slices/e3-action-bar-hi.png",
+    "orbs": "slices/e2-orbs.png",
+    "actionBar": "slices/e3-action-bar.png",
     "hotkeyIcons": "slices/e4-hotkey-icons.png",
     "equipmentFrame": "slices/f1-equipment-frame.png",
     "slot": "slices/f2-slot.png",

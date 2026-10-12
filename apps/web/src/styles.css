@@ -20,13 +20,13 @@
   --ba-iron: #2a2826;
   --ba-bronze: #b8924a;
   --ba-parchment: #c2a878;
-  --ba-frame: url("/ui/black-anvil/slices/d1-panel-frame-hi.png");
-  --ba-action-bar: url("/ui/black-anvil/slices/e3-action-bar-hi.png");
+  --ba-frame: url("/ui/black-anvil/slices/d1-panel-frame.png");
+  --ba-action-bar: url("/ui/black-anvil/slices/e3-action-bar.png");
   --ba-dialogue: url("/ui/black-anvil/slices/h1-dialogue-box.png");
   --ba-quest: url("/ui/black-anvil/slices/g2-quest-log.png");
   --ba-slot: url("/ui/black-anvil/slices/f2-slot.png");
-  --ba-tex-iron: url("/ui/black-anvil/slices/d2-texture-iron.png");
-  --ba-tex-bronze: url("/ui/black-anvil/slices/d2-texture-bronze.png");
+  --ba-tex-iron: url("/ui/black-anvil/slices/i2-iron.png");
+  --ba-tex-bronze: url("/ui/black-anvil/slices/i3-bronze-filigree.png");
   --ba-tex-parchment: url("/ui/black-anvil/slices/i1-parchment.png");
   /* Settings-driven UI font (inherited everywhere) */
   --ui-font: "Cinzel", Georgia, "Times New Roman", serif;
@@ -454,9 +454,9 @@ textarea {
   background:
     linear-gradient(180deg, rgba(16, 14, 12, 0.92), rgba(10, 9, 8, 0.96)),
     var(--ba-tex-iron) center / 220px 220px repeat;
-  border: 18px solid transparent;
+  border: 14px solid transparent;
   border-radius: 0;
-  border-image: var(--ba-frame) 48 fill / 18px / 0 stretch;
+  border-image: var(--ba-frame) 40 fill / 14px / 0 stretch;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
   color: var(--cmd-pill-text);
   font-family: var(--ui-font);
@@ -960,9 +960,10 @@ textarea {
   align-items: end;
   margin-bottom: -1px;
   z-index: 2;
-  padding: 18px 28px 14px;
+  padding: 14px 22px 12px;
   background: var(--ba-action-bar) center / 100% 100% no-repeat;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.55));
+  min-height: 92px;
 }
 
 .hud-hotbar-utility {
@@ -1354,8 +1355,8 @@ textarea {
   max-height: min(94vh, 900px);
   padding: 22px 20px 18px;
   border-radius: 0;
-  border: 20px solid transparent;
-  border-image: var(--ba-frame) 48 fill / 20px / 0 stretch;
+  border: 14px solid transparent;
+  border-image: var(--ba-frame) 40 fill / 14px / 0 stretch;
   background: rgba(10, 9, 8, 0.55);
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.85);
 }
@@ -1386,12 +1387,11 @@ textarea {
 }
 .boot-brand-banner {
   display: block;
-  width: min(100%, 420px);
+  width: min(100%, 460px);
   height: auto;
   margin: 0 auto 4px;
   object-fit: contain;
-  /* Prefer iron/bronze over generator purple glow */
-  filter: hue-rotate(-35deg) saturate(0.75) drop-shadow(0 6px 16px rgba(0, 0, 0, 0.65));
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.65));
 }
 .boot-brand-fallback {
   position: absolute;

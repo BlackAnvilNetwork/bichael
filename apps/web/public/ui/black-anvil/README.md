@@ -24,4 +24,8 @@ Re-slice after replacing the source sheet:
 python3 apps/web/scripts/slice-black-anvil-ui.py
 ```
 
-**Note:** The original user attachment did not reach the agent VM. The committed sheet was regenerated from the label inventory so work could proceed; drop the authentic pack over `source-sheet.png` and re-run the slicer to refresh crops.
+Source is the real user sheet (`1024×434`, from Agent Store `uploads/source-sheet.png`). Re-slice after replacing:
+
+```bash
+python3 apps/web/scripts/slice-black-anvil-ui.py
+```

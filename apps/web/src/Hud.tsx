@@ -1277,7 +1277,7 @@ export function BootScreens() {
           <h1 className="boot-brand">
             <img
               className="boot-brand-banner"
-              src="/ui/black-anvil/slices/a1-title-banner-hi.png"
+              src="/ui/black-anvil/slices/a1-title-banner.png"
               alt="Black Anvil"
             />
             <span className="boot-brand-fallback">Black Anvil</span>
