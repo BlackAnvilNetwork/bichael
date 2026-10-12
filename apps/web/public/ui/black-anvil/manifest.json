@@ -1,15 +1,16 @@
 {
   "theme": "black-anvil",
   "source": "source-sheet.png",
-  "sourceSize": [1024, 434],
-  "sourceBytes": 656492,
-  "note": "Real user sheet from Agent Store uploads/source-sheet.png. Crops tuned to 1024x434 layout.",
+  "sourceSize": [3072, 1296],
+  "baseLayoutSize": [1024, 434],
+  "scale": [3.0000, 2.9862],
+  "note": "Upscaled user sheet with agent-side navy background removal. Crops defined in 1024x434 base space and scaled.",
   "nineSlice": {
-    "panel": { "image": "slices/d1-panel-frame.png", "slice": "40 40 40 40", "width": "14px" },
-    "dialogue": { "image": "slices/h1-dialogue-box.png", "slice": "28 28 28 28", "width": "12px" },
-    "quest": { "image": "slices/g2-quest-log.png", "slice": "24 24 24 24", "width": "10px" },
-    "banner": { "image": "slices/a2-title-frame.png", "slice": "20 40 20 40", "width": "14px" },
-    "slot": { "image": "slices/f2-slot.png", "slice": "12 12 12 12", "width": "6px" }
+    "panel": { "image": "slices/d1-panel-frame.png", "slice": "80 80 80 80", "width": "16px" },
+    "dialogue": { "image": "slices/h1-dialogue-box.png", "slice": "48 48 48 48", "width": "14px" },
+    "quest": { "image": "slices/g2-quest-log.png", "slice": "40 40 40 40", "width": "12px" },
+    "banner": { "image": "slices/a2-title-frame.png", "slice": "36 60 36 60", "width": "16px" },
+    "slot": { "image": "slices/f2-slot.png", "slice": "18 18 18 18", "width": "7px" }
   },
   "assets": {
     "titleBanner": "slices/a1-title-banner.png",

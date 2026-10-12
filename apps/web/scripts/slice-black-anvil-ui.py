@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Slice the real Black Anvil UI source sheet (1024×434) into transparent PNG/WebP assets."""
+"""Slice the Black Anvil UI source sheet into transparent PNG/WebP assets.
+
+Source is expected at apps/web/public/ui/black-anvil/source-sheet.png.
+Baseline layout was authored at 1024×434; current upscaled sheet is 3072×1296 (3×).
+Crops are defined in base (1024×434) space and scaled to the actual sheet size.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,10 +16,11 @@ SHEET = ROOT / "source-sheet.png"
 OUT = ROOT / "slices"
 WEBP = ROOT / "webp"
 
-# Real sheet from Agent Store uploads (1024×434). Do not use generated stand-ins.
-# Coordinates: (left, top, right, bottom) — verified against labeled layout.
-CROPS: dict[str, tuple[int, int, int, int]] = {
-    "a1-title-banner": (6, 4, 278, 66),
+BASE_W, BASE_H = 1024, 434
+
+# Coordinates in base 1024×434 space: (left, top, right, bottom)
+BASE_CROPS: dict[str, tuple[int, int, int, int]] = {
+    "a1-title-banner": (6, 4, 270, 66),
     "a2-title-frame": (295, 4, 505, 66),
     "b2-login-input": (512, 2, 618, 90),
     "b3-login-button-iron": (622, 10, 755, 40),
@@ -44,23 +50,34 @@ CROPS: dict[str, tuple[int, int, int, int]] = {
 }
 
 
-def sheet_bg_to_alpha(im: Image.Image, thresh: int = 78) -> Image.Image:
-    """Dark slate sheet background → transparent."""
+def scale_box(box: tuple[int, int, int, int], sx: float, sy: float, w: int, h: int) -> tuple[int, int, int, int]:
+    l, t, r, b = box
+    return (
+        max(0, int(round(l * sx))),
+        max(0, int(round(t * sy))),
+        min(w, int(round(r * sx))),
+        min(h, int(round(b * sy))),
+    )
+
+
+def punch_remaining_bg(im: Image.Image, thresh: int = 70) -> Image.Image:
+    """Clear any leftover dark navy canvas pixels (idempotent if already transparent)."""
     im = im.convert("RGBA")
     px = im.load()
     w, h = im.size
     for y in range(h):
         for x in range(w):
             r, g, b, a = px[x, y]
-            # sheet canvas is dark blue-grey
-            if r < thresh and g < thresh + 8 and b < thresh + 20 and abs(r - b) < 30:
-                px[x, y] = (r, g, b, 0)
-            elif max(r, g, b) < 55 and abs(r - g) < 12 and abs(g - b) < 12:
-                px[x, y] = (r, g, b, 0)
+            if a == 0:
+                continue
+            if r < thresh and g < thresh + 8 and b < thresh + 18 and abs(r - b) < 35:
+                px[x, y] = (0, 0, 0, 0)
+            elif max(r, g, b) < 48 and abs(r - g) < 12 and abs(g - b) < 12:
+                px[x, y] = (0, 0, 0, 0)
     return im
 
 
-def trim_alpha(im: Image.Image, pad: int = 1) -> Image.Image:
+def trim_alpha(im: Image.Image, pad: int = 2) -> Image.Image:
     bbox = im.getbbox()
     if not bbox:
         return im
@@ -79,14 +96,10 @@ def save(im: Image.Image, name: str) -> None:
 
 
 def build_panel_frame_from_d1(d1: Image.Image) -> Image.Image:
-    """Compose a square nine-sliceable panel frame from D1 corner pieces."""
-    # Fall back to stretched D1 if composition is awkward
-    size = 256
+    size = 512
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    src = d1.convert("RGBA")
-    # Place D1 as a reference border atlas; HUD uses border-image slice on this
-    src_resized = src.resize((size, size), Image.Resampling.LANCZOS)
-    canvas.paste(src_resized, (0, 0), src_resized)
+    src = d1.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+    canvas.paste(src, (0, 0), src)
     return canvas
 
 
@@ -94,42 +107,27 @@ def main() -> None:
     if not SHEET.exists():
         raise SystemExit(f"missing sheet: {SHEET}")
     sheet = Image.open(SHEET).convert("RGBA")
-    print(f"sheet {SHEET} size={sheet.size} mode={sheet.mode}")
-    if sheet.size != (1024, 434):
-        print(f"WARNING: expected 1024x434, got {sheet.size} — crops may need retuning")
-
-    # Clear prior generated hi-res stand-ins
-    for stale in (
-        "a1-title-banner-hi",
-        "d1-panel-frame-hi",
-        "e2-orbs-hi",
-        "e3-action-bar-hi",
-    ):
-        for folder in (OUT, WEBP):
-            for ext in (".png", ".webp"):
-                p = folder / f"{stale}{ext}"
-                if p.exists():
-                    p.unlink()
-                    print(f"removed stand-in {p.name}")
+    w, h = sheet.size
+    sx, sy = w / BASE_W, h / BASE_H
+    print(f"sheet {SHEET} size={sheet.size} scale=({sx:.3f},{sy:.3f})")
 
     OUT.mkdir(parents=True, exist_ok=True)
     WEBP.mkdir(parents=True, exist_ok=True)
 
     pieces: dict[str, Image.Image] = {}
-    for name, box in CROPS.items():
-        piece = sheet_bg_to_alpha(sheet.crop(box))
+    for name, base in BASE_CROPS.items():
+        box = scale_box(base, sx, sy, w, h)
+        piece = punch_remaining_bg(sheet.crop(box))
         piece = trim_alpha(piece)
         pieces[name] = piece
         save(piece, name)
 
-    # Derived panel frame for border-image
     panel = build_panel_frame_from_d1(pieces["d1-borders"])
     save(panel, "d1-panel-frame")
 
-    # Combined orbs strip (HUD convenience)
     h_orb = pieces["e2-health-orb"]
     m_orb = pieces["e2-mana-orb"]
-    gap = 8
+    gap = max(8, int(8 * sx))
     orbs = Image.new(
         "RGBA",
         (h_orb.width + gap + m_orb.width, max(h_orb.height, m_orb.height)),
@@ -140,20 +138,21 @@ def main() -> None:
     save(orbs, "e2-orbs")
 
     (ROOT / "manifest.json").write_text(
-        """{
+        f"""{{
   "theme": "black-anvil",
   "source": "source-sheet.png",
-  "sourceSize": [1024, 434],
-  "sourceBytes": 656492,
-  "note": "Real user sheet from Agent Store uploads/source-sheet.png. Crops tuned to 1024x434 layout.",
-  "nineSlice": {
-    "panel": { "image": "slices/d1-panel-frame.png", "slice": "40 40 40 40", "width": "14px" },
-    "dialogue": { "image": "slices/h1-dialogue-box.png", "slice": "28 28 28 28", "width": "12px" },
-    "quest": { "image": "slices/g2-quest-log.png", "slice": "24 24 24 24", "width": "10px" },
-    "banner": { "image": "slices/a2-title-frame.png", "slice": "20 40 20 40", "width": "14px" },
-    "slot": { "image": "slices/f2-slot.png", "slice": "12 12 12 12", "width": "6px" }
-  },
-  "assets": {
+  "sourceSize": [{w}, {h}],
+  "baseLayoutSize": [{BASE_W}, {BASE_H}],
+  "scale": [{sx:.4f}, {sy:.4f}],
+  "note": "Upscaled user sheet with agent-side navy background removal. Crops defined in 1024x434 base space and scaled.",
+  "nineSlice": {{
+    "panel": {{ "image": "slices/d1-panel-frame.png", "slice": "80 80 80 80", "width": "16px" }},
+    "dialogue": {{ "image": "slices/h1-dialogue-box.png", "slice": "48 48 48 48", "width": "14px" }},
+    "quest": {{ "image": "slices/g2-quest-log.png", "slice": "40 40 40 40", "width": "12px" }},
+    "banner": {{ "image": "slices/a2-title-frame.png", "slice": "36 60 36 60", "width": "16px" }},
+    "slot": {{ "image": "slices/f2-slot.png", "slice": "18 18 18 18", "width": "7px" }}
+  }},
+  "assets": {{
     "titleBanner": "slices/a1-title-banner.png",
     "titleFrame": "slices/a2-title-frame.png",
     "loginInput": "slices/b2-login-input.png",
@@ -183,8 +182,8 @@ def main() -> None:
     "texParchment": "slices/i1-parchment.png",
     "texIron": "slices/i2-iron.png",
     "texBronze": "slices/i3-bronze-filigree.png"
-  }
-}
+  }}
+}}
 """,
         encoding="utf-8",
     )

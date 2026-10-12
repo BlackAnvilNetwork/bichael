@@ -454,9 +454,9 @@ textarea {
   background:
     linear-gradient(180deg, rgba(16, 14, 12, 0.92), rgba(10, 9, 8, 0.96)),
     var(--ba-tex-iron) center / 220px 220px repeat;
-  border: 14px solid transparent;
+  border: 16px solid transparent;
   border-radius: 0;
-  border-image: var(--ba-frame) 40 fill / 14px / 0 stretch;
+  border-image: var(--ba-frame) 80 fill / 16px / 0 stretch;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
   color: var(--cmd-pill-text);
   font-family: var(--ui-font);
@@ -1355,8 +1355,8 @@ textarea {
   max-height: min(94vh, 900px);
   padding: 22px 20px 18px;
   border-radius: 0;
-  border: 14px solid transparent;
-  border-image: var(--ba-frame) 40 fill / 14px / 0 stretch;
+  border: 16px solid transparent;
+  border-image: var(--ba-frame) 80 fill / 16px / 0 stretch;
   background: rgba(10, 9, 8, 0.55);
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.85);
 }
@@ -3601,7 +3601,7 @@ button.equip-stat-label:focus-visible {
 .hud-vitals-dock,
 .hud-menu-dock {
   border: 10px solid transparent;
-  border-image: var(--ba-frame) 48 fill / 10px / 0 stretch;
+  border-image: var(--ba-frame) 80 fill / 12px / 0 stretch;
   border-radius: 0;
   background:
     linear-gradient(180deg, rgba(20, 18, 14, 0.92), rgba(10, 9, 8, 0.96)),

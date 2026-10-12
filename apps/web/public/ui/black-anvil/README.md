@@ -24,7 +24,12 @@ Re-slice after replacing the source sheet:
 python3 apps/web/scripts/slice-black-anvil-ui.py
 ```
 
-Source is the real user sheet (`1024×434`, from Agent Store `uploads/source-sheet.png`). Re-slice after replacing:
+Source is the real user sheet, currently **3072×1296** (3× upscale). Navy grid background was removed in-repo (you don’t need to do that yourself). Crops are defined in 1024×434 base space and auto-scaled.
+
+- `source-sheet.png` — transparent working master
+- `source-sheet-upscaled.jpg` — original upscale you uploaded (provenance)
+
+Re-slice after replacing the PNG:
 
 ```bash
 python3 apps/web/scripts/slice-black-anvil-ui.py
