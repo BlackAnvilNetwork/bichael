@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Black Anvil HUD chrome preview</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <style>
+    html, body { margin: 0; height: 100%; background: #0a0908; }
+    body {
+      background:
+        radial-gradient(ellipse at 50% 40%, rgba(40,32,22,.35), rgba(6,5,4,.85) 70%),
+        url("/ui/black-anvil/slices/i3-bronze-filigree.png") center / 280px repeat,
+        #0a0908;
+    }
+    .preview-world {
+      position: absolute; inset: 0;
+      background:
+        linear-gradient(180deg, transparent 55%, rgba(0,0,0,.55)),
+        radial-gradient(ellipse at 50% 70%, #2a4030 0%, #0c1810 45%, #060504 100%);
+    }
+    .hud-root { position: absolute; inset: 0; pointer-events: none; }
+    .hud-chrome {
+      position: absolute; inset: 0; display: flex; justify-content: space-between;
+      align-items: flex-start; padding: 12px; pointer-events: none;
+    }
+    .hud-bottom {
+      position: absolute; left: 0; right: 0; bottom: 0;
+    }
+    .note {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      color: #8a8070; font: 13px Cinzel, Georgia, serif; letter-spacing: .08em;
+      text-align: center; opacity: .7;
+    }
+  </style>
+</head>
+<body>
+  <div class="preview-world"></div>
+  <p class="note">HUD CHROME PREVIEW · CSS FRAMES (NOT STRETCHED SHEET)</p>
+  <div class="hud-root">
+    <div class="hud-chrome">
+      <div class="hud-corner-left">
+        <div class="hud-vitals-dock">
+          <div class="hud-identity">Chrona · Lv.2 · <span class="job">Battle Mage</span></div>
+          <div class="hud-vitals">
+            <div class="vital"><span class="vital-label">HP</span><div class="vital-bar hp"><i style="height:100%"></i></div><span class="vital-num">115/115</span></div>
+            <div class="vital"><span class="vital-label">MP</span><div class="vital-bar mp"><i style="height:72%"></i></div><span class="vital-num">72/72</span></div>
+            <div class="vital"><span class="vital-label">TP</span><div class="vital-bar tp"><i style="width:40%"></i></div><span class="vital-num">500</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="hud-menu-dock" role="menu">
+        <div class="hud-commands-kicker">Black Anvil</div>
+        <div class="hud-commands-header">Commands</div>
+        <button type="button" class="hud-cmd-btn">Spellbook</button>
+        <button type="button" class="hud-cmd-btn selected">Character</button>
+        <button type="button" class="hud-cmd-btn">Crafting</button>
+        <button type="button" class="hud-cmd-btn">Skills</button>
+        <button type="button" class="hud-cmd-btn">Party</button>
+        <button type="button" class="hud-cmd-btn">Explorer</button>
+        <button type="button" class="hud-cmd-btn">Settings</button>
+      </div>
+    </div>
+    <div class="hud-bottom">
+      <div class="hud-hotbar-stack">
+        <button class="skill-slot hotbar-slot" type="button"><span class="skill-glyph">1</span><span class="skill-name">Blade</span></button>
+        <button class="skill-slot hotbar-slot" type="button"><span class="skill-glyph">2</span><span class="skill-name">Fire</span></button>
+        <button class="skill-slot hotbar-slot" type="button"><span class="skill-glyph">3</span><span class="skill-name">Bolt</span></button>
+        <button class="skill-slot hotbar-slot empty" type="button"><span class="empty-glyph">+</span></button>
+        <button class="skill-slot hotbar-slot empty" type="button"><span class="empty-glyph">+</span></button>
+        <button class="skill-slot hotbar-slot empty" type="button"><span class="empty-glyph">+</span></button>
+        <button class="skill-slot hotbar-slot empty" type="button"><span class="empty-glyph">+</span></button>
+        <button class="skill-slot hotbar-slot empty" type="button"><span class="empty-glyph">+</span></button>
+        <button class="skill-slot hotbar-slot empty" type="button"><span class="empty-glyph">+</span></button>
+        <button class="skill-slot hotbar-slot empty" type="button"><span class="empty-glyph">+</span></button>
+        <div class="hud-hotbar-utility">
+          <button class="skill-slot potion" type="button"><span class="skill-glyph">P</span></button>
+          <button class="skill-slot book-slot" type="button"><span class="skill-glyph">B</span></button>
+        </div>
+        <div class="hud-hotbar-utility hud-hotbar-utility-spacer" aria-hidden></div>
+      </div>
+      <div class="hud-log-frame">
+        <div class="hud-log-head">
+          <span>Combat Log</span>
+          <span class="hud-log-hints">WASD · Draw book</span>
+        </div>
+        <div class="hud-log-body">
+          <div class="hud-log-line system">Welcome to Black Anvil.</div>
+          <div class="hud-log-line combat">Combat log alignment check.</div>
+          <div class="hud-log-line good">Hotbar crest + metal rim (CSS).</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

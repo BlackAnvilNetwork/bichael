@@ -161,4 +161,9 @@ export const useGame = create<GameState>((set, get) => ({
   },
 }));
 
+/** Dev-only: console / visual QA can inject play snapshots without a wallet. */
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as { __useGame?: typeof useGame }).__useGame = useGame;
+}
+
 export type { AbilityId };
