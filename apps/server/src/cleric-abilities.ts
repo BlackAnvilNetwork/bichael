@@ -467,9 +467,16 @@ export function resolveClericAbility(
 
   if (id === "cl_raise" || id === "cl_raise_ii") {
     const ally = resolveAlly(p, targetId, hooks, def.range ?? 12);
+    // #51: there is no downed state yet (#99), so Raise must never act as an
+    // absolute HP assignment on a living target. It is an additive heal that
+    // can only raise HP, and it is refused (no MP / recast spent) at full HP.
+    if (ally.hp >= ally.maxHp) {
+      hooks.pushLog(p, `${def.label} — ${ally.wallet === p.wallet ? "you are" : "ally is"} not in need of recall.`);
+      return true;
+    }
     spend();
     const heal = healPower(p, def.heal ?? 200, false, combatStats);
-    ally.hp = Math.min(ally.maxHp, Math.max(1, heal));
+    ally.hp = Math.max(ally.hp, Math.min(ally.maxHp, ally.hp + heal));
     ally.sacredLightUntil = now + 2200;
     p.sacredLightUntil = now + 2200;
     p.anim = "cast";
