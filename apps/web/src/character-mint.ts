@@ -24,14 +24,25 @@ const CREATE_ABI = [
 ] as const;
 
 function chainOf(cfg: CharacterMintClientConfig) {
-  const name =
-    cfg.chainId === 4663 ? "Robinhood Chain" : cfg.chainId === 31337 ? "Bellgrave Anvil" : "Bellgrave";
+  if (cfg.chainId === 100) {
+    return {
+      id: 100,
+      name: "Gnosis Chain",
+      nativeCurrency: { name: "xDAI", symbol: "xDAI", decimals: 18 },
+      rpcUrls: { default: { http: [cfg.rpcUrl] } },
+    };
+  }
+  const name = cfg.chainId === 4663 ? "Robinhood Chain" : cfg.chainId === 31337 ? "Bellgrave Anvil" : "Bellgrave";
   return {
     id: cfg.chainId,
     name,
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     rpcUrls: { default: { http: [cfg.rpcUrl] } },
   };
+}
+
+export function mintFeeUnit(chainId: number): string {
+  return chainId === 100 ? "xDAI" : "ETH";
 }
 
 export function shortChainError(err: unknown): string {

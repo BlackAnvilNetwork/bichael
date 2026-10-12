@@ -1,6 +1,7 @@
 /**
- * Browser-wallet connect, matching Kekfun's injected path
- * (wagmi injected connector, Robinhood Chain 4663).
+ * Browser-wallet connect. Character NFTs live on Gnosis Chain, so Connect
+ * adds and switches to chain 100. Robinhood stays available for other calls
+ * that pass that chain id into wallet_addEthereumChain.
  * A WalletConnect project id is not required: MetaMask, Rabby, and other
  * injected providers answer eth_requestAccounts and personal_sign.
  */
@@ -8,10 +9,14 @@ import { createWalletClient, custom, type EIP1193Provider, type Hex } from "viem
 
 const LINK_KEY = "bellgrave.walletLinked";
 
-/** Robinhood Chain, the network Kekfun switches to on connect. */
-export const ROBINHOOD_CHAIN_ID = 4663;
+/** Gnosis Chain. Native token is xDAI. Character factory and LOKC live here. */
+export const GNOSIS_CHAIN_ID = 100;
 
-const ROBINHOOD_CHAIN_HEX = "0x1237";
+const GNOSIS_RPC = "https://rpc.gnosischain.com";
+const GNOSIS_EXPLORER = "https://gnosisscan.io";
+
+/** Robinhood Chain. Auction-house helpers still know how to add it. */
+export const ROBINHOOD_CHAIN_ID = 4663;
 
 type Injected = EIP1193Provider & { providers?: EIP1193Provider[] };
 
@@ -54,6 +59,7 @@ function chainHex(chainId: number): string {
 }
 
 async function addChain(provider: EIP1193Provider, chainId: number, rpcUrl: string) {
+  const gnosis = chainId === GNOSIS_CHAIN_ID;
   const robinhood = chainId === ROBINHOOD_CHAIN_ID;
   const anvil = chainId === 31337;
   await provider.request({
@@ -61,25 +67,37 @@ async function addChain(provider: EIP1193Provider, chainId: number, rpcUrl: stri
     params: [
       {
         chainId: chainHex(chainId),
-        chainName: robinhood ? "Robinhood Chain" : anvil ? "Bellgrave Anvil" : "Bellgrave",
-        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+        chainName: gnosis
+          ? "Gnosis Chain"
+          : robinhood
+            ? "Robinhood Chain"
+            : anvil
+              ? "Bellgrave Anvil"
+              : "Bellgrave",
+        nativeCurrency: gnosis
+          ? { name: "xDAI", symbol: "xDAI", decimals: 18 }
+          : { name: "Ether", symbol: "ETH", decimals: 18 },
         rpcUrls: [rpcUrl],
-        blockExplorerUrls: robinhood ? ["https://robinhoodchain.blockscout.com"] : [],
+        blockExplorerUrls: gnosis
+          ? [GNOSIS_EXPLORER]
+          : robinhood
+            ? ["https://robinhoodchain.blockscout.com"]
+            : [],
       },
     ],
   });
 }
 
-async function ensureRobinhood(provider: EIP1193Provider) {
+async function ensureGnosis(provider: EIP1193Provider) {
   try {
     await provider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: ROBINHOOD_CHAIN_HEX }],
+      params: [{ chainId: chainHex(GNOSIS_CHAIN_ID) }],
     });
   } catch (err) {
     const code = (err as { code?: number }).code;
     if (code !== 4902) return;
-    await addChain(provider, ROBINHOOD_CHAIN_ID, "https://rpc.mainnet.chain.robinhood.com");
+    await addChain(provider, GNOSIS_CHAIN_ID, GNOSIS_RPC);
   }
 }
 
@@ -115,8 +133,8 @@ export async function authorizedAccounts(): Promise<string[]> {
 }
 
 /**
- * Ask the injected wallet for an account, then switch to Robinhood Chain
- * the way Kekfun's connect button does. A rejected chain switch still
+ * Ask the injected wallet for an account, then switch to Gnosis Chain,
+ * where the LOKC character NFT is minted. A rejected chain switch still
  * returns the account — login is a signature, not a chain transaction.
  */
 export async function connectInjectedWallet(): Promise<`0x${string}`> {
@@ -130,7 +148,7 @@ export async function connectInjectedWallet(): Promise<`0x${string}`> {
   const address = accounts.find((a) => /^0x[0-9a-fA-F]{40}$/.test(a));
   if (!address) throw new Error("The wallet did not return an account.");
   try {
-    await ensureRobinhood(provider);
+    await ensureGnosis(provider);
   } catch {
     /* Login does not need the chain switch to succeed. */
   }

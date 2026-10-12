@@ -21,7 +21,7 @@ import { getItem } from "@bellgrave/items";
 import type { AbilityId, UnitSnapshot } from "@bellgrave/protocol";
 import { formatEther } from "viem";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
-import { mintCharacterNft, readMintFee, shortChainError } from "./character-mint";
+import { mintCharacterNft, mintFeeUnit, readMintFee, shortChainError } from "./character-mint";
 import { AbilityIcon } from "./AbilityIcon";
 import { chromaKeyIconUrl } from "./chroma";
 import { CraftingPanel } from "./CraftingPanel";
@@ -1494,14 +1494,14 @@ function CreatePanel() {
       </p>
       <p className="boot-hint">
         {characterMint
-          ? `Your wallet mints the LOKC character NFT${feeLabel ? ` for ${feeLabel} ETH` : ""}.`
+          ? `Your wallet mints the LOKC character NFT${feeLabel ? ` for ${feeLabel} ${mintFeeUnit(characterMint.chainId)}` : ""}.`
           : "This server has no character factory, so create saves a log identity and does not mint an NFT."}
       </p>
       <button type="submit" className="boot-primary" disabled={busy}>
         {busy
           ? "Minting…"
           : characterMint
-            ? `Mint ${JOBS[job]?.name ?? "Adventurer"}${feeLabel ? ` · ${feeLabel} ETH` : ""}`
+            ? `Mint ${JOBS[job]?.name ?? "Adventurer"}${feeLabel ? ` · ${feeLabel} ${mintFeeUnit(characterMint.chainId)}` : ""}`
             : `Create ${JOBS[job]?.name ?? "Adventurer"} · Claim starter`}
       </button>
       {error && <p className="boot-hint">{error}</p>}

@@ -12,6 +12,7 @@ import {
   CHARACTER_CREATED_TOPIC,
   characterMintClientConfig,
   confirmCharacterMint,
+  GNOSIS_CHARACTER_MINT,
 } from "./character-mint";
 
 const PLAYER = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
@@ -55,8 +56,16 @@ function assess(patch: Partial<Parameters<typeof assessCharacterMint>[0]> = {}) 
   });
 }
 
-test("character mint config needs factory, nft, http rpc, and chain id", () => {
-  assert.equal(characterMintClientConfig({}), null);
+test("character mint config defaults to Gnosis and still accepts an explicit factory", () => {
+  assert.deepEqual(characterMintClientConfig({}), GNOSIS_CHARACTER_MINT);
+  assert.equal(GNOSIS_CHARACTER_MINT.chainId, 100);
+  assert.deepEqual(
+    characterMintClientConfig({
+      LOK_CHAIN_RPC: "https://rpc.mainnet.chain.robinhood.com",
+      LOK_CHAIN_ID: "4663",
+    }),
+    GNOSIS_CHARACTER_MINT,
+  );
   assert.equal(
     characterMintClientConfig({
       LOK_FACTORY: FACTORY,

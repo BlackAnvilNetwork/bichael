@@ -40,8 +40,22 @@ function isAddress(value: string): boolean {
 }
 
 /**
+ * Gnosis Chain character stack. The env wallet is admin on the factory.
+ * Factory and NFT are different contracts. Mint fee is the on-chain mintFee (1 xDAI).
+ * Jobs 0–6 are starting jobs. An explicit LOK_FACTORY overrides this for local anvil.
+ */
+export const GNOSIS_CHARACTER_MINT: CharacterMintClientConfig = {
+  factory: "0xcE70705322A10C3c85363AD067743923F5E5E8F2",
+  nft: "0xf4BAb9B8Cb8bc3d9340ee73447009Da77DC95663",
+  rpcUrl: "https://rpc.gnosischain.com",
+  chainId: 100,
+};
+
+/**
  * Browser-reachable factory. The player wallet calls createCharacter and pays mintFee.
- * Absent when the server has no factory, so create stays a log identity only.
+ * Empty mint env uses Gnosis. LOK_FACTORY set without nft, rpc, and chain id stays off
+ * so a half-written override cannot fall through to mainnet.
+ * LOK_CHAIN_RPC alone does not count: the auction house uses that for a different chain.
  */
 export function characterMintClientConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -50,6 +64,7 @@ export function characterMintClientConfig(
   const nft = env.LOK_NFT?.trim() ?? "";
   const rpcUrl = (env.LOK_PUBLIC_RPC?.trim() || env.LOK_CHAIN_RPC?.trim() || "").replace(/\/$/, "");
   const chainRaw = env.LOK_CHAIN_ID?.trim() ?? "";
+  if (!factory) return { ...GNOSIS_CHARACTER_MINT };
   if (!isAddress(factory) || !isAddress(nft) || !rpcUrl || !chainRaw) return null;
   if (!/^https?:\/\//i.test(rpcUrl)) return null;
   if (!/^\d+$/.test(chainRaw)) return null;
@@ -134,7 +149,12 @@ export async function confirmCharacterMint(
   if (!/^0x[0-9a-fA-F]{64}$/.test(input.txHash)) {
     return { ok: false, error: "Bad mint transaction." };
   }
-  const serverRpc = (env.LOK_CHAIN_RPC?.trim() || cfg.rpcUrl).replace(/\/$/, "");
+  // A private RPC overrides only an explicit factory. The Gnosis default must
+  // not follow LOK_CHAIN_RPC when that variable points at another chain.
+  const serverRpc = ((env.LOK_FACTORY?.trim() && env.LOK_CHAIN_RPC?.trim()) || cfg.rpcUrl).replace(
+    /\/$/,
+    "",
+  );
   try {
     const client = createPublicClient({ transport: http(serverRpc) });
     const chainId = await client.getChainId();
