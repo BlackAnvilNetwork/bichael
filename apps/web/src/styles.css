@@ -1026,11 +1026,11 @@ textarea {
   row-gap: 4px;
   justify-content: center;
   align-items: end;
-  margin: 14px auto -1px;
+  margin: 16px auto 0;
   z-index: 2;
-  padding: 16px 36px 12px;
+  padding: 18px 36px 10px;
   width: fit-content;
-  max-width: 100%;
+  max-width: calc(100% - 24px);
   background:
     linear-gradient(180deg, #1c1a16 0%, #100e0c 55%, #0a0908 100%);
   border: 2px solid var(--ba-steel);
@@ -1041,23 +1041,24 @@ textarea {
     0 0 0 3px var(--ba-bronze-dim),
     0 0 0 4px color-mix(in srgb, var(--ba-bronze-hi) 40%, transparent),
     inset 0 1px 0 rgba(216, 212, 204, 0.35),
-    inset 0 -8px 20px rgba(0, 0, 0, 0.45),
     0 -6px 28px rgba(0, 0, 0, 0.5);
   min-height: 100px;
 }
-/* Central gold crest (sheet E3) — fixed ornament, not stretched art */
+/* Central gold crest (sheet E3) — sits on the top rim */
 .hud-hotbar-stack::before {
   content: "";
   position: absolute;
-  top: -13px;
+  top: -14px;
   left: 50%;
-  width: 38px;
-  height: 20px;
+  width: 40px;
+  height: 22px;
   transform: translateX(-50%);
   background:
     linear-gradient(180deg, var(--ba-bronze-hi) 0%, var(--ba-bronze) 42%, var(--ba-bronze-dim) 100%);
   clip-path: polygon(50% 0, 100% 68%, 84% 100%, 16% 100%, 0 68%);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  box-shadow:
+    0 0 0 1px #1a1612,
+    0 2px 6px rgba(0, 0, 0, 0.5);
   z-index: 3;
   pointer-events: none;
 }
@@ -1065,18 +1066,15 @@ textarea {
 .hud-hotbar-stack::after {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -2px;
   pointer-events: none;
   z-index: 2;
   background:
-    /* diamond gem on crest */
-    radial-gradient(circle at 50% 0, #f0e0a0 0 3px, transparent 4px) center top / 12px 12px no-repeat,
-    /* left end-cap chevron */
-    linear-gradient(135deg, transparent 42%, var(--ba-steel) 42% 58%, transparent 58%) left 6px top 50% / 14px 28px no-repeat,
-    linear-gradient(135deg, transparent 42%, var(--ba-bronze-dim) 42% 52%, transparent 52%) left 2px top 50% / 12px 22px no-repeat,
-    /* right end-cap chevron */
-    linear-gradient(45deg, transparent 42%, var(--ba-steel) 42% 58%, transparent 58%) right 6px top 50% / 14px 28px no-repeat,
-    linear-gradient(45deg, transparent 42%, var(--ba-bronze-dim) 42% 52%, transparent 52%) right 2px top 50% / 12px 22px no-repeat;
+    radial-gradient(circle at 50% 8px, #f0e0a0 0 3px, transparent 4px) center top / 14px 18px no-repeat,
+    linear-gradient(135deg, transparent 42%, var(--ba-steel) 42% 58%, transparent 58%) left 4px top 50% / 16px 30px no-repeat,
+    linear-gradient(135deg, transparent 42%, var(--ba-bronze-dim) 42% 52%, transparent 52%) left 0 top 50% / 14px 24px no-repeat,
+    linear-gradient(45deg, transparent 42%, var(--ba-steel) 42% 58%, transparent 58%) right 4px top 50% / 16px 30px no-repeat,
+    linear-gradient(45deg, transparent 42%, var(--ba-bronze-dim) 42% 52%, transparent 52%) right 0 top 50% / 14px 24px no-repeat;
 }
 
 .hud-hotbar-utility {
@@ -3742,8 +3740,9 @@ button.equip-stat-label:focus-visible {
 }
 .hud-log-frame {
   position: relative;
+  z-index: 1;
+  margin-top: 0;
   border: 2px solid var(--ba-steel);
-  border-top: 1px solid color-mix(in srgb, var(--ba-steel) 70%, transparent);
   border-radius: 0 0 6px 6px;
   background:
     linear-gradient(180deg, #141210 0%, #0c0b0a 100%);
