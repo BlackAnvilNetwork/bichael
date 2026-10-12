@@ -49,7 +49,8 @@ import {
   swapHotbarSlots,
   type HotbarSlots,
 } from "./hotbar";
-import { logoutToMenu, send } from "./net";
+import { connectWallet, logoutToMenu, send } from "./net";
+import { shortAddress } from "./wallet";
 import { stopZoneMusic } from "./zoneMusic";
 import { useGame } from "./state";
 // NpcInteractMenu mounts world-anchored under the NPC in WorldScene.
@@ -1154,22 +1155,58 @@ export function Hud() {
   );
 }
 
+function ConnectPanel() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="boot-panel">
+      <p className="boot-sub">Connect your wallet to create an adventurer</p>
+      <p className="boot-hint">MetaMask, Rabby, or another browser wallet.</p>
+      <button
+        type="button"
+        className="boot-primary"
+        disabled={busy}
+        onClick={() => {
+          setError(null);
+          setBusy(true);
+          void connectWallet()
+            .catch((err: unknown) => {
+              setError(err instanceof Error ? err.message : "Couldn’t connect — try again");
+            })
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? "Connecting…" : "Connect"}
+      </button>
+      {error && <p className="boot-hint">{error}</p>}
+    </div>
+  );
+}
+
 export function BootScreens() {
   const phase = useGame((s) => s.phase);
   const connected = useGame((s) => s.connected);
+  const wallet = useGame((s) => s.wallet);
   const hasCharacter = useGame((s) => s.hasCharacter);
   const characterPreview = useGame((s) => s.characterPreview);
   const snapshot = useGame((s) => s.snapshot);
 
   if (phase === "play" && snapshot) return null;
 
+  const showConnect = connected && !wallet;
+  const showSigning = connected && !!wallet && (phase === "boot" || phase === "auth");
+
   return (
     <div className="boot-screen">
       <div className="boot-frame">
         <div className="boot-card">
           <h1 className="boot-brand">Legend of KEK</h1>
-          {!connected || phase === "boot" || phase === "auth" ? (
-            <p className="boot-sub">{connected ? "Signing in…" : "Connecting to server…"}</p>
+          {!connected ? (
+            <p className="boot-sub">Connecting to server…</p>
+          ) : showConnect ? (
+            <ConnectPanel />
+          ) : showSigning ? (
+            <p className="boot-sub">Signing in…</p>
           ) : phase === "create" ? (
             <CreatePanel />
           ) : phase === "select" || hasCharacter ? (
@@ -1296,6 +1333,7 @@ function CreatePanel() {
   const [job, setJob] = useState<JobId>("time_mage");
   const [gender, setGender] = useState<Appearance>("male");
   const characters = useGame((s) => s.characters);
+  const wallet = useGame((s) => s.wallet);
   const playableJobs = (Object.keys(JOBS) as JobId[]).filter((j) => JOBS[j].playable);
   return (
     <form
@@ -1310,6 +1348,7 @@ function CreatePanel() {
       }}
     >
       <p className="boot-sub">Create your adventurer</p>
+      {wallet && <p className="boot-hint">{shortAddress(wallet)} · connected</p>}
       <label className="boot-label">
         Character name
         <input name="name" defaultValue="Chrona" maxLength={16} className="boot-input" />

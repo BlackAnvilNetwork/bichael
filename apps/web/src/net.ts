@@ -1,12 +1,17 @@
 ﻿import type { ClientMessage, ServerMessage } from "@bellgrave/protocol";
-import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { useGame } from "./state";
+import {
+  authorizedAccounts,
+  clearWalletLink,
+  connectInjectedWallet,
+  linkedWallet,
+  markWalletLinked,
+  signWithWallet,
+} from "./wallet";
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8787";
 const HEARTBEAT_MS = 20_000;
 const RESUME_KEY = "bellgrave.resumeChar";
-const WALLET_KEY = "bellgrave.wallet";
-const PK_KEY = "bellgrave.walletKey";
 
 let socket: WebSocket | null = null;
 let authedWallet: string | null = null;
@@ -69,33 +74,42 @@ function clearResumeStorage() {
   }
 }
 
-/** Local anvil-style account kept in this browser. Never logged. */
-function localAccount(): PrivateKeyAccount {
-  let key = localStorage.getItem(PK_KEY);
-  const existingWallet = localStorage.getItem(WALLET_KEY);
-  // Migrate mock 0xmvp… ids to a real secp256k1 account.
-  if (!key || !existingWallet || !/^0x[0-9a-fA-F]{40}$/.test(existingWallet)) {
-    key = generatePrivateKey();
-    localStorage.setItem(PK_KEY, key);
-  }
-  const account = privateKeyToAccount(key as `0x${string}`);
-  localStorage.setItem(WALLET_KEY, account.address);
-  return account;
-}
-
-export function mockWallet(): string {
-  return localAccount().address;
-}
-
-function tryAutoAuth() {
+function sendHello(address: string) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   if (authInFlight) return;
-  const account = localAccount();
-  const w = account.address.toLowerCase();
-  if (authedWallet === w && useGame.getState().wallet) return;
+  const w = address.toLowerCase();
+  if (authedWallet === w && useGame.getState().wallet === w) return;
   authInFlight = true;
-  useGame.getState().setWallet(account.address);
-  socket.send(JSON.stringify({ type: "auth/hello", wallet: account.address } satisfies ClientMessage));
+  useGame.getState().setWallet(address);
+  useGame.getState().setPhase("auth");
+  socket.send(JSON.stringify({ type: "auth/hello", wallet: address } satisfies ClientMessage));
+}
+
+/** Resume a wallet the player already connected in this tab. No popup. */
+async function resumeLinkedWallet() {
+  const linked = linkedWallet();
+  if (!linked) return;
+  const accounts = await authorizedAccounts();
+  const match = accounts.find((a) => a.toLowerCase() === linked);
+  if (!match) {
+    clearWalletLink();
+    useGame.getState().setWallet(null);
+    return;
+  }
+  sendHello(match);
+}
+
+/**
+ * Connect button. The address comes from the injected wallet
+ * (MetaMask, Rabby, or another browser wallet), not a generated key.
+ */
+export async function connectWallet(): Promise<void> {
+  const address = await connectInjectedWallet();
+  markWalletLinked(address);
+  if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+    connectSocket();
+  }
+  sendHello(address);
 }
 
 async function completeSignedAuth(msg: Extract<ServerMessage, { type: "auth/challenge" }>) {
@@ -104,18 +118,12 @@ async function completeSignedAuth(msg: Extract<ServerMessage, { type: "auth/chal
     return;
   }
   try {
-    const account = localAccount();
-    if (account.address.toLowerCase() !== msg.wallet.toLowerCase()) {
-      useGame.getState().pushLog("Error: Wallet mismatch on login challenge.");
-      authInFlight = false;
-      return;
-    }
-    const signature = await account.signMessage({ message: msg.message });
-    authedWallet = account.address.toLowerCase();
+    const signature = await signWithWallet(msg.wallet, msg.message);
+    authedWallet = msg.wallet.toLowerCase();
     socket.send(
       JSON.stringify({
         type: "auth",
-        wallet: account.address,
+        wallet: msg.wallet,
         signature,
         nonce: msg.nonce,
         message: msg.message,
@@ -157,7 +165,7 @@ export function connectSocket() {
     useGame.getState().setConnected(true);
     useGame.getState().pushLog("Connected to Bellgrave server.");
     startHeartbeat();
-    tryAutoAuth();
+    void resumeLinkedWallet();
   });
   socket.addEventListener("close", () => {
     clearHeartbeat();
@@ -282,11 +290,19 @@ export function logoutToMenu() {
     reconnectTimer = null;
   }
 
+  clearWalletLink();
+  authedWallet = null;
+  authInFlight = false;
   const g = useGame.getState();
   g.setPendingCreateEnter(false);
   g.setNpcDialog(null);
   g.clearSnapshot();
-  g.setPhase(g.characters.length > 0 || g.hasCharacter ? "select" : "create");
+  g.setWallet(null);
+  g.setCharacters([]);
+  g.setCharacterPreview(null);
+  g.setHasCharacter(false);
+  g.setSelectedCharId(null);
+  g.setPhase("boot");
 
   if (
     socket &&

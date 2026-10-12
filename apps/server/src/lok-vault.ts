@@ -281,10 +281,10 @@ export async function linkCharacterNft(
   playerWallet?: string,
   envIn: NodeJS.ProcessEnv = process.env,
   cast: CastFn = spawnCast(envOf(envIn).castBin),
-): Promise<{ ok: true; tokenId: string } | VaultErr> {
+): Promise<{ ok: true; tokenId: string } | { ok: true; skipped: true } | VaultErr> {
   const env = envOf(envIn);
   if (!env.rpc || !env.factory || !env.nft || !env.ownerKey) {
-    return { ok: false, error: "Character mint is not configured. The log identity was still created." };
+    return { ok: true, skipped: true };
   }
   if (!Number.isInteger(job) || job < 0 || job > 255) return { ok: false, error: "That job cannot be minted." };
   const player = playerWallet && isAddress(playerWallet) ? playerWallet.toLowerCase() : "";

@@ -3,12 +3,9 @@
  * The server watches AskFilled and mirrors items via chainFill; this never
  * credits ETH onto the character log.
  */
-import { createWalletClient, http, type Chain, type Hex } from "viem";
-import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
+import { createWalletClient, type Chain, type Hex } from "viem";
 import type { AhEscrowClientConfig } from "@bellgrave/protocol";
-
-const PK_KEY = "bellgrave.walletKey";
-const WALLET_KEY = "bellgrave.wallet";
+import { injectedTransport, linkedWallet } from "./wallet";
 
 const BUY_ASK_ABI = [
   {
@@ -22,18 +19,6 @@ const BUY_ASK_ABI = [
     outputs: [],
   },
 ] as const;
-
-function localAccount(): PrivateKeyAccount {
-  let key = localStorage.getItem(PK_KEY);
-  const existingWallet = localStorage.getItem(WALLET_KEY);
-  if (!key || !existingWallet || !/^0x[0-9a-fA-F]{40}$/.test(existingWallet)) {
-    key = generatePrivateKey();
-    localStorage.setItem(PK_KEY, key);
-  }
-  const account = privateKeyToAccount(key as `0x${string}`);
-  localStorage.setItem(WALLET_KEY, account.address);
-  return account;
-}
 
 function chainOf(cfg: AhEscrowClientConfig): Chain {
   return {
@@ -58,12 +43,17 @@ export async function buyAsksWithWallet(opts: {
   if (!/^[1-9][0-9]{0,77}$/.test(opts.buyerTokenId)) {
     return { ok: false, error: "Bad buyer character id.", hashes: [] };
   }
-  const account = localAccount();
+  const address = linkedWallet();
+  if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    return { ok: false, error: "Connect your wallet first.", hashes: [] };
+  }
+  const transport = injectedTransport();
+  if (!transport) return { ok: false, error: "Connect your wallet first.", hashes: [] };
   const chain = chainOf(opts.escrow);
   const client = createWalletClient({
-    account,
+    account: address as `0x${string}`,
     chain,
-    transport: http(opts.escrow.rpcUrl),
+    transport,
   });
   const hashes: Hex[] = [];
   for (const fill of opts.fills) {
@@ -85,7 +75,7 @@ export async function buyAsksWithWallet(opts: {
         args: [BigInt(fill.listingId), BigInt(opts.buyerTokenId)],
         value,
         chain,
-        account,
+        account: address as `0x${string}`,
       });
       hashes.push(hash);
     } catch (err) {

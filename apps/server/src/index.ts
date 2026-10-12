@@ -4610,7 +4610,11 @@ function onMessage(ws: WebSocket, data: string) {
     if (minted) {
       void linkCharacterNft(minted, JOB_IDS.indexOf(job), wallet).then((res) => {
         if (p.ws.readyState !== p.ws.OPEN) return;
-        pushLog(p, res.ok ? "Linked character NFT #" + res.tokenId + " on the local checkpoint." : res.error);
+        if (res.ok && "tokenId" in res) {
+          pushLog(p, "Linked character NFT #" + res.tokenId + " on the local checkpoint.");
+        } else if (!res.ok) {
+          pushLog(p, res.error);
+        }
         send(p.ws, snapshotFor(p));
       }).catch((err) => console.error("[bellgrave] character NFT link failed", err));
     }
