@@ -1,62 +1,74 @@
 @import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Source+Sans+3:wght@400;600;700&display=swap");
 
 :root {
-  --bg-deep: #121014;
-  --panel: rgba(22, 20, 18, 0.92);
-  --panel-edge: #2a4050;
-  --panel-edge-soft: #1a2834;
-  --gold: #5ad8ec;
-  --gold-dim: #2a8a9c;
+  /* Black Anvil — dark iron / aged bronze defaults */
+  --bg-deep: #0c0b0a;
+  --panel: rgba(18, 16, 14, 0.94);
+  --panel-edge: #6e5a3a;
+  --panel-edge-soft: #3d3428;
+  --gold: #b8924a;
+  --gold-dim: #8a7030;
   --ash: #c8c2b6;
   --teal: #3ecfbf;
-  --hp: #3ecf5a;
-  --mp: #4aa3ff;
+  --hp: #c23a3a;
+  --mp: #3a6ecf;
   --danger: #c45a4a;
   --text: #efe8dc;
   --text-dim: #9a9184;
   --slot: linear-gradient(160deg, #2a261f 0%, #1a1714 55%, #12100e 100%);
   --slot-hot: linear-gradient(160deg, #3a3228 0%, #241f18 100%);
+  --ba-iron: #2a2826;
+  --ba-bronze: #b8924a;
+  --ba-parchment: #c2a878;
+  --ba-frame: url("/ui/black-anvil/slices/d1-panel-frame-hi.png");
+  --ba-action-bar: url("/ui/black-anvil/slices/e3-action-bar-hi.png");
+  --ba-dialogue: url("/ui/black-anvil/slices/h1-dialogue-box.png");
+  --ba-quest: url("/ui/black-anvil/slices/g2-quest-log.png");
+  --ba-slot: url("/ui/black-anvil/slices/f2-slot.png");
+  --ba-tex-iron: url("/ui/black-anvil/slices/d2-texture-iron.png");
+  --ba-tex-bronze: url("/ui/black-anvil/slices/d2-texture-bronze.png");
+  --ba-tex-parchment: url("/ui/black-anvil/slices/i1-parchment.png");
   /* Settings-driven UI font (inherited everywhere) */
-  --ui-font: "Source Sans 3", "Segoe UI", sans-serif;
+  --ui-font: "Cinzel", Georgia, "Times New Roman", serif;
   --font-ui: var(--ui-font);
-  --font-display: var(--ui-font);
-  /* Launcher Settings chrome (Commands / panels) — default = cyan */
-  --cmd-accent: #5ec8f0;
-  --cmd-accent-soft: rgba(94, 200, 240, 0.16);
-  --cmd-accent-glow: rgba(94, 200, 240, 0.28);
+  --font-display: "Cinzel", Georgia, "Times New Roman", serif;
+  /* Launcher Settings chrome — default = aged bronze */
+  --cmd-accent: #d4b060;
+  --cmd-accent-soft: rgba(212, 176, 96, 0.16);
+  --cmd-accent-glow: rgba(212, 176, 96, 0.28);
   --cmd-pill: transparent;
   --cmd-pill-selected: var(--cmd-accent-soft);
   --cmd-pill-status: rgba(18, 24, 34, 0.92);
   --cmd-pill-hover: brightness(1.08);
-  --cmd-pill-text: #e8eef6;
+  --cmd-pill-text: #efe8dc;
   --cmd-pill-text-selected: var(--cmd-accent);
-  --cmd-pill-text-status: #8a95a8;
-  --cmd-text-muted: rgba(160, 176, 196, 0.72);
+  --cmd-pill-text-status: #a89878;
+  --cmd-text-muted: rgba(196, 176, 140, 0.72);
   --cmd-pill-rim: color-mix(in srgb, var(--cmd-accent) 22%, transparent);
   --cmd-pill-rim-selected: var(--cmd-accent);
   --cmd-pill-rim-status: color-mix(in srgb, var(--cmd-accent) 14%, transparent);
   --cmd-text-outline: none;
-  --cmd-dock-bg: #0a0e14;
+  --cmd-dock-bg: #100e0c;
   --cmd-dock-edge: color-mix(in srgb, var(--cmd-accent) 32%, transparent);
   --cmd-dock-inner: color-mix(in srgb, var(--cmd-accent) 10%, transparent);
-  --cmd-panel-bg: #0b1018;
+  --cmd-panel-bg: #12100c;
   --cmd-panel-edge: color-mix(in srgb, var(--cmd-accent) 34%, transparent);
   --cmd-panel-inner: 0 0 0 transparent;
-  --cmd-card-bg: rgba(14, 20, 30, 0.96);
+  --cmd-card-bg: rgba(28, 24, 16, 0.96);
   --cmd-card-border: color-mix(in srgb, var(--cmd-accent) 30%, transparent);
-  --cmd-row-bg: rgba(14, 20, 30, 0.94);
-  --cmd-row-bg-hot: rgba(20, 28, 42, 0.96);
+  --cmd-row-bg: rgba(28, 24, 16, 0.94);
+  --cmd-row-bg-hot: rgba(40, 34, 22, 0.96);
   --cmd-row-edge: color-mix(in srgb, var(--cmd-accent) 30%, transparent);
-  --cmd-track: rgba(30, 38, 52, 0.95);
-  --cmd-toggle-off: #1a2330;
-  --cmd-toggle-knob: #e8eef6;
-  --cmd-map-bg: #080c14;
+  --cmd-track: rgba(48, 40, 28, 0.95);
+  --cmd-toggle-off: #2a2418;
+  --cmd-toggle-knob: #efe8dc;
+  --cmd-map-bg: #100e0a;
   --cmd-map-glow: color-mix(in srgb, var(--cmd-accent) 8%, transparent);
-  --cmd-node-core: #121820;
-  --cmd-node-reachable: #1a2838;
-  --cmd-node-ring-fill: #0a0e14;
-  --cmd-node-stroke: color-mix(in srgb, var(--cmd-accent) 28%, #2a3444);
-  --cmd-edge-stroke: color-mix(in srgb, var(--cmd-accent) 18%, #1a222e);
+  --cmd-node-core: #1a1610;
+  --cmd-node-reachable: #2a2418;
+  --cmd-node-ring-fill: #100e0c;
+  --cmd-node-stroke: color-mix(in srgb, var(--cmd-accent) 28%, #3a3228);
+  --cmd-edge-stroke: color-mix(in srgb, var(--cmd-accent) 18%, #2a2418);
 }
 
 /* —— UI color themes (Settings): full chrome + accent —— */
@@ -436,15 +448,16 @@ textarea {
   border-color: var(--cmd-accent);
 }
 
-/* Shared launcher panel chrome (Commands tabs + Settings) */
+/* Shared launcher panel chrome (Commands tabs + Settings) — Black Anvil nine-slice */
 .cmd-panel {
   pointer-events: auto;
   background:
-    linear-gradient(180deg, var(--cmd-dock-inner), transparent 40%),
-    var(--cmd-panel-bg);
-  border: 1px solid var(--cmd-panel-edge);
-  border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.58), var(--cmd-panel-inner);
+    linear-gradient(180deg, rgba(16, 14, 12, 0.92), rgba(10, 9, 8, 0.96)),
+    var(--ba-tex-iron) center / 220px 220px repeat;
+  border: 18px solid transparent;
+  border-radius: 0;
+  border-image: var(--ba-frame) 48 fill / 18px / 0 stretch;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
   color: var(--cmd-pill-text);
   font-family: var(--ui-font);
   font-size: 13px;
@@ -840,6 +853,7 @@ textarea {
   flex-direction: column;
   gap: 2px;
   min-width: 72px;
+  align-items: center;
 }
 .vital-label {
   font-size: 9px;
@@ -849,23 +863,57 @@ textarea {
   font-weight: 600;
 }
 .vital-bar {
-  height: 6px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
   background: var(--cmd-dock-bg);
-  border: 1px solid var(--cmd-card-border);
-  border-radius: 2px;
+  border: 2px solid var(--cmd-card-border);
   overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.65);
+}
+.vital-bar.hp {
+  background:
+    radial-gradient(circle at 40% 35%, rgba(255, 120, 90, 0.35), transparent 55%),
+    url("/ui/black-anvil/slices/e2-health-orb.png") center / cover no-repeat,
+    #2a1010;
+  border-color: #8a4030;
+}
+.vital-bar.mp {
+  background:
+    radial-gradient(circle at 40% 35%, rgba(120, 170, 255, 0.35), transparent 55%),
+    url("/ui/black-anvil/slices/e2-mana-orb.png") center / cover no-repeat,
+    #101828;
+  border-color: #3a5080;
 }
 .vital-bar > i {
   display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   height: 100%;
+  opacity: 0.55;
+  mix-blend-mode: screen;
 }
 .vital-bar.hp > i {
-  background: linear-gradient(90deg, #2a8a3a, var(--hp));
+  background: linear-gradient(0deg, #8a2020, transparent 70%);
 }
 .vital-bar.mp > i {
-  background: linear-gradient(90deg, #2a6aaa, var(--mp));
+  background: linear-gradient(0deg, #204888, transparent 70%);
+}
+.vital-bar.tp {
+  width: auto;
+  min-width: 72px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--cmd-dock-bg);
 }
 .vital-bar.tp > i {
+  position: static;
+  height: 100%;
+  opacity: 1;
+  mix-blend-mode: normal;
   background: linear-gradient(90deg, #8a6a20, var(--gold));
 }
 .vital-num {
@@ -912,7 +960,9 @@ textarea {
   align-items: end;
   margin-bottom: -1px;
   z-index: 2;
-  padding: 4px 4px 2px;
+  padding: 18px 28px 14px;
+  background: var(--ba-action-bar) center / 100% 100% no-repeat;
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.55));
 }
 
 .hud-hotbar-utility {
@@ -1294,49 +1344,64 @@ textarea {
   place-items: center;
   padding: 20px 14px;
   background:
-    radial-gradient(ellipse at 50% 42%, rgba(18, 14, 10, 0.28), rgba(10, 8, 6, 0.62) 70%),
+    radial-gradient(ellipse at 50% 40%, rgba(40, 32, 22, 0.35), rgba(6, 5, 4, 0.82) 72%),
+    var(--ba-tex-iron) center / 280px 280px repeat,
     url("/ui/boot/boot-map-bg.png") center / cover no-repeat;
   z-index: 20;
 }
 .boot-frame {
-  width: min(520px, 100%);
+  width: min(540px, 100%);
   max-height: min(94vh, 900px);
-  padding: 26px 24px 20px;
-  border-radius: 12px;
-  background:
-    url("/ui/boot/boot-frame.png") center / 100% 100% no-repeat;
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.7);
+  padding: 22px 20px 18px;
+  border-radius: 0;
+  border: 20px solid transparent;
+  border-image: var(--ba-frame) 48 fill / 20px / 0 stretch;
+  background: rgba(10, 9, 8, 0.55);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.85);
 }
 .boot-card {
   width: 100%;
   max-height: calc(94vh - 52px);
   overflow-y: auto;
   padding: 18px 18px 16px;
-  border-radius: 4px;
+  border-radius: 2px;
   background:
-    radial-gradient(ellipse at 50% 0%, rgba(255, 248, 220, 0.35), transparent 55%),
-    linear-gradient(180deg, #ead7b0 0%, #d8bc82 48%, #c9a96a 100%);
-  border: 1px solid rgba(90, 64, 32, 0.35);
-  box-shadow: inset 0 0 36px rgba(80, 50, 20, 0.14);
-  color: #2a1c0c;
+    linear-gradient(180deg, rgba(34, 28, 20, 0.92), rgba(16, 14, 12, 0.96)),
+    var(--ba-tex-bronze) center / 240px 240px repeat;
+  border: 1px solid rgba(184, 146, 74, 0.35);
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.45);
+  color: #efe8dc;
   scrollbar-width: thin;
-  scrollbar-color: #8a6a38 transparent;
+  scrollbar-color: #8a7030 transparent;
 }
 .boot-brand {
-  margin: 0 0 2px;
+  margin: 0 0 10px;
   font-family: var(--font-display);
   font-size: clamp(26px, 4.6vw, 36px);
-  color: #9a7418;
-  letter-spacing: 0.08em;
+  color: var(--ba-bronze);
+  letter-spacing: 0.12em;
   text-align: center;
   text-transform: uppercase;
-  text-shadow:
-    0 1px 0 rgba(255, 236, 170, 0.75),
-    0 2px 6px rgba(60, 30, 0, 0.28);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.65);
+}
+.boot-brand-banner {
+  display: block;
+  width: min(100%, 420px);
+  height: auto;
+  margin: 0 auto 4px;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.65));
+}
+.boot-brand-fallback {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 .boot-sub {
   margin: 0 0 10px;
-  color: #5a4020;
+  color: #c2a878;
   font-size: 14px;
   text-align: center;
 }
@@ -1348,7 +1413,7 @@ textarea {
 .boot-label {
   display: block;
   font-size: 13px;
-  color: #5a4020;
+  color: #c2a878;
   font-weight: 600;
   margin-top: 8px;
 }
@@ -1358,25 +1423,26 @@ textarea {
 .boot-hint {
   margin: 6px 0 0;
   font-size: 12px;
-  color: #6a5030;
+  color: #a89878;
   line-height: 1.35;
 }
 .boot-input {
   display: block;
   width: 100%;
   margin-top: 4px;
-  padding: 10px 14px;
-  border-radius: 4px;
-  border: 1px solid #8a6a38;
+  padding: 12px 16px;
+  border-radius: 2px;
+  border: 2px solid transparent;
+  border-image: url("/ui/black-anvil/slices/b2-login-input.png") 12 fill / 8px / 0 stretch;
   background:
-    linear-gradient(180deg, #f2e4c0, #e0c890);
-  color: #2a1c0c;
+    linear-gradient(180deg, #1c1a18, #12100e);
+  color: #efe8dc;
   font-size: 15px;
   font-family: var(--font-display);
-  box-shadow: inset 0 1px 3px rgba(80, 50, 10, 0.2);
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.55);
 }
 .boot-input:focus {
-  outline: 2px solid #c9a24a;
+  outline: 2px solid var(--ba-bronze);
   outline-offset: 1px;
 }
 .boot-appearances {
@@ -1394,7 +1460,7 @@ textarea {
   border: 2px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: #5a4020;
+  color: #c2a878;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
@@ -1454,13 +1520,13 @@ textarea {
   width: 100%;
   margin-top: 14px;
   padding: 14px 16px;
-  border-radius: 4px;
-  border: 1px solid #6a5030;
+  border-radius: 2px;
+  border: 2px solid #8a7030;
   background:
-    linear-gradient(180deg, rgba(232, 200, 120, 0.35), rgba(40, 28, 12, 0.55)),
-    url("/ui/boot/boot-btn-plaque.png") center / cover no-repeat,
-    linear-gradient(180deg, #d4b05a, #8a6820);
-  color: #1a1408;
+    linear-gradient(180deg, rgba(184, 146, 74, 0.55), rgba(40, 32, 20, 0.85)),
+    url("/ui/black-anvil/slices/b3-login-button-bronze.png") center / 100% 100% no-repeat,
+    linear-gradient(180deg, #8a7030, #3a2e18);
+  color: #efe8dc;
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 14px;
@@ -1481,17 +1547,19 @@ textarea {
   width: 100%;
   margin-top: 10px;
   padding: 10px 14px;
-  border-radius: 4px;
-  border: 1px solid #8a6a38;
-  background: rgba(255, 245, 220, 0.35);
-  color: #5a4020;
+  border-radius: 2px;
+  border: 1px solid #6e5a3a;
+  background:
+    linear-gradient(180deg, rgba(42, 40, 38, 0.9), rgba(18, 16, 14, 0.95)),
+    url("/ui/black-anvil/slices/b3-login-button-iron.png") center / 100% 100% no-repeat;
+  color: #c2a878;
   font-size: 13px;
   cursor: pointer;
 }
 .boot-secondary:hover:not(:disabled) {
-  color: #2a1c0c;
-  border-color: #6a5030;
-  background: rgba(255, 245, 220, 0.55);
+  color: #efe8dc;
+  border-color: var(--ba-bronze);
+  filter: brightness(1.08);
 }
 .boot-secondary:disabled {
   opacity: 0.45;
@@ -1509,17 +1577,17 @@ textarea {
   gap: 12px;
   width: 100%;
   text-align: left;
-  border: 1px solid #8a6a38;
-  border-radius: 8px;
+  border: 1px solid #6e5a3a;
+  border-radius: 2px;
   padding: 10px 12px;
-  background: rgba(255, 245, 220, 0.4);
-  color: #2a1c0c;
+  background: rgba(20, 18, 16, 0.75);
+  color: #efe8dc;
   cursor: pointer;
 }
 .boot-char-slot.selected {
-  border-color: #a88830;
-  box-shadow: 0 0 0 1px rgba(168, 120, 40, 0.45);
-  background: rgba(232, 200, 120, 0.55);
+  border-color: var(--ba-bronze);
+  box-shadow: 0 0 0 1px rgba(184, 146, 74, 0.45);
+  background: rgba(60, 48, 28, 0.85);
 }
 .boot-char-portrait {
   width: 72px;
@@ -1535,7 +1603,7 @@ textarea {
 }
 .boot-char-detail {
   font-size: 13px;
-  color: #5a4020;
+  color: #c2a878;
   margin-top: 2px;
 }
 .boot-gender-toggle {
@@ -1545,16 +1613,16 @@ textarea {
 }
 .boot-gender-toggle button {
   padding: 10px 12px;
-  border-radius: 4px;
-  border: 1px solid #8a6a38;
-  background: rgba(255, 245, 220, 0.4);
-  color: #5a4020;
+  border-radius: 2px;
+  border: 1px solid #6e5a3a;
+  background: rgba(20, 18, 16, 0.8);
+  color: #c2a878;
   cursor: pointer;
 }
 .boot-gender-toggle button.selected {
-  border-color: #a88830;
-  background: rgba(168, 120, 40, 0.25);
-  color: #2a1c0c;
+  border-color: var(--ba-bronze);
+  background: rgba(184, 146, 74, 0.22);
+  color: #efe8dc;
   font-weight: 700;
 }
 
@@ -1830,11 +1898,14 @@ textarea {
 }
 .npc-dialog-card {
   width: min(440px, 92vw);
-  padding: 20px 22px;
-  background: linear-gradient(180deg, #2a241c 0%, #161310 100%);
-  border: 1px solid var(--panel-edge);
-  border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  padding: 22px 24px;
+  background:
+    linear-gradient(180deg, rgba(40, 32, 22, 0.92), rgba(18, 14, 10, 0.96)),
+    var(--ba-tex-parchment) center / 180px 180px repeat;
+  border: 14px solid transparent;
+  border-radius: 0;
+  border-image: url("/ui/black-anvil/slices/h1-dialogue-box.png") 36 fill / 14px / 0 stretch;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65);
 }
 .npc-dialog-world .npc-dialog-card {
   width: min(340px, 58vw);
@@ -3468,4 +3539,71 @@ button.equip-stat-label:focus-visible {
 .item-hover-copy { min-width: 0; }
 .item-hover-copy .skill-tip-title { margin-bottom: 2px; }
 .item-hover-copy .equip-item-meta { margin-top: 4px; }
+
+/* —— Black Anvil panel / inventory / skill chrome —— */
+.settings-panel,
+.spellbook-panel,
+.skill-tree-panel--map,
+.lok-panel,
+.equip-panel,
+.craft-panel,
+.party-panel,
+.explorer-panel {
+  border-radius: 0 !important;
+}
+.equip-slot,
+.skill-slot.hotbar-slot,
+.bag-slot,
+.inv-slot {
+  border-image: url("/ui/black-anvil/slices/f2-slot.png") 10 fill / 6px / 0 stretch;
+  border-style: solid;
+  border-width: 6px;
+  border-color: transparent;
+  border-radius: 0;
+  background-color: rgba(12, 10, 8, 0.85);
+}
+.explorer-panel .cmd-panel-body,
+.lok-panel .cmd-panel-body {
+  background:
+    linear-gradient(180deg, rgba(28, 22, 14, 0.5), rgba(12, 10, 8, 0.7)),
+    var(--ba-tex-parchment) center / 200px 200px repeat;
+}
+.skill-tree-minimap {
+  border: 3px solid var(--ba-bronze);
+  border-radius: 50%;
+  background:
+    url("/ui/black-anvil/slices/g1-minimap-compass.png") center / contain no-repeat,
+    #100e0c;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 0 12px rgba(0, 0, 0, 0.55);
+}
+.skill-tree-node,
+.cmd-node {
+  background:
+    url("/ui/black-anvil/slices/h2-skill-node.png") center / contain no-repeat,
+    var(--cmd-node-core);
+}
+.prov-dialog,
+.prov-pop {
+  border: 12px solid transparent;
+  border-image: var(--ba-quest) 32 fill / 12px / 0 stretch;
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(34, 28, 18, 0.9), rgba(14, 12, 10, 0.95)),
+    var(--ba-tex-parchment) center / 160px 160px repeat;
+}
+.hud-log-frame {
+  border: 10px solid transparent;
+  border-image: url("/ui/black-anvil/slices/a2-title-frame.png") 40 fill / 10px / 0 stretch;
+  border-radius: 0;
+  background: rgba(10, 9, 8, 0.88);
+}
+.hud-vitals-dock,
+.hud-menu-dock {
+  border: 10px solid transparent;
+  border-image: var(--ba-frame) 48 fill / 10px / 0 stretch;
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(20, 18, 14, 0.92), rgba(10, 9, 8, 0.96)),
+    var(--ba-tex-iron) center / 160px 160px repeat;
+}
 

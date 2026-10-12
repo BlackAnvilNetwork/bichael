@@ -71,12 +71,12 @@ function chainOf(chainId: number, rpcUrl: string): Chain {
   const cur = settlementCurrency(chainId);
   const name =
     chainId === 31337
-      ? "Bellgrave Anvil"
+      ? "Black Anvil Local"
       : chainId === 4663
         ? "Robinhood Chain"
         : chainId === 100 || chainId === 10200
           ? cur.name
-          : "Bellgrave";
+          : "Black Anvil";
   return {
     id: chainId,
     name,
@@ -143,12 +143,12 @@ async function ensureProviderChain(
   const cur = settlementCurrency(chainId);
   const chainName =
     chainId === 31337
-      ? "Bellgrave Anvil"
+      ? "Black Anvil Local"
       : chainId === 4663
         ? "Robinhood Chain"
         : chainId === 100 || chainId === 10200
           ? cur.name
-          : "Bellgrave";
+          : "Black Anvil";
   try {
     await wc.request({
       method: "wallet_switchEthereumChain",

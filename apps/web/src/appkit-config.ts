@@ -51,8 +51,8 @@ export function ensureAppKit(): AppKit | null {
       defaultNetwork: defaultNetwork(),
       projectId,
       metadata: {
-        name: "Legend of KEK",
-        description: "Bellgrave — Legend of KEK",
+        name: "Black Anvil",
+        description: "Black Anvil",
         url: typeof window !== "undefined" ? window.location.origin : "https://legendofkek.com",
         icons: ["https://legendofkek.com/favicon.ico"],
       },

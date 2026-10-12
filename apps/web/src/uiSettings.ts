@@ -14,7 +14,7 @@ export type UiSettings = {
 
 export const UI_COLOR_OPTIONS: { id: UiColorId; label: string; swatch: string }[] = [
   { id: "cyan", label: "Launcher Cyan", swatch: "#5ad8ec" },
-  { id: "gold", label: "Ash Gold", swatch: "#c9a24a" },
+  { id: "gold", label: "Black Anvil Bronze", swatch: "#b8924a" },
   { id: "navy", label: "Commands Navy", swatch: "#5a7ab8" },
   { id: "ember", label: "Ember", swatch: "#d4783a" },
   { id: "teal", label: "Aether Teal", swatch: "#3ecfbf" },
@@ -38,7 +38,7 @@ export const UI_FONT_OPTIONS: { id: UiFontId; label: string; sample: string }[] 
   { id: "georgia", label: "Georgia", sample: "Aa Bb 123" },
 ];
 
-const DEFAULTS: UiSettings = { color: "cyan", font: "source" };
+const DEFAULTS: UiSettings = { color: "gold", font: "cinzel" };
 
 function isColor(v: unknown): v is UiColorId {
   return typeof v === "string" && UI_COLOR_OPTIONS.some((o) => o.id === v);

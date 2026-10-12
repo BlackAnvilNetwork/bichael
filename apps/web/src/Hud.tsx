@@ -772,7 +772,7 @@ export function Hud() {
         </div>
 
         <div className="hud-menu-dock" role="menu" aria-label="Commands">
-          <div className="hud-commands-kicker">Bellgrave</div>
+          <div className="hud-commands-kicker">Black Anvil</div>
           <div className="hud-commands-header">Commands</div>
           {dualHasSpellbook(you.job, you.subjob) && (
             <button
@@ -1274,7 +1274,14 @@ export function BootScreens() {
     <div className="boot-screen">
       <div className="boot-frame">
         <div className="boot-card">
-          <h1 className="boot-brand">Legend of KEK</h1>
+          <h1 className="boot-brand">
+            <img
+              className="boot-brand-banner"
+              src="/ui/black-anvil/slices/a1-title-banner-hi.png"
+              alt="Black Anvil"
+            />
+            <span className="boot-brand-fallback">Black Anvil</span>
+          </h1>
           {!connected || phase === "boot" || phase === "auth" ? (
             <>
               <p className="boot-sub">{connected ? "Signing in…" : "Connecting to server…"}</p>
@@ -1392,7 +1399,7 @@ function SelectPanel({
           send({ type: "char/enter", characterId: selected?.id });
         }}
       >
-        Enter Bellgrave
+        Enter Black Anvil
       </button>
       <button
         type="button"

@@ -55,7 +55,7 @@ function chainOf(chainId: number, rpcUrl: string): Chain {
   const cur = settlementCurrency(chainId);
   return {
     id: chainId,
-    name: chainId === 31337 ? "Bellgrave Anvil" : cur.name,
+    name: chainId === 31337 ? "Black Anvil Local" : cur.name,
     nativeCurrency: { name: cur.name, symbol: cur.symbol, decimals: cur.decimals },
     rpcUrls: { default: { http: [rpcUrl] } },
   };
@@ -83,7 +83,7 @@ async function ensureInjectedChain(
     params: [
       {
         chainId: hexId,
-        chainName: chainId === 31337 ? "Bellgrave Anvil" : settlementCurrency(chainId).name,
+        chainName: chainId === 31337 ? "Black Anvil Local" : settlementCurrency(chainId).name,
         nativeCurrency: (() => {
           const cur = settlementCurrency(chainId);
           return { name: cur.name, symbol: cur.symbol, decimals: cur.decimals };

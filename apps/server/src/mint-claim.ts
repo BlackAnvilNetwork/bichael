@@ -104,7 +104,7 @@ export function mintClaimMessage(opts: {
   expiry: number;
 }): string {
   return [
-    "Bellgrave character mint claim",
+    "Black Anvil character mint claim",
     "tokenId: " + opts.tokenId,
     "gameWallet: " + opts.gameWallet.toLowerCase(),
     "chainId: " + String(opts.chainId),

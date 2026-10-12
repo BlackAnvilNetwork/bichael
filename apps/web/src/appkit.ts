@@ -155,7 +155,7 @@ async function sessionFromModal(
     account: address,
     chain: {
       id: chainId,
-      name: chainId === 31337 ? "Bellgrave Anvil" : cur.name,
+      name: chainId === 31337 ? "Black Anvil Local" : cur.name,
       nativeCurrency: { name: cur.name, symbol: cur.symbol, decimals: cur.decimals },
       rpcUrls: { default: { http: [rpcUrl] } },
     },

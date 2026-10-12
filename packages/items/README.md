@@ -1,6 +1,6 @@
 # @bellgrave/items
 
-Item catalog for Legend of Kek / Bellgrave: stats, descriptions, icon paths, craft metadata.
+Item catalog for Black Anvil (formerly Legend of Kek / Bellgrave): stats, descriptions, icon paths, craft metadata.
 
 **Source of truth:** `docs/legend-of-kek-item-manifest.xlsx`
 

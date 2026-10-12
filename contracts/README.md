@@ -1,4 +1,4 @@
-# Bellgrave contracts (post-MVP)
+# Black Anvil contracts (package still @bellgrave / lok-log) (post-MVP)
 
 MVP inventory and potion burns are **mock** (server-side inventory decrement).
 

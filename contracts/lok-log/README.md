@@ -1,4 +1,4 @@
-# Legend of Kek: character contracts (log model)
+# Black Anvil character contracts (lok-log; engine names unchanged) (log model)
 
 Event-sourced characters with onchain checkpoints. The chain stores **one state root per character** plus a position in
 that character's hash-chained event log. Crafting, XP, abilities and equipment are off-chain game events that anyone can

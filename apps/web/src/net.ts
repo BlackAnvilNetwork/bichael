@@ -296,7 +296,7 @@ export function connectSocket() {
   socket = new WebSocket(WS_URL);
   socket.addEventListener("open", () => {
     useGame.getState().setConnected(true);
-    useGame.getState().pushLog("Connected to Bellgrave server.");
+    useGame.getState().pushLog("Connected to Black Anvil server.");
     startHeartbeat();
     tryAutoAuth();
   });
