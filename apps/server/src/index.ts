@@ -192,7 +192,6 @@ import {
   claimQueuedWithdrawal,
   depositKekOnchain,
   ensureLocalRuleset,
-  linkCharacterNft,
   loadQueues,
   queueKekWithdrawal,
   enqueueVaultSync,
@@ -206,6 +205,7 @@ import {
 } from "./lok-vault";
 import { endClaim, guardedKekMove, guardedWithdraw, prepareClaim, readWithdrawIntents, reconcileWithdrawIntents, removeWithdrawIntent, reservedOf, upsertWithdrawIntent, withPlayerCharge, withdrawIntentPath, writeWithdrawIntents } from "./kek-guard";
 import { characterNameKey, normalizeCharacterName } from "./character-name";
+import { characterMintClientConfig, confirmCharacterMint } from "./character-mint";
 import { randomBytes } from "node:crypto";
 import { authAllowlist, authVerifyClient, clientAddress, dropAuthConnection, issueAuthChallenge, resolveAuthOrigin, verifyAuthLogin, isEthAddress } from "./wallet-auth";
 import { defaultLokDir, LokWorld } from "./lok-world";
@@ -230,6 +230,8 @@ type Player = {
   wallet: string;
   /** Stable character slot id within the account (multi-char). */
   charId: string;
+  /** LOKC token id once the wallet mint is confirmed. Null until then. */
+  nftTokenId: string | null;
   name: string;
   job: JobId;
   gender: "male" | "female" | "pepeka";
@@ -2384,6 +2386,7 @@ function snapshotFor(p: Player): SnapshotMessage {
       skillPrestige: p.skillPrestige,
       freeStatPoints: p.freeStatPoints,
       freeStats: { ...p.freeStats },
+      nftTokenId: p.nftTokenId,
       lok: (() => {
         const view = lok.view(lokToken(p));
         return {
@@ -2441,6 +2444,7 @@ function accountPreviews(wallet: string): {
   job: JobId;
   level: number;
   gender: "male" | "female" | "pepeka";
+  nftTokenId: string | null;
 }[] {
   const slots = accountRoster.get(wallet);
   if (!slots) return [];
@@ -2450,6 +2454,7 @@ function accountPreviews(wallet: string): {
     job: p.job,
     level: p.level,
     gender: p.gender ?? "male",
+    nftTokenId: p.nftTokenId,
   }));
 }
 
@@ -2485,6 +2490,7 @@ function createPlayer(
   const p: Player = {
     wallet,
     charId,
+    nftTokenId: null,
     name,
     job,
     gender,
@@ -4478,10 +4484,116 @@ function adoptOrphanLogs(wallet: string, ws: WebSocket) {
     }
     const bound = lok.boundChars().find((c) => c.charId === row.charId)?.name ?? renamed;
     const norm = normalizeCharacterName(bound);
-    createPlayer(owner, norm.ok ? norm.name : bound, ws, job, "male", row.charId);
+    const adopted = createPlayer(owner, norm.ok ? norm.name : bound, ws, job, "male", row.charId);
+    adopted.nftTokenId = lok.nftTokenFor(row.charId);
   }
   players.delete(owner);
   walletToPlayer.delete(owner);
+}
+
+async function mintForJob(
+  wallet: string,
+  job: JobId,
+  nftTx: string | undefined,
+): Promise<{ ok: true; tokenId: string } | { ok: true; skipped: true } | { ok: false; error: string }> {
+  const cfg = characterMintClientConfig();
+  const jobIndex = JOB_IDS.indexOf(job);
+  if (!cfg) return { ok: true, skipped: true };
+  if (!nftTx) {
+    return { ok: false, error: "Mint the character NFT in your wallet first. No character was created." };
+  }
+  return confirmCharacterMint({ txHash: nftTx, wallet, job: jobIndex < 0 ? 0 : jobIndex });
+}
+
+function rememberMint(p: Player, tokenId: string, nftTx: string) {
+  const logId = lokToken(p);
+  if (!logId) {
+    pushLog(p, "Could not open your log identity.");
+    return;
+  }
+  const linked = lok.attachCharacterNft(p.charId, tokenId, nftTx);
+  if (!linked.ok) {
+    pushLog(p, linked.error);
+    return;
+  }
+  p.nftTokenId = tokenId;
+  pushLog(p, "Minted Character NFT #" + tokenId + " (LOKC) to your wallet.");
+  send(p.ws, { type: "char/nft", characterId: p.charId, nftTokenId: tokenId });
+}
+
+async function createCharacterFromClient(
+  ws: WebSocket,
+  wallet: string,
+  msg: { name: string; job: JobId; gender?: "male" | "female" | "pepeka"; nftTx?: string },
+) {
+  if (!isEthAddress(wallet)) {
+    send(ws, { type: "error", message: "Authenticate with a signed wallet first." });
+    return;
+  }
+  const named = normalizeCharacterName(msg.name);
+  if (!named.ok) {
+    send(ws, { type: "error", message: named.error });
+    return;
+  }
+  if (rosterNameTaken(named.name)) {
+    send(ws, { type: "error", message: "That name is already on the log. Pick another." });
+    return;
+  }
+  const capped = lok.ensureWalletCapacity(wallet);
+  if (!capped.ok) {
+    send(ws, { type: "error", message: capped.error });
+    return;
+  }
+  const job = isJobId(msg.job) && JOBS[msg.job].playable ? msg.job : "time_mage";
+  const minted = await mintForJob(wallet, job, msg.nftTx);
+  if (!minted.ok) {
+    send(ws, { type: "error", message: minted.error });
+    return;
+  }
+  const charId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const claimed = lok.claimName(charId, named.name, wallet);
+  if (!claimed.ok) {
+    send(ws, { type: "error", message: claimed.error });
+    return;
+  }
+  const gender = msg.gender === "female" ? "female" : msg.gender === "pepeka" ? "pepeka" : "male";
+  const p = createPlayer(wallet, claimed.name, ws, job, gender, charId);
+  claimStarter(p);
+  if (minted.ok && "tokenId" in minted && msg.nftTx) {
+    rememberMint(p, minted.tokenId, msg.nftTx);
+  } else {
+    pushLog(p, "No Character NFT was minted. This server has no character factory, so the log identity was still created.");
+  }
+  pushLog(
+    p,
+    `${JOBS[job].name} created. At L${SUBJOB_UNLOCK_LEVEL}+ the Job Master sets a support job (half level).`,
+  );
+  send(ws, snapshotFor(p));
+}
+
+async function linkExistingCharacterNft(ws: WebSocket, wallet: string, characterId: string, nftTx: string) {
+  const slots = accountRoster.get(wallet);
+  const p = slots?.get(characterId);
+  if (!p) {
+    send(ws, { type: "error", message: "Character not found." });
+    return;
+  }
+  if (p.nftTokenId) {
+    send(ws, { type: "error", message: "This character already has an NFT." });
+    return;
+  }
+  const minted = await mintForJob(wallet, p.job, nftTx);
+  if (!minted.ok) {
+    send(ws, { type: "error", message: minted.error });
+    return;
+  }
+  if (!("tokenId" in minted)) {
+    send(ws, { type: "error", message: "Character mint is not configured." });
+    return;
+  }
+  p.ws = ws;
+  rememberMint(p, minted.tokenId, nftTx);
+  if (players.get(wallet)?.charId === p.charId) send(ws, snapshotFor(p));
 }
 
 function onMessage(ws: WebSocket, data: string) {
@@ -4559,6 +4671,7 @@ function onMessage(ws: WebSocket, data: string) {
         hasCharacter: characters.length > 0,
         characters,
         character: primary,
+        characterMint: characterMintClientConfig(),
       });
     }).catch((err) => {
       // A throw after the signature check (for example a corrupt save read by
@@ -4577,52 +4690,18 @@ function onMessage(ws: WebSocket, data: string) {
   }
 
   if (msg.type === "char/create") {
-    if (!isEthAddress(wallet)) {
-      send(ws, { type: "error", message: "Authenticate with a signed wallet first." });
-      return;
-    }
-    const named = normalizeCharacterName(msg.name);
-    if (!named.ok) {
-      send(ws, { type: "error", message: named.error });
-      return;
-    }
-    if (rosterNameTaken(named.name)) {
-      send(ws, { type: "error", message: "That name is already on the log. Pick another." });
-      return;
-    }
-    const capped = lok.ensureWalletCapacity(wallet);
-    if (!capped.ok) {
-      send(ws, { type: "error", message: capped.error });
-      return;
-    }
-    const charId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const claimed = lok.claimName(charId, named.name, wallet);
-    if (!claimed.ok) {
-      send(ws, { type: "error", message: claimed.error });
-      return;
-    }
-    const job = isJobId(msg.job) && JOBS[msg.job].playable ? msg.job : "time_mage";
-    const gender =
-      msg.gender === "female" ? "female" : msg.gender === "pepeka" ? "pepeka" : "male";
-    const p = createPlayer(wallet, claimed.name, ws, job, gender, charId);
-    claimStarter(p);
-    const minted = lok.tokenFor(p.charId);
-    if (minted) {
-      void linkCharacterNft(minted, JOB_IDS.indexOf(job), wallet).then((res) => {
-        if (p.ws.readyState !== p.ws.OPEN) return;
-        if (res.ok && "tokenId" in res) {
-          pushLog(p, "Linked character NFT #" + res.tokenId + " on the local checkpoint.");
-        } else if (!res.ok) {
-          pushLog(p, res.error);
-        }
-        send(p.ws, snapshotFor(p));
-      }).catch((err) => console.error("[bellgrave] character NFT link failed", err));
-    }
-    pushLog(
-      p,
-      `${JOBS[job].name} created. At L${SUBJOB_UNLOCK_LEVEL}+ the Job Master sets a support job (half level).`,
-    );
-    send(ws, snapshotFor(p));
+    void createCharacterFromClient(ws, wallet, msg).catch((err) => {
+      console.error("[bellgrave] character create failed", err);
+      send(ws, { type: "error", message: "Character create failed. Nothing was minted." });
+    });
+    return;
+  }
+
+  if (msg.type === "char/link-nft") {
+    void linkExistingCharacterNft(ws, wallet, msg.characterId, msg.nftTx).catch((err) => {
+      console.error("[bellgrave] character NFT link failed", err);
+      send(ws, { type: "error", message: "Character NFT was not linked." });
+    });
     return;
   }
 
@@ -4853,3 +4932,15 @@ setInterval(() => {
   for (const p of players.values()) rememberPlayer(p);
 }, SAVE_INTERVAL_MS);
 console.log(`[bellgrave] game server on ws://localhost:${PORT}`);
+{
+  const mintCfg = characterMintClientConfig();
+  if (mintCfg) {
+    console.log(`[bellgrave] character mint factory ${mintCfg.factory} chain ${mintCfg.chainId}`);
+  } else if (process.env.LOK_FACTORY?.trim()) {
+    console.error(
+      "[bellgrave] LOK_FACTORY is set but character mint is not advertised. Need LOK_NFT, LOK_CHAIN_ID, and LOK_PUBLIC_RPC or LOK_CHAIN_RPC.",
+    );
+  } else {
+    console.log("[bellgrave] character mint is not configured. New characters stay on the log until a factory is set.");
+  }
+}

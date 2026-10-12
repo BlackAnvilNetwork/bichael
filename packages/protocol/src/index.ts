@@ -37,6 +37,13 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
     name: z.string().min(2).max(16),
     job: JobId,
     gender: Gender.default("male"),
+    /** Factory createCharacter tx. Required when the server advertises a character factory. */
+    nftTx: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
+  }),
+  z.object({
+    type: z.literal("char/link-nft"),
+    characterId: z.string().min(1).max(64),
+    nftTx: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
   }),
   z.object({
     type: z.literal("char/enter"),
@@ -364,6 +371,14 @@ export type AhEscrowClientConfig = {
   chainId: number;
 };
 
+/** Browser-reachable character factory. The wallet calls createCharacter and pays mintFee. */
+export type CharacterMintClientConfig = {
+  factory: string;
+  nft: string;
+  rpcUrl: string;
+  chainId: number;
+};
+
 export type LokSnapshot = {
   tokenId: string;
   /**
@@ -441,6 +456,8 @@ export type SnapshotMessage = {
     freeStatPoints: number;
     /** Allocated free attribute points. */
     freeStats: { str: number; dex: number; vit: number; agi: number; int: number; mnd: number };
+    /** On-chain LOKC id owned by this wallet. Null when the character was not minted. */
+    nftTokenId?: string | null;
     /** Hash-chained lok balances. KEK is deposit-only. */
     lok?: LokSnapshot;
   };
@@ -458,6 +475,8 @@ export type CharacterPreview = {
   job: JobId;
   level: number;
   gender: Gender;
+  /** LOKC token id, when this character was minted to the wallet. */
+  nftTokenId?: string | null;
 };
 
 export type SpellOffer = {
@@ -487,7 +506,10 @@ export type ServerMessage =
       characters: CharacterPreview[];
       /** Last-active / primary character — convenience for older clients. */
       character?: CharacterPreview;
+      /** Factory the wallet must call before a new character is kept. Null when unset. */
+      characterMint?: CharacterMintClientConfig | null;
     }
+  | { type: "char/nft"; characterId: string; nftTokenId: string }
   | { type: "log"; message: string }
   | { type: "pong"; t?: number }
   | { type: "party/invite"; fromId: string; fromName: string; partyId: string; expiresAt: number }

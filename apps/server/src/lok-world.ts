@@ -61,7 +61,16 @@ type ApplyBody = {
   state?: EngineState;
 };
 
-type BindChar = { charId: string; tokenId: string; name: string; job: number; wallet?: string };
+type BindChar = {
+  charId: string;
+  tokenId: string;
+  name: string;
+  job: number;
+  wallet?: string;
+  /** ERC-721 id minted to the wallet. Independent of the log token id. */
+  nftTokenId?: string;
+  nftTx?: string;
+};
 type ReservedName = { charId: string; name: string; wallet?: string; at: number };
 type BindFile = { nextToken: string; nextListing: string; chars: BindChar[]; reserved: ReservedName[] };
 
@@ -689,12 +698,54 @@ export class LokWorld {
     return rows.some((row) => row.charId !== exceptCharId && characterNameKey(row.name) === key);
   }
 
-  boundChars(): { charId: string; tokenId: string; name: string; job: number; wallet?: string }[] {
+  boundChars(): {
+    charId: string;
+    tokenId: string;
+    name: string;
+    job: number;
+    wallet?: string;
+    nftTokenId?: string;
+  }[] {
     return this.bind.chars.map((c) => ({ ...c }));
   }
 
+  nftTokenFor(charId: string): string | null {
+    return this.bind.chars.find((c) => c.charId === charId)?.nftTokenId ?? null;
+  }
+
+  /** Remember a confirmed factory mint on this character. One NFT and one tx, once. */
+  attachCharacterNft(
+    charId: string,
+    nftTokenId: string,
+    nftTx: string,
+  ): { ok: true } | { ok: false; error: string } {
+    if (!/^[1-9][0-9]{0,77}$/.test(nftTokenId)) return { ok: false, error: "Bad character NFT id." };
+    if (!/^0x[0-9a-fA-F]{64}$/.test(nftTx)) return { ok: false, error: "Bad mint transaction." };
+    const tx = nftTx.toLowerCase();
+    const row = this.bind.chars.find((c) => c.charId === charId);
+    if (!row) return { ok: false, error: "Character not found." };
+    if (row.nftTokenId && row.nftTokenId !== nftTokenId) {
+      return { ok: false, error: "This character already has an NFT." };
+    }
+    const takenId = this.bind.chars.find((c) => c.nftTokenId === nftTokenId && c.charId !== charId);
+    if (takenId) return { ok: false, error: "That NFT is already linked to another character." };
+    const takenTx = this.bind.chars.find((c) => c.nftTx === tx && c.charId !== charId);
+    if (takenTx) return { ok: false, error: "That mint transaction is already linked." };
+    row.nftTokenId = nftTokenId;
+    row.nftTx = tx;
+    this.saveBind();
+    return { ok: true };
+  }
+
   /** Characters persisted for this wallet. Unowned rows are never returned. */
-  charsForWallet(wallet: string): { charId: string; tokenId: string; name: string; job: number; wallet: string }[] {
+  charsForWallet(wallet: string): {
+    charId: string;
+    tokenId: string;
+    name: string;
+    job: number;
+    wallet: string;
+    nftTokenId?: string;
+  }[] {
     const owner = wallet.trim().toLowerCase();
     return this.bind.chars
       .filter((c): c is BindChar & { wallet: string } => !!c.wallet && c.wallet.toLowerCase() === owner)
@@ -1057,10 +1108,31 @@ export class LokWorld {
     }
     const parsed = JSON.parse(readFileSync(this.bindPath, "utf8")) as BindFile;
     const reserved = Array.isArray(parsed.reserved) ? parsed.reserved : [];
+    const chars = (Array.isArray(parsed.chars) ? parsed.chars : []).map((row) => {
+      if (!row || typeof row.charId !== "string") return row;
+      const nftTokenId =
+        typeof row.nftTokenId === "string" && /^[1-9][0-9]{0,77}$/.test(row.nftTokenId)
+          ? row.nftTokenId
+          : undefined;
+      const nftTx =
+        typeof row.nftTx === "string" && /^0x[0-9a-fA-F]{64}$/.test(row.nftTx)
+          ? row.nftTx.toLowerCase()
+          : undefined;
+      const next: BindChar = {
+        charId: row.charId,
+        tokenId: row.tokenId,
+        name: row.name,
+        job: row.job,
+        ...(row.wallet ? { wallet: String(row.wallet).toLowerCase() } : {}),
+        ...(nftTokenId ? { nftTokenId } : {}),
+        ...(nftTx ? { nftTx } : {}),
+      };
+      return next;
+    });
     return {
       nextToken: parsed.nextToken || "1",
       nextListing: parsed.nextListing || "1",
-      chars: Array.isArray(parsed.chars) ? parsed.chars : [],
+      chars,
       reserved: reserved
         .filter(
           (row): row is ReservedName =>

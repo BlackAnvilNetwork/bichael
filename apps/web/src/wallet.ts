@@ -49,6 +49,27 @@ export function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+function chainHex(chainId: number): string {
+  return "0x" + chainId.toString(16);
+}
+
+async function addChain(provider: EIP1193Provider, chainId: number, rpcUrl: string) {
+  const robinhood = chainId === ROBINHOOD_CHAIN_ID;
+  const anvil = chainId === 31337;
+  await provider.request({
+    method: "wallet_addEthereumChain",
+    params: [
+      {
+        chainId: chainHex(chainId),
+        chainName: robinhood ? "Robinhood Chain" : anvil ? "Bellgrave Anvil" : "Bellgrave",
+        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+        rpcUrls: [rpcUrl],
+        blockExplorerUrls: robinhood ? ["https://robinhoodchain.blockscout.com"] : [],
+      },
+    ],
+  });
+}
+
 async function ensureRobinhood(provider: EIP1193Provider) {
   try {
     await provider.request({
@@ -58,18 +79,26 @@ async function ensureRobinhood(provider: EIP1193Provider) {
   } catch (err) {
     const code = (err as { code?: number }).code;
     if (code !== 4902) return;
+    await addChain(provider, ROBINHOOD_CHAIN_ID, "https://rpc.mainnet.chain.robinhood.com");
+  }
+}
+
+/** Switch the injected wallet to the chain that holds the character factory. */
+export async function ensureWalletChain(chainId: number, rpcUrl: string) {
+  const provider = injectedProvider();
+  if (!provider) {
+    throw new Error("No wallet found in this browser. Install MetaMask or Rabby, then reopen this page.");
+  }
+  const hex = chainHex(chainId);
+  try {
     await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [
-        {
-          chainId: ROBINHOOD_CHAIN_HEX,
-          chainName: "Robinhood Chain",
-          nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-          rpcUrls: ["https://rpc.mainnet.chain.robinhood.com"],
-          blockExplorerUrls: ["https://robinhoodchain.blockscout.com"],
-        },
-      ],
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: hex }],
     });
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code !== 4902) throw err;
+    await addChain(provider, chainId, rpcUrl);
   }
 }
 

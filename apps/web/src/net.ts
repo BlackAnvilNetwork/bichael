@@ -202,6 +202,7 @@ export function connectSocket() {
       g.setHasCharacter(list.length > 0 || msg.hasCharacter);
       const primary = msg.character ?? list[0] ?? null;
       g.setCharacterPreview(primary);
+      g.setCharacterMint(msg.characterMint ?? null);
 
       const resumeId = consumeResumeId(list.map((c) => c.id));
       if (resumeId) {
@@ -240,6 +241,7 @@ export function connectSocket() {
         job: msg.you.job,
         level: msg.you.level,
         gender: msg.you.gender ?? "male",
+        nftTokenId: msg.you.nftTokenId ?? null,
       };
       g.setCharacterPreview(preview);
       g.setSelectedCharId(preview.id);
@@ -250,6 +252,8 @@ export function connectSocket() {
         g.setPendingCreateEnter(false);
         g.setPhase("play");
       }
+    } else if (msg.type === "char/nft") {
+      g.setCharacterNft(msg.characterId, msg.nftTokenId);
     } else if (msg.type === "log") {
       g.pushLog(msg.message);
     } else if (msg.type === "error") {
@@ -300,6 +304,7 @@ export function logoutToMenu() {
   g.setWallet(null);
   g.setCharacters([]);
   g.setCharacterPreview(null);
+  g.setCharacterMint(null);
   g.setHasCharacter(false);
   g.setSelectedCharId(null);
   g.setPhase("boot");

@@ -1,4 +1,5 @@
 import {
+  JOB_IDS,
   JOBS,
   SUBJOB_UNLOCK_LEVEL,
   abilityCategory,
@@ -18,7 +19,9 @@ import {
 import { ITEM } from "@bellgrave/config";
 import { getItem } from "@bellgrave/items";
 import type { AbilityId, UnitSnapshot } from "@bellgrave/protocol";
+import { formatEther } from "viem";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
+import { mintCharacterNft, readMintFee, shortChainError } from "./character-mint";
 import { AbilityIcon } from "./AbilityIcon";
 import { chromaKeyIconUrl } from "./chroma";
 import { CraftingPanel } from "./CraftingPanel";
@@ -725,6 +728,7 @@ export function Hud() {
           <div className="hud-vitals-dock">
           <div className="hud-identity">
             {you.name} · Lv.{you.level} · <span className="job">{jobName}{subName}</span>
+            <span className="wallet">{you.nftTokenId ? ` · LOKC #${you.nftTokenId}` : " · not an NFT"}</span>
             {!connected && <span className="offline"> · OFFLINE</span>}
             <span className="wallet">{shortWallet}</span>
           </div>
@@ -1232,6 +1236,42 @@ function appearancePortrait(g: string | undefined): string {
   return "/ui/boot/boot-portrait-male.png";
 }
 
+function MintExistingButton({
+  characterId,
+  job,
+}: {
+  characterId: string;
+  job: JobId;
+}) {
+  const characterMint = useGame((s) => s.characterMint);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!characterMint) return null;
+  const jobIndex = JOB_IDS.indexOf(job);
+  return (
+    <>
+      <button
+        type="button"
+        className="boot-secondary"
+        disabled={busy || jobIndex < 0}
+        onClick={() => {
+          setError(null);
+          setBusy(true);
+          void mintCharacterNft(characterMint, jobIndex)
+            .then((nftTx) => {
+              send({ type: "char/link-nft", characterId, nftTx });
+            })
+            .catch((err: unknown) => setError(shortChainError(err)))
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? "Minting…" : "Mint character NFT"}
+      </button>
+      {error && <p className="boot-hint">{error}</p>}
+    </>
+  );
+}
+
 function SelectPanel({
   preview,
 }: {
@@ -1241,10 +1281,12 @@ function SelectPanel({
     job: JobId;
     level: number;
     gender?: "male" | "female" | "pepeka";
+    nftTokenId?: string | null;
   } | null;
 }) {
   const characters = useGame((s) => s.characters);
   const selectedCharId = useGame((s) => s.selectedCharId);
+  const characterMint = useGame((s) => s.characterMint);
   const list =
     characters.length > 0
       ? characters
@@ -1256,6 +1298,7 @@ function SelectPanel({
               job: preview.job,
               level: preview.level,
               gender: ("gender" in preview && preview.gender) || "male",
+              nftTokenId: preview.nftTokenId ?? null,
             },
           ]
         : [];
@@ -1291,6 +1334,7 @@ function SelectPanel({
                   <div className="boot-char-name">{c.name}</div>
                   <div className="boot-char-detail">
                     Lv.{c.level} {jobName} · {appearanceLabel(g)}
+                    {c.nftTokenId ? ` · LOKC #${c.nftTokenId}` : " · not an NFT"}
                   </div>
                 </div>
               </button>
@@ -1312,6 +1356,14 @@ function SelectPanel({
       >
         Enter Bellgrave
       </button>
+      {selected && !selected.nftTokenId && <MintExistingButton characterId={selected.id} job={selected.job} />}
+      {selected && !selected.nftTokenId && (
+        <p className="boot-hint">
+          {characterMint
+            ? "This character is not an NFT yet. Mint it into the connected wallet."
+            : "This character is on the log only. No Character NFT was minted."}
+        </p>
+      )}
       <button
         type="button"
         className="boot-secondary"
@@ -1332,19 +1384,60 @@ type Appearance = "male" | "female" | "pepeka";
 function CreatePanel() {
   const [job, setJob] = useState<JobId>("time_mage");
   const [gender, setGender] = useState<Appearance>("male");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [feeLabel, setFeeLabel] = useState<string | null>(null);
   const characters = useGame((s) => s.characters);
   const wallet = useGame((s) => s.wallet);
+  const characterMint = useGame((s) => s.characterMint);
   const playableJobs = (Object.keys(JOBS) as JobId[]).filter((j) => JOBS[j].playable);
+  useEffect(() => {
+    if (!characterMint) {
+      setFeeLabel(null);
+      return;
+    }
+    let cancelled = false;
+    void readMintFee(characterMint)
+      .then((fee) => {
+        if (!cancelled) setFeeLabel(formatEther(fee));
+      })
+      .catch(() => {
+        if (!cancelled) setFeeLabel(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [characterMint]);
   return (
     <form
       className="boot-panel"
       onSubmit={(e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
+        if (busy) return;
         const fd = new FormData(e.currentTarget);
         const name = String(fd.get("name") || "Chrona").slice(0, 16);
-        useGame.getState().setPendingCreateEnter(true);
-        send({ type: "char/create", name, job, gender });
-        window.setTimeout(() => send({ type: "claim/starter" }), 100);
+        const jobIndex = JOB_IDS.indexOf(job);
+        setError(null);
+        setBusy(true);
+        const finish = () => setBusy(false);
+        if (!characterMint) {
+          useGame.getState().setPendingCreateEnter(true);
+          send({ type: "char/create", name, job, gender });
+          window.setTimeout(() => send({ type: "claim/starter" }), 100);
+          finish();
+          return;
+        }
+        void mintCharacterNft(characterMint, jobIndex)
+          .then((nftTx) => {
+            useGame.getState().setPendingCreateEnter(true);
+            send({ type: "char/create", name, job, gender, nftTx });
+            window.setTimeout(() => send({ type: "claim/starter" }), 100);
+          })
+          .catch((err: unknown) => {
+            useGame.getState().setPendingCreateEnter(false);
+            setError(shortChainError(err));
+          })
+          .finally(finish);
       }}
     >
       <p className="boot-sub">Create your adventurer</p>
@@ -1399,9 +1492,19 @@ function CreatePanel() {
       <p className="boot-hint">
         Lv.{SUBJOB_UNLOCK_LEVEL}+ unlocks a support job (half main level). Your sprite stays main.
       </p>
-      <button type="submit" className="boot-primary">
-        Create {JOBS[job]?.name ?? "Adventurer"} · Claim starter
+      <p className="boot-hint">
+        {characterMint
+          ? `Your wallet mints the LOKC character NFT${feeLabel ? ` for ${feeLabel} ETH` : ""}.`
+          : "This server has no character factory, so create saves a log identity and does not mint an NFT."}
+      </p>
+      <button type="submit" className="boot-primary" disabled={busy}>
+        {busy
+          ? "Minting…"
+          : characterMint
+            ? `Mint ${JOBS[job]?.name ?? "Adventurer"}${feeLabel ? ` · ${feeLabel} ETH` : ""}`
+            : `Create ${JOBS[job]?.name ?? "Adventurer"} · Claim starter`}
       </button>
+      {error && <p className="boot-hint">{error}</p>}
       {characters.length > 0 && (
         <button
           type="button"

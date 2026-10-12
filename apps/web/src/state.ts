@@ -1,5 +1,6 @@
 import type {
   AbilityId,
+  CharacterMintClientConfig,
   CharacterPreview,
   JobId,
   LokEventView,
@@ -42,6 +43,8 @@ type GameState = {
   characters: CharacterPreview[];
   selectedCharId: string | null;
   characterPreview: CharacterPreview | null;
+  /** Factory the wallet must call to mint LOKC. Null when this server has none. */
+  characterMint: CharacterMintClientConfig | null;
   /** True after submitting char/create — next matching snapshot may enter play. */
   pendingCreateEnter: boolean;
   snapshot: SnapshotMessage | null;
@@ -56,6 +59,8 @@ type GameState = {
   setCharacters: (c: CharacterPreview[]) => void;
   setSelectedCharId: (id: string | null) => void;
   setCharacterPreview: (c: GameState["characterPreview"]) => void;
+  setCharacterMint: (c: CharacterMintClientConfig | null) => void;
+  setCharacterNft: (characterId: string, nftTokenId: string) => void;
   setPendingCreateEnter: (v: boolean) => void;
   setSnapshot: (s: SnapshotMessage) => void;
   clearSnapshot: () => void;
@@ -74,6 +79,7 @@ export const useGame = create<GameState>((set, get) => ({
   characters: [],
   selectedCharId: null,
   characterPreview: null,
+  characterMint: null,
   pendingCreateEnter: false,
   snapshot: null,
   logs: [],
@@ -87,6 +93,17 @@ export const useGame = create<GameState>((set, get) => ({
   setCharacters: (characters) => set({ characters, hasCharacter: characters.length > 0 }),
   setSelectedCharId: (selectedCharId) => set({ selectedCharId }),
   setCharacterPreview: (characterPreview) => set({ characterPreview }),
+  setCharacterMint: (characterMint) => set({ characterMint }),
+  setCharacterNft: (characterId, nftTokenId) =>
+    set((s) => ({
+      characters: s.characters.map((c) => (c.id === characterId ? { ...c, nftTokenId } : c)),
+      characterPreview:
+        s.characterPreview?.id === characterId ? { ...s.characterPreview, nftTokenId } : s.characterPreview,
+      snapshot:
+        s.snapshot?.you.characterId === characterId
+          ? { ...s.snapshot, you: { ...s.snapshot.you, nftTokenId } }
+          : s.snapshot,
+    })),
   setPendingCreateEnter: (pendingCreateEnter) => set({ pendingCreateEnter }),
   clearSnapshot: () => set({ snapshot: null, selectedTarget: null, explorer: null }),
   setSnapshot: (snapshot) => {
