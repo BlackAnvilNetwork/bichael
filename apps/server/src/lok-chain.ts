@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DepositQuarantine, depositQuarantinePath, type QuarantinedInbound, type QuarantineReason } from "./lok-deposit-quarantine";
 import { defaultLokDir, type LokWorld } from "./lok-world";
 
 /** Keccak of KekDepositRequested(uint256,uint64,uint256,address). */
@@ -120,7 +121,7 @@ export function applyChainInbound(
   return applyItemImport(lok, inbound);
 }
 
-type RpcLog = { topics?: string[]; data?: string; blockNumber?: string; logIndex?: string };
+type RpcLog = { topics?: string[]; data?: string; blockNumber?: string; logIndex?: string; transactionHash?: string };
 
 /** Blocks a deposit must sit before it can be credited. Anvil's finalized tag is genesis here, so depth is used instead. */
 export const DEPOSIT_CONFIRMATIONS = 2n;
@@ -193,17 +194,46 @@ export async function scanKekDeposits(opts: {
   });
 }
 
+/**
+ * Engine refusals that retrying the same event can never fix. These are
+ * quarantined instead of halting the cursor for every player.
+ */
+export function permanentInboundError(error: string): QuarantineReason | null {
+  if (/character is not spawned/i.test(error)) return "unknown-token";
+  if (/id is empty or invalid|amount must be greater than zero|balance overflow/i.test(error)) return "unprocessable";
+  return null;
+}
+
+/** Stable id of a chain log: blockNumber:logIndex. */
+export function inboundLogId(log: { blockNumber?: string; logIndex?: string }): string {
+  const hex = (v: string | undefined) => "0x" + BigInt(v && v !== "0x" ? v : "0x0").toString(16);
+  return hex(log.blockNumber) + ":" + hex(log.logIndex);
+}
+
+export type InboundQuarantine = Pick<DepositQuarantine, "has" | "add" | "explainsGap">;
+
 export async function scanChainInbounds(opts: {
   cursor: bigint;
   checkpoint: string;
   rpcCall: (method: string, params: unknown[]) => Promise<unknown>;
   apply: (inbound: ChainInbound) => { ok: true } | { ok: false; error: string };
   expectedNonce?: (tokenId: string) => number;
-}): Promise<{ cursor: bigint }> {
+  /**
+   * Where permanently unprocessable events go. Without it the old behavior
+   * stands: undecodable logs are skipped and every other refusal halts.
+   */
+  quarantine?: InboundQuarantine;
+  /** Alert sink for quarantines and halts. Defaults to console.error. */
+  alert?: (message: string) => void;
+  now?: () => Date;
+}): Promise<{ cursor: bigint; halted?: { id: string; kind: "gap" | "other"; error: string }; quarantined: string[] }> {
+  const alert = opts.alert ?? ((message: string) => console.error(message));
+  const quarantined: string[] = [];
+  // RPC failures throw out of here before the cursor moves: a transient error halts and retries.
   const latest = BigInt(String(await opts.rpcCall("eth_blockNumber", [])));
-  if (latest < DEPOSIT_CONFIRMATIONS) return { cursor: opts.cursor };
+  if (latest < DEPOSIT_CONFIRMATIONS) return { cursor: opts.cursor, quarantined };
   const safeHead = latest - DEPOSIT_CONFIRMATIONS;
-  if (safeHead < opts.cursor) return { cursor: opts.cursor };
+  if (safeHead < opts.cursor) return { cursor: opts.cursor, quarantined };
   const logs = (await opts.rpcCall("eth_getLogs", [
     {
       address: opts.checkpoint,
@@ -217,19 +247,107 @@ export async function scanChainInbounds(opts: {
   const ordered = logs
     .slice()
     .sort((a, b) => cmpHex(a.blockNumber, b.blockNumber) || cmpHex(a.logIndex, b.logIndex));
+  const topicOk = (log: RpcLog) => {
+    const t = (log.topics?.[0] ?? "").toLowerCase();
+    return t === KEK_DEPOSIT_TOPIC.toLowerCase() || t === ITEM_IMPORT_TOPIC.toLowerCase();
+  };
+  const park = (log: RpcLog, id: string, inbound: ChainInbound | null, reason: QuarantineReason, error: string) => {
+    const entry: QuarantinedInbound = {
+      id,
+      reason,
+      error,
+      inbound,
+      tokenId: inbound?.tokenId ?? safeBig(log.topics?.[1]),
+      nonce: inbound?.nonce ?? safeBig(log.topics?.[2]),
+      blockNumber: log.blockNumber ?? "",
+      logIndex: log.logIndex ?? "",
+      transactionHash: log.transactionHash ?? "",
+      topics: [...(log.topics ?? [])],
+      data: log.data ?? "",
+      quarantinedAt: (opts.now?.() ?? new Date()).toISOString(),
+    };
+    // Persisted before the cursor moves past it. A write failure throws and the cursor stays.
+    if (opts.quarantine!.add(entry)) {
+      quarantined.push(id);
+      alert(
+        "[bellgrave] ALERT chain inbound quarantined id=" +
+          id +
+          " reason=" +
+          reason +
+          " kind=" +
+          (inbound?.kind ?? "?") +
+          " token=" +
+          entry.tokenId +
+          " nonce=" +
+          entry.nonce +
+          (inbound && inbound.kind === "depositKek" ? " amount=" + inbound.amount : "") +
+          " tx=" +
+          (entry.transactionHash || "?") +
+          ": " +
+          error +
+          ". It is in vault custody with no log credit. Deposits for everyone else keep flowing. " +
+          "Fix the cause, stop the server, then run: pnpm --filter @bellgrave/server lok:replay-quarantined " +
+          id,
+      );
+    }
+  };
   for (const log of ordered) {
+    if (!topicOk(log)) continue;
+    const id = inboundLogId(log);
+    if (opts.quarantine?.has(id)) continue;
     const inbound = decodeChainInbound(log);
-    if (!inbound) continue;
+    if (!inbound) {
+      if (opts.quarantine) park(log, id, null, "bad-shape", "event did not decode");
+      continue;
+    }
+    if (opts.quarantine && (inbound.nonce === "0" || inbound.tokenId === "0")) {
+      park(log, id, inbound, "bad-shape", "token id or nonce is zero");
+      continue;
+    }
     const res = opts.apply(inbound);
     if (res.ok) continue;
     const expected = opts.expectedNonce?.(inbound.tokenId) ?? 1;
+    // Only a nonce strictly below the next expected one is an already-applied replay.
+    if (BigInt(inbound.nonce) < BigInt(expected)) continue;
+    const permanent = permanentInboundError(res.error);
+    if (permanent && opts.quarantine) {
+      park(log, id, inbound, permanent, res.error);
+      continue;
+    }
     const kind = classifyInboundFailure(expected, inbound.nonce, res.error);
     if (kind === "replay") continue;
-    // Gap or other hard failure: halt the cursor at this block so we retry.
+    if (kind === "gap" && opts.quarantine?.explainsGap(inbound.tokenId, expected, inbound.nonce)) {
+      park(log, id, inbound, "behind-quarantined-nonce", res.error);
+      continue;
+    }
+    // A nonce gap with no quarantined explanation, or an unclassified refusal:
+    // halt the cursor at this block so it is retried and nothing is skipped.
     cursor = BigInt(log.blockNumber && log.blockNumber !== "0x" ? log.blockNumber : "0x0");
-    break;
+    alert(
+      "[bellgrave] chain inbound halted (" +
+        kind +
+        ") id=" +
+        id +
+        " token=" +
+        inbound.tokenId +
+        " nonce=" +
+        inbound.nonce +
+        " expected=" +
+        expected +
+        ": " +
+        res.error,
+    );
+    return { cursor, halted: { id, kind, error: res.error }, quarantined };
   }
-  return { cursor };
+  return { cursor, quarantined };
+}
+
+function safeBig(value: string | undefined): string {
+  try {
+    return value ? BigInt(value).toString() : "";
+  } catch {
+    return "";
+  }
 }
 
 export function startKekDepositWatcher(
@@ -254,7 +372,20 @@ export function startKekDepositWatcher(
       DEPOSIT_CONFIRMATIONS.toString(),
   );
   let cursor = readDepositCursor(cursorPath);
+  // A corrupt quarantine file throws here and stops boot: it lists custody KEK with no log credit.
+  const quarantine = new DepositQuarantine(depositQuarantinePath(dirname(cursorPath)));
+  const parked = quarantine.list();
+  if (parked.length > 0) {
+    console.error(
+      "[bellgrave] ALERT " +
+        parked.length +
+        " chain inbound(s) are quarantined with no log credit: " +
+        parked.map((e) => e.id + " (token " + e.tokenId + " nonce " + e.nonce + ", " + e.reason + ")").join(", ") +
+        ". See pnpm --filter @bellgrave/server lok:replay-quarantined --list",
+    );
+  }
   let busy = false;
+  let lastHalt = "";
   const tick = async () => {
     if (busy) return;
     busy = true;
@@ -264,6 +395,15 @@ export function startKekDepositWatcher(
         checkpoint,
         rpcCall: (method, params) => jsonRpc(rpc, method, params),
         expectedNonce: (tokenId) => (lok.inboundAppliedOf?.(tokenId) ?? 0) + 1,
+        quarantine,
+        // Log a standing halt once, not every 4s.
+        alert: (message) => {
+          if (message.includes(" halted (")) {
+            if (message === lastHalt) return;
+            lastHalt = message;
+          }
+          console.error(message);
+        },
         apply: (inbound) => {
           const res = applyChainInbound(lok, inbound);
           if (res.ok) {
@@ -288,24 +428,11 @@ export function startKekDepositWatcher(
                   inbound.amount,
               );
             }
-            return res;
           }
-          const expected = (lok.inboundAppliedOf?.(inbound.tokenId) ?? 0) + 1;
-          const kind = classifyInboundFailure(expected, inbound.nonce, res.error);
-          if (kind === "replay") return res;
-          console.error(
-            "[bellgrave] chain inbound halted (" +
-              kind +
-              ") " +
-              inbound.tokenId +
-              ":" +
-              inbound.nonce +
-              ": " +
-              res.error,
-          );
           return res;
         },
       });
+      if (!next.halted) lastHalt = "";
       cursor = next.cursor;
       writeDepositCursor(cursorPath, cursor);
     } finally {
