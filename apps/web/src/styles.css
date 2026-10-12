@@ -1390,7 +1390,8 @@ textarea {
   height: auto;
   margin: 0 auto 4px;
   object-fit: contain;
-  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.65));
+  /* Prefer iron/bronze over generator purple glow */
+  filter: hue-rotate(-35deg) saturate(0.75) drop-shadow(0 6px 16px rgba(0, 0, 0, 0.65));
 }
 .boot-brand-fallback {
   position: absolute;
