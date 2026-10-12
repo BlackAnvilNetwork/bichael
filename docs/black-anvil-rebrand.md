@@ -16,3 +16,7 @@ These stay so log replay, deployed contracts, and workspace tooling keep working
 | Historical docs / auction copy | “legacy KEK” token-era warnings; dry-run deploy notes |
 
 User-facing UI strings, page title/meta, AppKit metadata, README/docs titles, and mint-claim **display** message text were updated to Black Anvil (client + server mint-claim must stay in sync).
+
+## UI pack
+
+Sheet art lives under `apps/web/public/ui/black-anvil/`. Resizable HUD chrome (hotbar tray, combat log, command docks, panels, slots) uses **CSS iron/bronze frames** plus subtle texture fills — not stretched sheet frames. The pack is labeled collage art; stretching slices as `border-image` misaligns slots and leaks sheet labels. Boot brand uses `a1-title-banner` at natural aspect.

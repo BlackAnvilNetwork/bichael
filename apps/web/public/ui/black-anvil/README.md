@@ -1,36 +1,27 @@
 # Black Anvil UI pack
 
-Source sheet: `source-sheet.png` (also `source-sheet.jpg`).
+Source sheet: `source-sheet.png` (also `source-sheet-upscaled.jpg` for provenance).
 
-Sliced transparent PNG/WebP assets live in `slices/` and `webp/`. Labels follow the sheet legend:
+Sliced transparent PNG/WebP assets live in `slices/` and `webp/`.
 
-| ID | Asset | Use |
-|----|-------|-----|
-| A1 | `a1-title-banner*` | Boot title banner |
-| A2 | `a2-title-frame` | Empty title / log frame (nine-slice) |
-| B2 | `b2-login-input` | Login inputs |
-| B3 | `b3-login-button-*` | Primary/secondary buttons |
-| D1 | `d1-borders`, `d1-panel-frame-hi` | Panel nine-slice |
-| D2 | `d2-texture-*` | Iron / bronze fills |
-| E1–E4 | portrait, orbs, action bar, hotkeys | HUD |
-| F1–F4 | equipment, slot, grid, coins | Inventory |
-| G1–G3 | minimap, quest log, markers | Nav / quests |
-| H1–H4 | dialogue, skill node/points | Dialogue / skills |
-| I1–I3 | parchment / iron / bronze | Tileable fills |
+## How the web HUD uses these
 
-Re-slice after replacing the source sheet:
+**Do not stretch collage slices as `border-image`.** The sheet is a labeled art board — many crops include neighboring pieces or baked labels. Resizable HUD chrome (panels, combat log, hotbar tray, docks, slots, dialogue) uses **CSS iron/bronze frames** plus subtle `i1`/`i2`/`i3` texture fills.
 
-```bash
-python3 apps/web/scripts/slice-black-anvil-ui.py
-```
+Safe natural-aspect uses:
 
-Source is the real user sheet, currently **3072×1296** (3× upscale). Navy grid background was removed in-repo (you don’t need to do that yourself). Crops are defined in 1024×434 base space and auto-scaled.
+| Asset | Use |
+|-------|-----|
+| `a1-title-banner` | Boot brand banner (`object-fit: contain`) |
+| `i1` / `i2` / `i3` | Soft repeating panel fills |
+| `e2-*-orb-gem` | Optional circular vitals art |
 
-- `source-sheet.png` — transparent working master
-- `source-sheet-upscaled.jpg` — original upscale you uploaded (provenance)
+Keep as reference only (not stretched behind grids): `e3-action-bar`, `a2-title-frame`, `d1-borders`, `h1-dialogue-box`, login button art (baked “LOGIN” text), equipment/slot collages.
 
-Re-slice after replacing the PNG:
+## Re-slice
 
 ```bash
 python3 apps/web/scripts/slice-black-anvil-ui.py
 ```
+
+Source is currently **3072×1296** (3× upscale). Navy/black grid background is punched out in the slicer. Crops are defined in 1024×434 base space and auto-scaled.

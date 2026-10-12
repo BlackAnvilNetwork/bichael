@@ -19,12 +19,16 @@
   --slot-hot: linear-gradient(160deg, #3a3228 0%, #241f18 100%);
   --ba-iron: #2a2826;
   --ba-bronze: #b8924a;
+  --ba-bronze-dim: #8a7030;
   --ba-parchment: #c2a878;
-  --ba-frame: url("/ui/black-anvil/slices/d1-panel-frame.png");
-  --ba-action-bar: url("/ui/black-anvil/slices/e3-action-bar.png");
-  --ba-dialogue: url("/ui/black-anvil/slices/h1-dialogue-box.png");
-  --ba-quest: url("/ui/black-anvil/slices/g2-quest-log.png");
-  --ba-slot: url("/ui/black-anvil/slices/f2-slot.png");
+  --ba-rim: 1px solid color-mix(in srgb, var(--ba-bronze) 55%, #3a3228);
+  --ba-rim-strong: 2px solid color-mix(in srgb, var(--ba-bronze) 72%, #5a4828);
+  --ba-panel-face: linear-gradient(
+    165deg,
+    rgba(36, 32, 26, 0.96) 0%,
+    rgba(16, 14, 12, 0.97) 55%,
+    rgba(10, 9, 8, 0.98) 100%
+  );
   --ba-tex-iron: url("/ui/black-anvil/slices/i2-iron.png");
   --ba-tex-bronze: url("/ui/black-anvil/slices/i3-bronze-filigree.png");
   --ba-tex-parchment: url("/ui/black-anvil/slices/i1-parchment.png");
@@ -448,16 +452,17 @@ textarea {
   border-color: var(--cmd-accent);
 }
 
-/* Shared launcher panel chrome (Commands tabs + Settings) — Black Anvil nine-slice */
+/* Shared launcher panel chrome (Commands tabs + Settings) — Black Anvil CSS chrome */
 .cmd-panel {
   pointer-events: auto;
   background:
     linear-gradient(180deg, rgba(16, 14, 12, 0.92), rgba(10, 9, 8, 0.96)),
-    var(--ba-tex-iron) center / 220px 220px repeat;
-  border: 16px solid transparent;
-  border-radius: 0;
-  border-image: var(--ba-frame) 80 fill / 16px / 0 stretch;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+    var(--ba-tex-iron) center / 280px 280px repeat;
+  border: var(--ba-rim-strong);
+  border-radius: 2px;
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(184, 146, 74, 0.12);
   color: var(--cmd-pill-text);
   font-family: var(--ui-font);
   font-size: 13px;
@@ -874,17 +879,21 @@ textarea {
 }
 .vital-bar.hp {
   background:
-    radial-gradient(circle at 40% 35%, rgba(255, 120, 90, 0.35), transparent 55%),
-    url("/ui/black-anvil/slices/e2-health-orb.png") center / cover no-repeat,
-    #2a1010;
-  border-color: #8a4030;
+    radial-gradient(circle at 35% 30%, rgba(255, 150, 120, 0.55), transparent 42%),
+    radial-gradient(circle at 50% 55%, #c23a3a 0%, #6a1818 62%, #2a1010 100%);
+  border: 2px solid #a86840;
+  box-shadow:
+    inset 0 0 10px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(184, 146, 74, 0.35);
 }
 .vital-bar.mp {
   background:
-    radial-gradient(circle at 40% 35%, rgba(120, 170, 255, 0.35), transparent 55%),
-    url("/ui/black-anvil/slices/e2-mana-orb.png") center / cover no-repeat,
-    #101828;
-  border-color: #3a5080;
+    radial-gradient(circle at 35% 30%, rgba(160, 200, 255, 0.5), transparent 42%),
+    radial-gradient(circle at 50% 55%, #3a6ecf 0%, #1a3868 62%, #101828 100%);
+  border: 2px solid #6a88b0;
+  box-shadow:
+    inset 0 0 10px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(184, 146, 74, 0.28);
 }
 .vital-bar > i {
   display: block;
@@ -960,9 +969,16 @@ textarea {
   align-items: end;
   margin-bottom: -1px;
   z-index: 2;
-  padding: 14px 22px 12px;
-  background: var(--ba-action-bar) center / 100% 100% no-repeat;
-  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.55));
+  padding: 12px 18px 10px;
+  background:
+    linear-gradient(180deg, rgba(28, 24, 18, 0.94), rgba(12, 10, 8, 0.96)),
+    var(--ba-tex-iron) center / 200px 200px repeat;
+  border: var(--ba-rim-strong);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  box-shadow:
+    0 -4px 24px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(184, 146, 74, 0.18);
   min-height: 92px;
 }
 
@@ -1346,7 +1362,7 @@ textarea {
   padding: 20px 14px;
   background:
     radial-gradient(ellipse at 50% 40%, rgba(40, 32, 22, 0.35), rgba(6, 5, 4, 0.82) 72%),
-    var(--ba-tex-iron) center / 280px 280px repeat,
+    var(--ba-tex-bronze) center / 320px 320px repeat,
     url("/ui/boot/boot-map-bg.png") center / cover no-repeat;
   z-index: 20;
 }
@@ -1354,11 +1370,14 @@ textarea {
   width: min(540px, 100%);
   max-height: min(94vh, 900px);
   padding: 22px 20px 18px;
-  border-radius: 0;
-  border: 16px solid transparent;
-  border-image: var(--ba-frame) 80 fill / 16px / 0 stretch;
-  background: rgba(10, 9, 8, 0.55);
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.85);
+  border-radius: 2px;
+  border: var(--ba-rim-strong);
+  background:
+    linear-gradient(180deg, rgba(14, 12, 10, 0.72), rgba(8, 7, 6, 0.88)),
+    var(--ba-tex-iron) center / 260px 260px repeat;
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.85),
+    inset 0 0 0 1px rgba(184, 146, 74, 0.16);
 }
 .boot-card {
   width: 100%;
@@ -1433,14 +1452,14 @@ textarea {
   margin-top: 4px;
   padding: 12px 16px;
   border-radius: 2px;
-  border: 2px solid transparent;
-  border-image: url("/ui/black-anvil/slices/b2-login-input.png") 12 fill / 8px / 0 stretch;
-  background:
-    linear-gradient(180deg, #1c1a18, #12100e);
+  border: 1px solid color-mix(in srgb, var(--ba-bronze) 45%, #3a3228);
+  background: linear-gradient(180deg, #1c1a18, #12100e);
   color: #efe8dc;
   font-size: 15px;
   font-family: var(--font-display);
-  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.55);
+  box-shadow:
+    inset 0 1px 4px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 .boot-input:focus {
   outline: 2px solid var(--ba-bronze);
@@ -1523,10 +1542,7 @@ textarea {
   padding: 14px 16px;
   border-radius: 2px;
   border: 2px solid #8a7030;
-  background:
-    linear-gradient(180deg, rgba(184, 146, 74, 0.55), rgba(40, 32, 20, 0.85)),
-    url("/ui/black-anvil/slices/b3-login-button-bronze.png") center / 100% 100% no-repeat,
-    linear-gradient(180deg, #8a7030, #3a2e18);
+  background: linear-gradient(180deg, #b8924a 0%, #8a7030 45%, #3a2e18 100%);
   color: #efe8dc;
   font-family: var(--font-display);
   font-weight: 700;
@@ -1550,9 +1566,7 @@ textarea {
   padding: 10px 14px;
   border-radius: 2px;
   border: 1px solid #6e5a3a;
-  background:
-    linear-gradient(180deg, rgba(42, 40, 38, 0.9), rgba(18, 16, 14, 0.95)),
-    url("/ui/black-anvil/slices/b3-login-button-iron.png") center / 100% 100% no-repeat;
+  background: linear-gradient(180deg, #2a2826 0%, #1a1816 100%);
   color: #c2a878;
   font-size: 13px;
   cursor: pointer;
@@ -1903,10 +1917,11 @@ textarea {
   background:
     linear-gradient(180deg, rgba(40, 32, 22, 0.92), rgba(18, 14, 10, 0.96)),
     var(--ba-tex-parchment) center / 180px 180px repeat;
-  border: 14px solid transparent;
-  border-radius: 0;
-  border-image: url("/ui/black-anvil/slices/h1-dialogue-box.png") 36 fill / 14px / 0 stretch;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65);
+  border: var(--ba-rim-strong);
+  border-radius: 2px;
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.65),
+    inset 0 0 0 1px rgba(184, 146, 74, 0.14);
 }
 .npc-dialog-world .npc-dialog-card {
   width: min(340px, 58vw);
@@ -3541,7 +3556,7 @@ button.equip-stat-label:focus-visible {
 .item-hover-copy .skill-tip-title { margin-bottom: 2px; }
 .item-hover-copy .equip-item-meta { margin-top: 4px; }
 
-/* —— Black Anvil panel / inventory / skill chrome —— */
+/* —— Black Anvil panel / inventory / skill chrome (CSS, no stretched sheet frames) —— */
 .settings-panel,
 .spellbook-panel,
 .skill-tree-panel--map,
@@ -3550,18 +3565,19 @@ button.equip-stat-label:focus-visible {
 .craft-panel,
 .party-panel,
 .explorer-panel {
-  border-radius: 0 !important;
+  border-radius: 2px !important;
 }
 .equip-slot,
 .skill-slot.hotbar-slot,
 .bag-slot,
 .inv-slot {
-  border-image: url("/ui/black-anvil/slices/f2-slot.png") 10 fill / 6px / 0 stretch;
-  border-style: solid;
-  border-width: 6px;
-  border-color: transparent;
-  border-radius: 0;
-  background-color: rgba(12, 10, 8, 0.85);
+  border: 1px solid color-mix(in srgb, var(--ba-bronze) 50%, #3a3228);
+  border-radius: 3px;
+  background:
+    linear-gradient(160deg, #2a261f 0%, #1a1714 55%, #12100e 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 160, 0.1),
+    0 2px 6px rgba(0, 0, 0, 0.35);
 }
 .explorer-panel .cmd-panel-body,
 .lok-panel .cmd-panel-body {
@@ -3570,41 +3586,50 @@ button.equip-stat-label:focus-visible {
     var(--ba-tex-parchment) center / 200px 200px repeat;
 }
 .skill-tree-minimap {
-  border: 3px solid var(--ba-bronze);
+  border: 2px solid var(--ba-bronze);
   border-radius: 50%;
   background:
-    url("/ui/black-anvil/slices/g1-minimap-compass.png") center / contain no-repeat,
+    radial-gradient(circle at 40% 35%, rgba(184, 146, 74, 0.18), transparent 55%),
     #100e0c;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 0 12px rgba(0, 0, 0, 0.55);
 }
 .skill-tree-node,
 .cmd-node {
   background:
-    url("/ui/black-anvil/slices/h2-skill-node.png") center / contain no-repeat,
+    radial-gradient(circle at 40% 35%, rgba(184, 146, 74, 0.22), transparent 55%),
     var(--cmd-node-core);
+  border: 1px solid color-mix(in srgb, var(--ba-bronze) 40%, transparent);
 }
 .prov-dialog,
 .prov-pop {
-  border: 12px solid transparent;
-  border-image: var(--ba-quest) 32 fill / 12px / 0 stretch;
-  border-radius: 0;
+  border: var(--ba-rim-strong);
+  border-radius: 2px;
   background:
     linear-gradient(180deg, rgba(34, 28, 18, 0.9), rgba(14, 12, 10, 0.95)),
     var(--ba-tex-parchment) center / 160px 160px repeat;
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(184, 146, 74, 0.12);
 }
 .hud-log-frame {
-  border: 10px solid transparent;
-  border-image: url("/ui/black-anvil/slices/a2-title-frame.png") 40 fill / 10px / 0 stretch;
-  border-radius: 0;
-  background: rgba(10, 9, 8, 0.88);
+  border: var(--ba-rim-strong);
+  border-radius: 0 0 4px 4px;
+  background:
+    linear-gradient(180deg, rgba(16, 14, 12, 0.94), rgba(10, 9, 8, 0.96)),
+    var(--ba-tex-iron) center / 220px 220px repeat;
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(184, 146, 74, 0.1);
 }
 .hud-vitals-dock,
 .hud-menu-dock {
-  border: 10px solid transparent;
-  border-image: var(--ba-frame) 80 fill / 12px / 0 stretch;
-  border-radius: 0;
+  border: var(--ba-rim-strong);
+  border-radius: 2px;
   background:
-    linear-gradient(180deg, rgba(20, 18, 14, 0.92), rgba(10, 9, 8, 0.96)),
-    var(--ba-tex-iron) center / 160px 160px repeat;
+    linear-gradient(180deg, rgba(20, 18, 14, 0.94), rgba(10, 9, 8, 0.97)),
+    var(--ba-tex-iron) center / 180px 180px repeat;
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(184, 146, 74, 0.12);
 }
 

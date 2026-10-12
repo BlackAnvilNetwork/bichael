@@ -4,13 +4,12 @@
   "sourceSize": [3072, 1296],
   "baseLayoutSize": [1024, 434],
   "scale": [3.0000, 2.9862],
-  "note": "Upscaled user sheet with agent-side navy background removal. Crops defined in 1024x434 base space and scaled.",
-  "nineSlice": {
-    "panel": { "image": "slices/d1-panel-frame.png", "slice": "80 80 80 80", "width": "16px" },
-    "dialogue": { "image": "slices/h1-dialogue-box.png", "slice": "48 48 48 48", "width": "14px" },
-    "quest": { "image": "slices/g2-quest-log.png", "slice": "40 40 40 40", "width": "12px" },
-    "banner": { "image": "slices/a2-title-frame.png", "slice": "36 60 36 60", "width": "16px" },
-    "slot": { "image": "slices/f2-slot.png", "slice": "18 18 18 18", "width": "7px" }
+  "note": "Reference sheet slices. HUD chrome uses CSS bronze/iron frames; do not stretch collage slices as border-image.",
+  "usage": {
+    "banner": "slices/a1-title-banner.png — boot brand, natural aspect",
+    "textures": "i1/i2/i3 — subtle repeating panel fills",
+    "orbGems": "e2-*-orb-gem.png — optional circular vitals art",
+    "avoidStretch": ["e3-action-bar", "a2-title-frame", "d1-borders", "h1-dialogue-box", "f2-slot", "login buttons"]
   },
   "assets": {
     "titleBanner": "slices/a1-title-banner.png",
@@ -19,12 +18,13 @@
     "loginButtonIron": "slices/b3-login-button-iron.png",
     "loginButtonBronze": "slices/b3-login-button-bronze.png",
     "borders": "slices/d1-borders.png",
-    "panelFrame": "slices/d1-panel-frame.png",
-    "textureIron": "slices/d2-texture-iron.png",
-    "textureBronze": "slices/d2-texture-bronze.png",
+    "textureIronSmall": "slices/d2-texture-iron.png",
+    "textureBronzeSmall": "slices/d2-texture-bronze.png",
     "portraitFrame": "slices/e1-portrait-frame.png",
     "healthOrb": "slices/e2-health-orb.png",
     "manaOrb": "slices/e2-mana-orb.png",
+    "healthOrbGem": "slices/e2-health-orb-gem.png",
+    "manaOrbGem": "slices/e2-mana-orb-gem.png",
     "orbs": "slices/e2-orbs.png",
     "actionBar": "slices/e3-action-bar.png",
     "hotkeyIcons": "slices/e4-hotkey-icons.png",
