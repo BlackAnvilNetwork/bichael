@@ -38,7 +38,10 @@ export default defineConfig(({ mode, command }) => {
       },
     },
     server: {
+      // Fail loud if 5173 is taken — silent 5174+ breaks WS auth (server allowlist).
+      host: "127.0.0.1",
       port: 5173,
+      strictPort: true,
     },
   };
 });

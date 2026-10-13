@@ -421,15 +421,16 @@ test("x-forwarded-for is ignored unless the trusted proxy setting is on", () => 
 
 test("a missing or foreign Origin is rejected on upgrade", async () => {
   const allow = authAllowlist({ AUTH_ORIGINS: "https://play.example" });
-  assert.deepEqual(allow, [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://play.example",
-  ]);
+  assert.equal(allow.includes("http://localhost:5173"), true);
+  assert.equal(allow.includes("http://127.0.0.1:5173"), true);
+  assert.equal(allow.includes("http://localhost:5174"), true);
+  assert.equal(allow.includes("http://127.0.0.1:5174"), true);
+  assert.equal(allow.includes("https://play.example"), true);
   const fromOrigin = resolveAuthOrigin("http://127.0.0.1:5173", allow);
   assert.equal(fromOrigin.ok, true);
   if (!fromOrigin.ok) return;
   assert.equal(fromOrigin.domain, "127.0.0.1:5173");
+  assert.equal(resolveAuthOrigin("http://localhost:5174", allow).ok, true);
   assert.equal(resolveAuthOrigin(undefined, allow).ok, false);
   assert.equal(resolveAuthOrigin("https://evil.example", allow).ok, false);
   assert.equal(resolveAuthOrigin("http://localhost:5173/phish", allow).ok, false);
@@ -447,6 +448,7 @@ test("a missing or foreign Origin is rejected on upgrade", async () => {
     assert.equal(await upgradeOnce(port, "https://evil.example"), "rejected");
     assert.equal(await upgradeOnce(port, "http://localhost:5173"), "open");
     assert.equal(await upgradeOnce(port, "http://127.0.0.1:5173"), "open");
+    assert.equal(await upgradeOnce(port, "http://localhost:5174"), "open");
     assert.equal(await upgradeOnce(port, "https://play.example"), "open");
   } finally {
     await new Promise<void>((resolve) => wss.close(() => resolve()));

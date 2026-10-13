@@ -312,7 +312,9 @@ export function connectSocket() {
   }
   rememberResume();
   socket = new WebSocket(WS_URL);
+  let opened = false;
   socket.addEventListener("open", () => {
+    opened = true;
     useGame.getState().setConnected(true);
     useGame.getState().pushLog("Connected to Bellgrave server.");
     startHeartbeat();
@@ -326,7 +328,18 @@ export function connectSocket() {
     const wasLogout = intentionalLogout;
     intentionalLogout = false;
     if (!wasLogout) rememberResume();
-    useGame.getState().pushLog(wasLogout ? "Logged out." : "Disconnected. Reconnecting…");
+    if (wasLogout) {
+      useGame.getState().pushLog("Logged out.");
+    } else if (!opened) {
+      // Common when Vite bumped off 5173 and the server Origin allowlist rejected the upgrade.
+      useGame.getState().pushLog(
+        "Server refused the connection (is it running? Origin allowlist must include " +
+          (typeof window !== "undefined" ? window.location.origin : "this page") +
+          "). Retrying…",
+      );
+    } else {
+      useGame.getState().pushLog("Disconnected. Reconnecting…");
+    }
     reconnectTimer = setTimeout(connectSocket, wasLogout ? 0 : 1200);
   });
   socket.addEventListener("message", (ev) => {

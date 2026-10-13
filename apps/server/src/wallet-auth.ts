@@ -23,8 +23,16 @@ export const AUTH_HELLO_WINDOW_MS = 60_000;
 /** Remote hello-tracker entries. Loopback connections are not stored here. */
 const MAX_HELLO_TRACKED = 200;
 
-/** Vite dev client. More origins can be added with AUTH_ORIGINS (comma-separated). */
-export const DEFAULT_AUTH_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"];
+/**
+ * Vite prefers 5173 but silently bumps (5174, 5175, …) when that port is taken.
+ * Allow the common local fallbacks so wallet login is not stuck after Connect.
+ * More origins can be added with AUTH_ORIGINS (comma-separated).
+ */
+const VITE_DEV_PORTS = [5173, 5174, 5175, 5176, 5177, 5178, 5179, 5180] as const;
+export const DEFAULT_AUTH_ORIGINS = VITE_DEV_PORTS.flatMap((port) => [
+  `http://localhost:${port}`,
+  `http://127.0.0.1:${port}`,
+]);
 
 type PendingNonce = {
   wallet: string;
