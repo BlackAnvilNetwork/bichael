@@ -25,6 +25,8 @@ import { resolveTimAbility, type TimPlayer } from "./tim-abilities";
 // Cleric Raise (#51) tests live in their own file; imported here so they run under the
 // existing server test list without editing package.json.
 import "./cleric-raise.test";
+// Auto-attack support traits (#86, #88).
+import "./auto-attack-traits.test";
 
 const ATTRS = ["str", "dex", "vit", "agi", "int", "mnd"] as const;
 const PLAYABLE = (Object.keys(JOBS) as JobId[]).filter((j) => JOBS[j].playable);

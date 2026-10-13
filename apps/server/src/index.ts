@@ -27,7 +27,6 @@ import {
   freeSkillHubs,
   freeStatsSpent,
   fStr,
-  meleeFStr,
   meleeUsesWeaponAttack,
   hitChance,
   initialUnlockedForJob,
@@ -165,8 +164,6 @@ import {
 import { clearRogueBuffs, resolveRogueAbility } from "./rogue-abilities";
 import {
   clearFighterBuffs,
-  fighterAccBonus,
-  fighterAttackMul,
   fighterCritBonus,
   fighterDefenseMul,
   fighterDoubleAttackChance,
@@ -187,6 +184,11 @@ import {
 } from "./battlemage-abilities";
 import { playerStance, resolveTimAbility } from "./tim-abilities";
 import { hasKit } from "./support-job";
+import {
+  autoAttackFStr,
+  autoAttackFighterAccBonus,
+  autoAttackFighterAttackMul,
+} from "./auto-attack-traits";
 import { pickDotKillCredit } from "./dot-credit";
 import { loadLokEnv } from "./lok-chain";
 import { applySettlementDeployFile } from "./settlement-deploy";
@@ -4072,7 +4074,7 @@ function playerSwing(p: Player, now: number) {
   const stance = playerStance(p);
   const stats = playerCombatStats(p);
   // Time Mage keeps Flux / suppressed swings. Sorcerer and Cleric use a STR
-  // staff chip (meleeFStr floors the glance). Other jobs are full melee.
+  // staff chip (autoAttackFStr floors the glance). Other jobs are full melee.
   const physical =
     p.job !== "time_mage" && p.job !== "sorcerer" && p.job !== "cleric";
   let att = attackFromStats(stats, stance, playerWeaponBonus(p), {
@@ -4080,14 +4082,15 @@ function playerSwing(p: Player, now: number) {
   });
   const tree = playerTreeBonuses(p);
   att += tree.atk;
-  if (physical) {
-    att = Math.max(1, Math.floor(att * fighterAttackMul(p, now)));
+  // Fighter support counts too (#88): Berserk's attack comes with its defense penalty.
+  if (physical || playerHasJob(p, "fighter")) {
+    att = Math.max(1, Math.floor(att * autoAttackFighterAttackMul(p, now, physical)));
   }
   const mobStats = jobStatsAtLevel(mob.job, mob.level);
   let def = defenseFromVit(mobStats.vit);
   if (now < mob.diaUntil) def = Math.max(1, Math.floor(def * 0.7));
   let acc = stats.dex + 40 + tree.acc + (playerEquipmentStats(p).acc ?? 0) - (now < mob.distractUntil ? mob.distractAcc : 0);
-  if (physical && playerHasJob(p, "fighter")) acc += fighterAccBonus(p, now);
+  acc += autoAttackFighterAccBonus(p, now);
   let eva = evasionFromAgi(mobStats.agi);
   if (now < mob.falseGuardUntil) eva = Math.max(0, eva - 18);
   if (Math.random() > hitChance(acc, eva)) {
@@ -4107,7 +4110,7 @@ function playerSwing(p: Player, now: number) {
   let dmg = physicalDamage(
     att,
     def,
-    meleeFStr(p.job, stats, mobStats.vit, stance),
+    autoAttackFStr(p, stats, mobStats.vit, stance),
     crit,
   );
   if (backbladeReady) {
