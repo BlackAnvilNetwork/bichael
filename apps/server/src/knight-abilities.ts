@@ -34,6 +34,11 @@ export type KnightPlayer = {
   sentinelUntil: number;
   rampartUntil: number;
   coverUntil: number;
+  /**
+   * Interpose bodyguard window (#79): while active, physical auto-attacks aimed
+   * at a nearby ally resolve on this Knight instead. Set only on the caster.
+   */
+  coverGuardUntil?: number;
   fealtyUntil: number;
   guardianUntil: number;
   protectUntil: number;
@@ -102,6 +107,61 @@ export function knightMagDtMul(p: KnightPlayer, now: number): number {
   if (now < p.fealtyUntil) mul *= 0.5;
   if (now < p.shellUntil) mul *= p.shellMagMul;
   return Math.max(0.1, Math.min(1, mul));
+}
+
+/**
+ * Interpose (#79): max distance (yalms) between the bodyguard Knight and the
+ * ally whose hit is redirected. The Interpose kit def carries no range, so this
+ * is a "standing beside them" radius: a little under Bastion Cry's 10y aura.
+ */
+export const INTERPOSE_RANGE = 8;
+
+export type InterposeUnit = {
+  wallet: string;
+  hp: number;
+  x: number;
+  z: number;
+  zoneId?: string;
+  coverGuardUntil?: number;
+};
+
+/** True while this unit is alive and actively bodyguarding (Interpose / Hall Aegis caster). */
+export function isInterposing(u: InterposeUnit, now: number): boolean {
+  return u.hp > 0 && now < (u.coverGuardUntil ?? 0);
+}
+
+/**
+ * Pick the Knight who steps in for a physical hit aimed at `target` (#79).
+ * Returns null when no live, same-zone Knight within `range` of the target has
+ * Interpose active. Never returns `target` itself; the nearest guard wins
+ * (ties break on wallet so the choice is stable).
+ *
+ * Recursion: callers resolve the redirected hit directly on the returned
+ * Knight and must not call this again for that hit, so a redirect never
+ * chains (Knight B covering A, with Knight C covering B, stops at B).
+ */
+export function findInterposeGuard<T extends InterposeUnit>(
+  target: T,
+  candidates: Iterable<T>,
+  now: number,
+  dist: (ax: number, az: number, bx: number, bz: number) => number,
+  range: number = INTERPOSE_RANGE,
+): T | null {
+  if (target.hp <= 0) return null;
+  let best: T | null = null;
+  let bestD = Infinity;
+  for (const k of candidates) {
+    if (k === target || k.wallet === target.wallet) continue;
+    if (!isInterposing(k, now)) continue;
+    if (target.zoneId !== undefined && k.zoneId !== undefined && k.zoneId !== target.zoneId) continue;
+    const d = dist(k.x, k.z, target.x, target.z);
+    if (!(d <= range)) continue;
+    if (d < bestD || (d === bestD && best !== null && k.wallet < best.wallet)) {
+      best = k;
+      bestD = d;
+    }
+  }
+  return best;
 }
 
 function spikeEnmity(p: KnightPlayer, amount: number) {
@@ -245,6 +305,7 @@ export function resolveKnightAbility(
   if (id === "cover") {
     spend();
     p.coverUntil = now + (def.durationMs ?? 15_000);
+    p.coverGuardUntil = p.coverUntil;
     spikeEnmity(p, 200);
     p.anim = "cast";
     p.animUntil = now + 450;
@@ -294,6 +355,8 @@ export function resolveKnightAbility(
         ally.coverUntil = Math.max(ally.coverUntil, now + dur);
       }
     }
+    // Party-wide cover: the casting Knight bodyguards nearby allies (#79).
+    p.coverGuardUntil = Math.max(p.coverGuardUntil ?? 0, now + dur);
     spikeEnmity(p, 600);
     p.bulwarkFlashUntil = now + 2000;
     p.anim = "cast";
@@ -408,6 +471,7 @@ export function clearKnightBuffs(p: KnightPlayer) {
   p.sentinelUntil = 0;
   p.rampartUntil = 0;
   p.coverUntil = 0;
+  p.coverGuardUntil = 0;
   p.fealtyUntil = 0;
   p.guardianUntil = 0;
   p.protectUntil = 0;

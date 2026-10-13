@@ -343,6 +343,14 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
   }
 }
 
+/** True when this mob's next auto-attack is a magic auto (caster job, not silenced). */
+export function mobAutoIsMagic(
+  mob: Pick<MobJobCombatant, "job" | "silenceUntil">,
+  now: number,
+): boolean {
+  return mobUsesMagicAuto(mob.job) && !(now < mob.silenceUntil);
+}
+
 /** Auto-attack numbers for the given job (replaces flat GUARD_L1). */
 export function mobAutoAttackRoll(
   mob: MobJobCombatant,
@@ -351,7 +359,7 @@ export function mobAutoAttackRoll(
 ): { hit: boolean; dmg: number; anim: "melee" | "cast" } {
   const stats = mobCombatStats(mob.job, mob.level);
   // Silenced casters still swing — mute magic autos only.
-  const magic = mobUsesMagicAuto(mob.job) && !(now < mob.silenceUntil);
+  const magic = mobAutoIsMagic(mob, now);
   const atkMul = (now < mob.atkBuffUntil ? mob.atkBuffMul || 1 : 1) * (now < mob.atkDownUntil ? mob.atkDownMul || 1 : 1);
   const mobAcc = stats.dex + 40;
   const playerEva = evasionFromAgi(target.agi);

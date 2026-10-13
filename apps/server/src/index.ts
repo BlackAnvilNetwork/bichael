@@ -138,6 +138,7 @@ import {
   MOB_CAST_ANIM_MS,
   MOB_CAST_WINDUP_MS,
   mobAutoAttackRoll,
+  mobAutoIsMagic,
   mobEngageRange,
   mobMpForJob,
   resolveMobJob,
@@ -159,6 +160,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { handleOpsHttp } from "./ops-health";
 import {
   clearKnightBuffs,
+  findInterposeGuard,
   resolveKnightAbility,
 } from "./knight-abilities";
 import { clearRogueBuffs, resolveRogueAbility } from "./rogue-abilities";
@@ -337,6 +339,8 @@ type Player = {
   sentinelUntil: number;
   rampartUntil: number;
   coverUntil: number;
+  /** Interpose bodyguard window (caster only, not persisted) — see knight-abilities (#79). */
+  coverGuardUntil?: number;
   fealtyUntil: number;
   guardianUntil: number;
   protectUntil: number;
@@ -4409,17 +4413,21 @@ function mobSwing(mob: Mob, now: number) {
     return;
   }
 
-  const defStats = playerCombatStats(nearest);
-  const vitals = {
-    vit: defStats.vit,
-    agi: Math.max(0, defStats.agi - fighterEvaPenalty(nearest, now)),
-    // Gear armor counts against physical hits, same as the character sheet (#52).
-    def: playerDefense(defStats.vit, playerEquipmentStats(nearest).def ?? 0),
+  const vitalsOf = (pl: Player) => {
+    const defStats = playerCombatStats(pl);
+    return {
+      vit: defStats.vit,
+      agi: Math.max(0, defStats.agi - fighterEvaPenalty(pl, now)),
+      // Gear armor counts against physical hits, same as the character sheet (#52).
+      def: playerDefense(defStats.vit, playerEquipmentStats(pl).def ?? 0),
+    };
   };
+  const vitals = vitalsOf(nearest);
 
-  const applyMobDamage = (rawDmg: number, hitLog: string) => {
+  /** `victim` is the mob's target unless a Knight interposed (#79). */
+  const applyMobDamage = (rawDmg: number, hitLog: string, victim: Player = nearest) => {
     let dmg = rawDmg;
-    if (nearest.zoneId === "pale_hollow") {
+    if (victim.zoneId === "pale_hollow") {
       const b = paleHollowBiome(mob.x, mob.z);
       if (mob.archetype === "pale_slime" && (b === "river" || b === "riverbank")) {
         dmg = Math.max(1, Math.floor(dmg * 1.25));
@@ -4428,17 +4436,17 @@ function mobSwing(mob: Mob, now: number) {
         dmg = Math.max(1, Math.floor(dmg * 1.15));
       }
     }
-    dmg = Math.max(0, Math.floor(dmg * playerPhysDtMul(nearest, now)));
-    dmg = absorbStoneskin(nearest, now, dmg);
-    const beforeShield = nearest.healAbsorbHp;
-    dmg = absorbHealShield(nearest, now, dmg);
-    const soaked = Math.max(0, beforeShield - nearest.healAbsorbHp);
-    dmg = Math.max(0, Math.floor(dmg * fighterDefenseMul(nearest, now)));
-    const wall = absorbManaWall(nearest, now, dmg);
+    dmg = Math.max(0, Math.floor(dmg * playerPhysDtMul(victim, now)));
+    dmg = absorbStoneskin(victim, now, dmg);
+    const beforeShield = victim.healAbsorbHp;
+    dmg = absorbHealShield(victim, now, dmg);
+    const soaked = Math.max(0, beforeShield - victim.healAbsorbHp);
+    dmg = Math.max(0, Math.floor(dmg * fighterDefenseMul(victim, now)));
+    const wall = absorbManaWall(victim, now, dmg);
     dmg = wall.dmg;
     if (dmg <= 0) {
       pushLog(
-        nearest,
+        victim,
         soaked > 0
           ? `${mob.name}'s blow is swallowed by your Solace shield!`
           : wall.bled > 0
@@ -4448,17 +4456,17 @@ function mobSwing(mob: Mob, now: number) {
       return;
     }
     if (now < mob.addleUntil) dmg = Math.max(1, Math.floor(dmg * 0.65));
-    nearest.hp = Math.max(0, nearest.hp - dmg);
-    if (nearest.miseryRite) {
-      nearest.miseryEmpowerUntil = now + 15_000;
+    victim.hp = Math.max(0, victim.hp - dmg);
+    if (victim.miseryRite) {
+      victim.miseryEmpowerUntil = now + 15_000;
     }
-    stopRest(nearest, `${mob.name}'s blow breaks your rest!`);
+    stopRest(victim, `${mob.name}'s blow breaks your rest!`);
     const notes: string[] = [];
     if (soaked > 0) notes.push(`${soaked} absorbed`);
     if (wall.bled > 0) notes.push(`${wall.bled} MP`);
     if (now < mob.addleUntil) notes.push("Addled");
     const base = hitLog.endsWith(".") ? hitLog.slice(0, -1) : hitLog;
-    pushLog(nearest, notes.length > 0 ? `${base} (${notes.join(", ")}).` : `${base}.`);
+    pushLog(victim, notes.length > 0 ? `${base} (${notes.join(", ")}).` : `${base}.`);
   };
 
   const ability = tryMobJobAbility(mob, {
@@ -4470,12 +4478,17 @@ function mobSwing(mob: Mob, now: number) {
     applyPlayerDamage: (raw, note) => applyMobDamage(raw, note),
   });
 
+  // Interpose (#79): a Knight bodyguard takes physical autos aimed at a nearby ally.
+  let guard: Player | null = null;
   if (ability.ok) {
     if (ability.pending) scheduleMobPendingCast(mob, now, nearest.wallet, ability.pending);
   } else {
     const swingSlow = now < mob.slowUntil ? mob.swingPenalty : 0;
     mob.nextSwingAt = now + swingDelayMs(2400, -swingSlow);
-    const roll = mobAutoAttackRoll(mob, vitals, now);
+    // Picked once per swing and resolved straight on the Knight (their own
+    // evasion, armor and DT incl. Interpose's 0.75) — never re-redirected.
+    guard = mobAutoIsMagic(mob, now) ? null : findInterposeGuard(nearest, players.values(), now, dist);
+    const roll = mobAutoAttackRoll(mob, guard ? vitalsOf(guard) : vitals, now);
     mob.anim = roll.anim;
     if (roll.anim === "cast") {
       // Magic auto — cast anim + circle first; damage (or miss) after wind-up.
@@ -4494,26 +4507,41 @@ function mobSwing(mob: Mob, now: number) {
       }
     } else {
       mob.animUntil = now + 480;
-      if (!roll.hit) {
-        pushLog(nearest, `${mob.name} misses you.`);
-        return;
+      if (guard) {
+        pushLog(nearest, `${guard.name} interposes and takes ${mob.name}'s blow!`);
+        if (!roll.hit) {
+          pushLog(guard, `You interpose for ${nearest.name} — ${mob.name} misses you.`);
+          return;
+        }
+        applyMobDamage(
+          roll.dmg,
+          `You interpose for ${nearest.name} — ${mob.name} hits you for ${roll.dmg}`,
+          guard,
+        );
+      } else {
+        if (!roll.hit) {
+          pushLog(nearest, `${mob.name} misses you.`);
+          return;
+        }
+        applyMobDamage(roll.dmg, `${mob.name} hits you for ${roll.dmg}`);
       }
-      applyMobDamage(roll.dmg, `${mob.name} hits you for ${roll.dmg}`);
     }
   }
 
-  if (nearest.hp <= 0) {
-    if (now < nearest.reraiseUntil) {
-      nearest.reraiseUntil = 0;
-      nearest.hp = Math.max(1, Math.floor(nearest.maxHp * 0.25));
-      nearest.sacredLightUntil = now + 2200;
-      pushLog(nearest, "Ember Vigil — you rise in sacred light!");
+  // A redirected hit lands on (and can drop) the Knight instead of the target.
+  for (const downed of guard ? [nearest, guard] : [nearest]) {
+    if (downed.hp > 0) continue;
+    if (now < downed.reraiseUntil) {
+      downed.reraiseUntil = 0;
+      downed.hp = Math.max(1, Math.floor(downed.maxHp * 0.25));
+      downed.sacredLightUntil = now + 2200;
+      pushLog(downed, "Ember Vigil — you rise in sacred light!");
     } else {
       const killer = mob;
-      respawnAtHub(nearest);
+      respawnAtHub(downed);
       if (killer.shiny && !killer.shinyClone) {
         shinyFleeAfterPlayerKill(killer, now);
-        pushLog(nearest, killer.name + " flees into the Hollow...");
+        pushLog(downed, killer.name + " flees into the Hollow...");
       }
     }
   }
