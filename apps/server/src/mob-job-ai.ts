@@ -174,10 +174,11 @@ export const MOB_CAST_WINDUP_MS = 550;
 /** Full cast anim window — covers wind-up + resolve flash. */
 export const MOB_CAST_ANIM_MS = 1000;
 
+/** `magic` routes the resolved hit through the target's mag DT, not phys DT (#55). */
 export type PendingMobCastResolve =
-  | { type: "damage"; dmg: number; log: string }
+  | { type: "damage"; dmg: number; log: string; magic?: boolean }
   | { type: "slow"; durationMs: number; movePct: number; log: string }
-  | { type: "miss"; log: string };
+  | { type: "miss"; log: string; magic?: boolean };
 
 export type MobAbilityResult =
   | { ok: false }
@@ -335,6 +336,7 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
           type: "damage",
           dmg,
           log: `${mob.name} casts ${choice.label} for ${dmg}.`,
+          magic: true,
         },
       };
     }

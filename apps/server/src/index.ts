@@ -192,6 +192,7 @@ import {
   autoAttackFighterAttackMul,
 } from "./auto-attack-traits";
 import { pickDotKillCredit } from "./dot-credit";
+import { pendingHitDtMul, physDtMul } from "./incoming-dt";
 import { loadLokEnv } from "./lok-chain";
 import { applySettlementDeployFile } from "./settlement-deploy";
 import {
@@ -487,6 +488,8 @@ type Mob = {
   pendingCastLog: string;
   pendingCastSlowMs: number;
   pendingCastMovePct: number;
+  /** Pending hit is magic (cast auto / bolt) — resolves through mag DT (#55). */
+  pendingCastMagic: boolean;
   atkBuffUntil: number;
   atkBuffMul: number;
   /** Idle wander waypoint (NaN = none). */
@@ -1855,6 +1858,7 @@ function spawnFieldMob(
     pendingCastLog: "",
     pendingCastSlowMs: 0,
     pendingCastMovePct: 0,
+    pendingCastMagic: false,
     atkBuffUntil: 0,
     atkBuffMul: 1,
     roamTx: Number.NaN,
@@ -3352,21 +3356,8 @@ function clearJobBuffs(p: Player) {
 }
 
 function playerPhysDtMul(p: Player, now: number): number {
-  const tree = 1 - playerTreeBonuses(p).physDt;
-  // Bulwark — true physical immunity (bypass DT floor)
-  if (now < p.bulwarkUntil) return 0;
-
-  // Buff fields apply to whoever carries them (Rampart/Guardian/Protect party)
-  let mul = 1;
-  if (now < p.sentinelUntil) mul *= 0.5;
-  if (now < p.coverUntil) mul *= 0.75;
-  if (now < p.rampartUntil) mul *= 0.75;
-  if (now < p.guardianUntil) mul *= 0.65;
-  if (now < p.protectUntil) mul *= p.protectPhysMul;
-  if (now < p.phalanxUntil) mul *= p.phalanxPhysMul;
-  // Soft floor so Sentinel + Protect/Rampart/Guardian still stack (#49).
-  // Was hard-capped at 0.5 which made further mitigation a no-op.
-  return Math.max(0.15, mul * Math.max(0.7, tree));
+  // Bulwark / Sentinel / Cover / Rampart / Guardian / Protect / Phalanx + tree physDt.
+  return physDtMul(p, now, playerTreeBonuses(p).physDt ?? 0);
 }
 
 /** Mana Wall — pay remaining damage with MP instead of HP. */
@@ -4200,6 +4191,7 @@ function clearMobPendingCast(mob: Mob) {
   mob.pendingCastLog = "";
   mob.pendingCastSlowMs = 0;
   mob.pendingCastMovePct = 0;
+  mob.pendingCastMagic = false;
 }
 
 function scheduleMobPendingCast(
@@ -4215,10 +4207,21 @@ function scheduleMobPendingCast(
   mob.pendingCastLog = resolve.log;
   mob.pendingCastSlowMs = resolve.type === "slow" ? resolve.durationMs : 0;
   mob.pendingCastMovePct = resolve.type === "slow" ? resolve.movePct : 0;
+  mob.pendingCastMagic = resolve.type !== "slow" && resolve.magic === true;
 }
 
-/** Apply pending cast damage with the same absorbs as a live swing. */
-function applyPendingMobDamage(mob: Mob, target: Player, now: number, rawDmg: number, hitLog: string) {
+/**
+ * Apply pending cast damage with the same absorbs as a live swing.
+ * Magic casts (autos / bolts) use mag DT; physical pending hits keep phys DT (#55).
+ */
+function applyPendingMobDamage(
+  mob: Mob,
+  target: Player,
+  now: number,
+  rawDmg: number,
+  hitLog: string,
+  magic: boolean,
+) {
   let dmg = rawDmg;
   if (target.zoneId === "pale_hollow") {
     const b = paleHollowBiome(mob.x, mob.z);
@@ -4229,7 +4232,8 @@ function applyPendingMobDamage(mob: Mob, target: Player, now: number, rawDmg: nu
       dmg = Math.max(1, Math.floor(dmg * 1.15));
     }
   }
-  dmg = Math.max(0, Math.floor(dmg * playerPhysDtMul(target, now)));
+  // Magic → Asylum / Fealty / Shell / Mana Wall + tree magDt; physical → phys DT.
+  dmg = Math.max(0, Math.floor(dmg * pendingHitDtMul(target, now, magic, playerTreeBonuses(target))));
   dmg = absorbStoneskin(target, now, dmg);
   const beforeShield = target.healAbsorbHp;
   dmg = absorbHealShield(target, now, dmg);
@@ -4278,6 +4282,7 @@ function resolveMobPendingCast(mob: Mob, now: number) {
   const log = mob.pendingCastLog;
   const slowMs = mob.pendingCastSlowMs;
   const movePct = mob.pendingCastMovePct;
+  const magic = mob.pendingCastMagic;
   clearMobPendingCast(mob);
 
   if (!targetWallet) return;
@@ -4296,7 +4301,7 @@ function resolveMobPendingCast(mob: Mob, now: number) {
     return;
   }
   if (kind === "damage") {
-    applyPendingMobDamage(mob, target, now, dmg, log);
+    applyPendingMobDamage(mob, target, now, dmg, log, magic);
     if (target.hp <= 0) {
       if (now < target.reraiseUntil) {
         target.reraiseUntil = 0;
@@ -4497,12 +4502,14 @@ function mobSwing(mob: Mob, now: number) {
         scheduleMobPendingCast(mob, now, nearest.wallet, {
           type: "miss",
           log: `${mob.name} misses you.`,
+          magic: true,
         });
       } else {
         scheduleMobPendingCast(mob, now, nearest.wallet, {
           type: "damage",
           dmg: roll.dmg,
           log: `${mob.name} strikes you with magic for ${roll.dmg}.`,
+          magic: true,
         });
       }
     } else {
