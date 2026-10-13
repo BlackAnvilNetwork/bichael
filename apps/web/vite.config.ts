@@ -12,6 +12,11 @@ export default defineConfig({
     },
   },
   server: {
+    // 0.0.0.0 so Cursor can forward the site. 127.0.0.1 alone is invisible
+    // outside this machine, which shows up as a black page on localhost:5173.
+    host: "0.0.0.0",
     port: 5173,
+    strictPort: true,
+    allowedHosts: true,
   },
 });
