@@ -54,6 +54,23 @@ export function assertProductionEnvShape(env: NodeJS.ProcessEnv = process.env): 
   const listingKey = env.LOK_LISTING_KEY?.trim() || listingRoleKey(env);
   const statusToken = env.LOK_OPS_STATUS_TOKEN?.trim();
 
+  // Admin / deployer keys must never sit on a production host. LISTING covers
+  // AhEscrow LISTING_ROLE + PvpBounty OPERATOR_ROLE.
+  if (env.LOK_OWNER_KEY?.trim()) {
+    return {
+      ok: false,
+      error:
+        "LOK_OWNER_KEY must not be set on production settlement chains — use LOK_LISTING_KEY only (LISTING EOA)",
+    };
+  }
+  if (env.PRIVATE_KEY?.trim()) {
+    return {
+      ok: false,
+      error:
+        "PRIVATE_KEY must not be set on production settlement chains — use LOK_LISTING_KEY only (LISTING EOA)",
+    };
+  }
+
   const missing: string[] = [];
   if (!nft) missing.push("LOK_NFT");
   if (!factory) missing.push("LOK_FACTORY");

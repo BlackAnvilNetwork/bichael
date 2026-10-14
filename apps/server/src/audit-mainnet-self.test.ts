@@ -413,6 +413,25 @@ describe("H-2 / M-7 production boot + dry-run denylist", () => {
     if (!r.ok) assert.match(r.error, /LOK_NFT|production/);
   });
 
+  it("refuses LOK_OWNER_KEY / PRIVATE_KEY on production settlement chains", () => {
+    const base = {
+      NETWORK: "gnosis",
+      LOK_CHAIN_ID: "100",
+      LOK_NFT: "0x48aFeC17A56c5Bd32ABDbcAD57f16d3859b1289F",
+      LOK_FACTORY: "0xA78a61c0E16A74eC64F3d876D222F1e46334ac24",
+      LOK_AH_ESCROW: "0x4669488AE862D7cbf979878fCb1e1b9b80fba6Df",
+      LOK_CHAIN_RPC: "https://rpc.gnosischain.com",
+      LOK_LISTING_KEY: "0x" + "11".repeat(32),
+      LOK_OPS_STATUS_TOKEN: "secret",
+    };
+    const owner = assertProductionEnvShape({ ...base, LOK_OWNER_KEY: "0x" + "22".repeat(32) });
+    assert.equal(owner.ok, false);
+    if (!owner.ok) assert.match(owner.error, /LOK_OWNER_KEY must not be set/);
+    const pk = assertProductionEnvShape({ ...base, PRIVATE_KEY: "0x" + "33".repeat(32) });
+    assert.equal(pk.ok, false);
+    if (!pk.ok) assert.match(pk.error, /PRIVATE_KEY must not be set/);
+  });
+
   it("refuses dry-run denylist hits on production without inspect flags", () => {
     const r = assertProductionEnvShape({
       NETWORK: "gnosis",

@@ -1,6 +1,6 @@
 /**
  * One in-process queue for all owner/listing-role sends so cast and viem
- * never race the same nonce (LOK_LISTING_KEY falls back to LOK_OWNER_KEY).
+ * never race the same nonce (production: LOK_LISTING_KEY only).
  */
 
 let queue: Promise<unknown> = Promise.resolve();

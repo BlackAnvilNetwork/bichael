@@ -178,7 +178,7 @@ async function withOperatorWallet<T>(
   const rpc = rpcUrl(env);
   const key = operatorKey(env);
   if (!bounty || !rpc || !key) {
-    throw new Error("PvpBounty needs LOK_PVP_BOUNTY + LOK_CHAIN_RPC + LOK_LISTING_KEY (or LOK_OWNER_KEY)");
+    throw new Error("PvpBounty needs LOK_PVP_BOUNTY + LOK_CHAIN_RPC + LOK_LISTING_KEY");
   }
   const account = privateKeyToAccount(key as Hex);
   const chain = anvilChain(settlementChainId(env));

@@ -55,6 +55,7 @@ mirrors.
 - Live address: `0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e` (`deployments/gnosis.json`)
 - Env: `NETWORK=gnosis` fills `LOK_PVP_BOUNTY`
 - Operator: **`LOK_LISTING_KEY` only** (LISTING `0xbFa2…`). Never put the admin key on the server.
+- Key placement: local → `apps/server/.env.local`; production → host secrets for the Node process on PORT 8787 (see `docs/gnosis-launch.md`).
 - Synthetic refused on Gnosis unless `LOK_PVP_SYNTHETIC=1` (never for production)
 - Local anvil only: `DeployPvpBountyAnvil` + `deployments/anvil.json` (dev)
 
