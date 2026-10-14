@@ -31,10 +31,11 @@ Fixed `amountWei` = `1000000000000000000`. Linked onto victim (and slayer for
 
 ## On-chain
 
-`contracts/lok-log/src/PvpBounty.sol` — player `place` (1 ether), operator/owner
-`cancel`, operator `claim`. Settlement ETH never hits the character log — the
-server verifies the place receipt (or recovers `BountyOpened`), then appends
-`pvpBountyOpen` / `pvpBountyCancel` / `pvpKill` mirrors.
+`contracts/lok-log/src/PvpBounty.sol` — player `place` (**1 xDAI** / 1e18 wei),
+operator/owner `cancel`, operator `claim`. Settlement value never hits the
+character log — the server verifies the place receipt (or recovers
+`BountyOpened`), then appends `pvpBountyOpen` / `pvpBountyCancel` / `pvpKill`
+mirrors.
 
 ## Server WS
 
@@ -46,16 +47,18 @@ server verifies the place receipt (or recovers `BountyOpened`), then appends
 - On slay: on-chain `claim` → `pvpKill` → kick + `pvp/slain` + **Join again**
 - Leaving the arena with an open bounty auto-cancels (on-chain refund)
 
-## Deploy
+## Deploy (Gnosis — live)
 
-- `Deploy.s.sol` / `DeployPvpBountyAnvil.s.sol` — OPERATOR = deployer / LISTING
-- Anvil addresses: `deployments/anvil.json` (`PvpBounty` + NFT + Factory)
-- Env: `LOK_PVP_BOUNTY` (auto-filled from deploy JSON when `NETWORK=anvil`)
-- Anvil keys: `settlement-deploy` fills `LOK_OWNER_KEY` / `LOK_LISTING_KEY` = K0
-- Synthetic only when no bounty addr, or `LOK_PVP_SYNTHETIC=1`
+- Bounty unit: **1 xDAI** (`BOUNTY_WEI = 1e18`)
+- Additive script: `DeployPvpBountyGnosis.s.sol` (+ `broadcast-deploy-pvp-bounty-gnosis.sh`)
+- Against official NFT `0x48aFeC…289F`; ADMIN `0x08cD…4e01`; OPERATOR = LISTING `0xbFa2…9E76`
+- Record address in `deployments/gnosis.json` → `contracts.PvpBounty`
+- Env: `NETWORK=gnosis` fills `LOK_PVP_BOUNTY` from that file; server needs `LOK_LISTING_KEY`
+- Synthetic refused on Gnosis unless `LOK_PVP_SYNTHETIC=1` (never for production)
+- Local anvil only: `DeployPvpBountyAnvil` + `deployments/anvil.json` (dev)
 
 ## Client
 
-- Commands → **Ash Pit** panel — Join pays 1 native then warps
+- Commands → **Ash Pit** panel — Join pays **1 xDAI** then warps
 - Slain banner with one-click rejoin (fresh place)
 - Marked players show a gold ring; click to engage

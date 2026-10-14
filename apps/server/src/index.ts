@@ -3486,7 +3486,7 @@ function handlePvpJoin(p: Player, areaId = ASH_PIT_AREA.id, placeTxHash?: string
           pushLog(p, "PvpBounty is not configured.");
           return;
         }
-        pushLog(p, "Pay 1 native to place your head-bounty, then Join again.");
+        pushLog(p, "Pay 1 xDAI to place your head-bounty, then Join again.");
         send(p.ws, {
           type: "pvp/placeNeeded",
           areaId: pit.id,
@@ -3533,7 +3533,7 @@ function handlePvpJoin(p: Player, areaId = ASH_PIT_AREA.id, placeTxHash?: string
     }
 
     warpIntoPit(p, pit, true);
-    pushLog(p, `Joined ${pit.name} — ${PVP_BOUNTY_WEI} wei on your head.`);
+    pushLog(p, `Joined ${pit.name} — 1 xDAI on your head.`);
     pushLog(p, formatCapNotice(pit, p.level));
     pushLog(p, "Click marked players to fight. If you fall, your bounty pays the slayer — then rejoin.");
     send(p.ws, {

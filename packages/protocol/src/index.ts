@@ -435,10 +435,12 @@ export type AhEscrowClientConfig = {
   currency?: SettlementCurrencyView;
 };
 
-/** Client config for PvpBounty.place (1 native head-bounty). */
+/** Client config for PvpBounty.place (fixed 1 xDAI = 1e18 wei). */
 export type PvpBountyClientConfig = {
   address: string;
   bountyWei: string;
+  /** Product unit label — always xDAI for the head-bounty. */
+  currency: "xDAI";
   /** When true, server accepts synthetic receipts — no wallet place needed. */
   synthetic: boolean;
   rpcUrl: string;

@@ -1,5 +1,5 @@
 /**
- * Client-signed PvpBounty.place — pays 1 native from the browser wallet
+ * Client-signed PvpBounty.place — pays 1 xDAI (1e18 wei) from the browser wallet
  * (injected EIP-1193 when available, else Reown AppKit; burner OK on anvil).
  */
 import { settlementCurrency } from "@bellgrave/config";

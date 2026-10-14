@@ -447,11 +447,12 @@ export function connectSocket() {
       // Server asked for an on-chain place — pay then retry Join with the tx hash.
       void (async () => {
         const { placePvpBountyWithWallet } = await import("./pvp-place");
-        g.pushLog("Wallet: place 1 native head-bounty to enter Ash Pit…");
+        g.pushLog("Wallet: place 1 xDAI head-bounty to enter Ash Pit…");
         const placed = await placePvpBountyWithWallet({
           escrow: {
             address: msg.address,
             bountyWei: msg.bountyWei,
+            currency: "xDAI",
             synthetic: false,
             rpcUrl: msg.rpcUrl,
             chainId: msg.chainId,

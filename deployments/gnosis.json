@@ -26,6 +26,16 @@
     "RulesetRegistry": "0xdd7B66451529918273fe4E0d9f9fdf261194a6e0",
     "AhEscrow": "0x4669488AE862D7cbf979878fCb1e1b9b80fba6Df"
   },
+  "pvpBounty": {
+    "amount": "1 xDAI",
+    "amountWei": "1000000000000000000",
+    "admin": "0x08cDab8b049D2A42125C3A2bf1bF1E2f619C4e01",
+    "operator": "0xbFa29a6EE3d1188aa0A9e0c783E5Da620b859E76",
+    "nft": "0x48aFeC17A56c5Bd32ABDbcAD57f16d3859b1289F",
+    "status": "pending-broadcast",
+    "deployScript": "script/DeployPvpBountyGnosis.s.sol",
+    "note": "Broadcast with CONFIRM_BROADCAST=1 ./script/broadcast-deploy-pvp-bounty-gnosis.sh then set contracts.PvpBounty."
+  },
   "implementations": {
     "CharacterNFT": "0x51731566b350Cf6558E39b16234a28471D9DEC80",
     "CharacterCheckpoint": "0xcB72054d502fAA9f2de5Aeefb32ceBE2bb29e376",

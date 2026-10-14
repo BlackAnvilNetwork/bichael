@@ -38,8 +38,8 @@ export const NETWORK_PROFILES: Record<NetworkName, NetworkProfile> = {
     blockscout: "https://gnosis.blockscout.com",
     /** ~30 blocks (~2.5m); watchers prefer `finalized` when the RPC supports it. */
     confirmations: 30,
-    /** Official deploy JSON only — dry-run lives at deployments/gnosis-dryrun.json (never auto-filled). */
-    deployFile: "",
+    /** Official stack — dry-run lives at deployments/gnosis-dryrun.json (refused unless opted in). */
+    deployFile: "deployments/gnosis.json",
     currency: SETTLEMENT_BY_CHAIN[100]!,
   },
   chiado: {

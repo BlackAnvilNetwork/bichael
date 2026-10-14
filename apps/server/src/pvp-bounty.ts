@@ -37,6 +37,7 @@ export function pvpBountyClientConfig(
   return {
     address: address ?? "0x0000000000000000000000000000000000000000",
     bountyWei: "1000000000000000000",
+    currency: "xDAI",
     synthetic,
     rpcUrl: rpcUrl || "http://127.0.0.1:8545",
     chainId,

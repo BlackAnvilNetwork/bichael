@@ -40,13 +40,16 @@ describe("applySettlementDeployFile", () => {
     assert.ok(env.LOK_CHAIN_RPC_URLS?.includes(","));
   });
 
-  it("NETWORK=gnosis selects chain 100 + confirmations + explorer without LOK_CHAIN_ID", () => {
+  it("NETWORK=gnosis selects chain 100 + fills official deploy addresses", () => {
     const env: NodeJS.ProcessEnv = { NETWORK: "gnosis" };
     applySettlementDeployFile(env);
     assert.equal(env.LOK_CHAIN_ID, "100");
     assert.equal(env.LOK_CONFIRMATIONS, "30");
     assert.equal(env.LOK_EXPLORER, "https://gnosisscan.io");
     assert.ok(env.LOK_CHAIN_RPC?.includes("gnosis"));
+    assert.equal(env.LOK_NFT, "0x48aFeC17A56c5Bd32ABDbcAD57f16d3859b1289F");
+    assert.equal(env.LOK_AH_ESCROW, "0x4669488AE862D7cbf979878fCb1e1b9b80fba6Df");
+    // PvpBounty filled once DeployPvpBountyGnosis is recorded in gnosis.json.
   });
 
   it("does not override existing env on anvil", () => {

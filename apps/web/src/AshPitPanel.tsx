@@ -29,7 +29,7 @@ export async function joinAshPit(areaId = "ash_pit"): Promise<void> {
     g.pushLog("Your character is not on the log yet.");
     return;
   }
-  g.pushLog("Placing 1 native head-bounty…");
+  g.pushLog("Placing 1 xDAI head-bounty…");
   const placed = await placePvpBountyWithWallet({ escrow, tokenId });
   if (!placed.ok) {
     g.pushLog(placed.error);
@@ -71,7 +71,7 @@ export function AshPitPanel({ onClose }: { onClose: () => void }) {
           : slain
             ? `${slain.slayerName} took your bounty — Join again anytime`
             : live
-              ? "Not marked — Join pays 1 native on-chain, then enters"
+              ? "Not marked — Join pays 1 xDAI on-chain, then enters"
               : "Not marked — Join to enter and place your bounty"}
       </p>
       <div className="ash-pit-actions">

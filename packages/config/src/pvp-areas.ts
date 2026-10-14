@@ -1,8 +1,8 @@
 /**
  * Black Anvil PvP areas — bounty arenas with optional level caps.
  *
- * Bounty value is always 1×10¹⁸ wei (1 xDAI / 1 native), mirrored on the lok ledger
- * via `pvpBountyOpen` / `pvpBountyCancel` / `pvpKill`. Settlement ETH stays on-chain.
+ * Bounty value is always **1 xDAI** (1×10¹⁸ wei), mirrored on the lok ledger
+ * via `pvpBountyOpen` / `pvpBountyCancel` / `pvpKill`. Settlement stays on-chain.
  */
 
 /** Fixed head-bounty in wei (matches engine `PVP_BOUNTY_WEI`). */

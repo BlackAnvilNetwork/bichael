@@ -76,6 +76,17 @@ For a **single known treasury EOA** that holds `DEFAULT_ADMIN_ROLE`, `EMERGENCY`
 - Official Gnosis / Chiado entrypoint (`DeployChiado`): default **1 xDAI** (`MINT_FEE` unset → `1 ether` wei).
 - Anvil (`Deploy`): default `0.001 ether`.
 
+## PvP bounty (additive)
+
+Ash Pit head-bounty is **1 xDAI** via `PvpBounty.sol` (not part of the original package deploy).
+
+```bash
+set -a && source .env.gnosis && set +a
+CONFIRM_BROADCAST=1 ./script/broadcast-deploy-pvp-bounty-gnosis.sh
+```
+
+Defaults: NFT / ADMIN / LISTING from `deployments/gnosis.json`. OPERATOR = LISTING (server `LOK_LISTING_KEY` claims/cancels). Record `contracts.PvpBounty` then restart with `NETWORK=gnosis`.
+
 ## Deploy + verify
 
 ### Fork dry-run (recommended before go-ahead)

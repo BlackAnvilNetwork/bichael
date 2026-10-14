@@ -10,17 +10,17 @@ interface ICharacterOwnerOf {
 
 /// @title PvpBounty
 /// @notice First-party Black Anvil PvP head-bounty escrow. Players place a fixed
-///         **1 ether** (1 xDAI on Gnosis) on their character. The game server
-///         (OPERATOR_ROLE) claims the bounty to the slayer's wallet after a
-///         verified kill inside a PvP area, or refunds on cancel/leave.
-///         Settlement ETH never appears on the character log — the server
+///         **1 xDAI** (1e18 wei native value on Gnosis) on their character. The
+///         game server (OPERATOR_ROLE) claims the bounty to the slayer's wallet
+///         after a verified kill inside a PvP area, or refunds on cancel/leave.
+///         Settlement value never appears on the character log — the server
 ///         appends `pvpBountyOpen` / `pvpBountyCancel` / `pvpKill` mirrors only.
 contract PvpBounty is Pausable {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
     bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
 
-    /// @notice Fixed head-bounty (1 native / 1 xDAI).
+    /// @notice Fixed head-bounty: 1 xDAI (1e18 wei).
     uint256 public constant BOUNTY_WEI = 1 ether;
 
     ICharacterOwnerOf public immutable characterNft;

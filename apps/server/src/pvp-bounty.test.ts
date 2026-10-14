@@ -27,6 +27,7 @@ describe("pvp bounty env gate", () => {
     assert.equal(cfg!.synthetic, false);
     assert.equal(cfg!.address, addr.toLowerCase());
     assert.equal(cfg!.bountyWei, "1000000000000000000");
+    assert.equal(cfg!.currency, "xDAI");
   });
 
   it("refuses synthetic on Gnosis / Chiado", () => {

@@ -9,9 +9,10 @@ describe("placePvpBountyWithWallet", () => {
       escrow: {
         address: "0x" + "ab".repeat(20),
         bountyWei: "1000000000000000000",
+        currency: "xDAI",
         synthetic: false,
-        rpcUrl: "http://127.0.0.1:8545",
-        chainId: 31337,
+        rpcUrl: "https://rpc.gnosischain.com",
+        chainId: 100,
       },
       tokenId: "1",
       forceWalletFlags: {
@@ -34,6 +35,7 @@ describe("placePvpBountyWithWallet", () => {
       escrow: {
         address: "0x" + "ab".repeat(20),
         bountyWei: "1000000000000000000",
+        currency: "xDAI",
         synthetic: true,
         rpcUrl: "http://127.0.0.1:8545",
         chainId: 31337,
@@ -52,6 +54,7 @@ describe("placePvpBountyWithWallet", () => {
       escrow: {
         address: "0x" + "ab".repeat(20),
         bountyWei: "1000000000000000000",
+        currency: "xDAI",
         synthetic: false,
         rpcUrl: "https://rpc.gnosischain.com",
         chainId: 100,
