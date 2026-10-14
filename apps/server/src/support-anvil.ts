@@ -3,7 +3,8 @@
  * Does not touch the shared :8545 anvil.
  */
 import { spawn, type ChildProcess, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -130,30 +131,62 @@ export function assertLocalRpc(rpc: string): void {
   }
 }
 
-/** Deploy AhEscrow with deployer (= key 0) holding LISTING_ROLE. */
-export function deployMintFixture(rpc: string): { nft: string; factory: string } {
-  assertLocalRpc(rpc);
+/**
+ * Run `forge script … --broadcast` with an isolated cache + broadcast dir.
+ *
+ * Parallel node:test suites otherwise collide on the shared
+ * `contracts/lok-log/cache/<Script>/31337/run-latest.json.recovery.json`
+ * (CI flake: "another process is already modifying recovery state").
+ */
+export function runForgeScriptBroadcast(
+  args: string[],
+  opts?: { env?: NodeJS.ProcessEnv; maxBuffer?: number },
+): string {
   const forge = resolveForgeBin();
   if (!forge) throw new Error("forge not found");
   if (!forgeLibsPresent()) throw new Error("contracts/lok-log/lib missing");
-  const out = execFileSync(
-    forge,
-    [
-      "script",
-      "script/MintFixture.s.sol:MintFixture",
-      "--rpc-url",
-      rpc,
-      "--private-key",
-      SUPPORT_ANVIL_K0,
-      "--broadcast",
-      "-vv",
-    ],
-    {
-      cwd: SUPPORT_LOK,
-      encoding: "utf8",
-      env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: "1" },
-    },
-  );
+  const root = mkdtempSync(join(tmpdir(), "bellgrave-forge-"));
+  const cachePath = join(root, "cache");
+  const broadcastPath = join(root, "broadcast");
+  try {
+    return execFileSync(
+      forge,
+      [...args, "--cache-path", cachePath, "--broadcast"],
+      {
+        cwd: SUPPORT_LOK,
+        encoding: "utf8",
+        maxBuffer: opts?.maxBuffer,
+        env: {
+          ...process.env,
+          ...opts?.env,
+          FOUNDRY_DISABLE_NIGHTLY_WARNING: "1",
+          // Isolate script recovery + broadcast artifacts from other parallel forge runs.
+          FOUNDRY_CACHE_PATH: cachePath,
+          FOUNDRY_BROADCAST: broadcastPath,
+        },
+      },
+    );
+  } finally {
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+/** Deploy AhEscrow with deployer (= key 0) holding LISTING_ROLE. */
+export function deployMintFixture(rpc: string): { nft: string; factory: string } {
+  assertLocalRpc(rpc);
+  const out = runForgeScriptBroadcast([
+    "script",
+    "script/MintFixture.s.sol:MintFixture",
+    "--rpc-url",
+    rpc,
+    "--private-key",
+    SUPPORT_ANVIL_K0,
+    "-vv",
+  ]);
   const nftMatch = /NFT\s+(0x[a-fA-F0-9]{40})/.exec(out);
   const factoryMatch = /FACTORY\s+(0x[a-fA-F0-9]{40})/.exec(out);
   if (!nftMatch || !factoryMatch) {
@@ -165,12 +198,8 @@ export function deployMintFixture(rpc: string): { nft: string; factory: string }
 /** Deploy MockEezSyncBuy wired to an AhEscrow on the same anvil. */
 export function deployMockEezSyncBuy(rpc: string, escrow: string, zoneId = 31337): string {
   assertLocalRpc(rpc);
-  const forge = resolveForgeBin();
-  if (!forge) throw new Error("forge not found");
-  if (!forgeLibsPresent()) throw new Error("contracts/lok-log/lib missing");
   if (zoneId !== 31337) throw new Error("EezMockFixture only supports zoneId 31337");
-  const out = execFileSync(
-    forge,
+  const out = runForgeScriptBroadcast(
     [
       "script",
       "script/EezMockFixture.s.sol:EezMockFixture",
@@ -178,19 +207,9 @@ export function deployMockEezSyncBuy(rpc: string, escrow: string, zoneId = 31337
       rpc,
       "--private-key",
       SUPPORT_ANVIL_K0,
-      "--broadcast",
       "-vv",
     ],
-    {
-      cwd: SUPPORT_LOK,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        FOUNDRY_DISABLE_NIGHTLY_WARNING: "1",
-        ETH_RPC_URL: rpc,
-        EEZ_ESCROW: escrow,
-      },
-    },
+    { env: { ETH_RPC_URL: rpc, EEZ_ESCROW: escrow } },
   );
   const m = /MOCK\s+(0x[a-fA-F0-9]{40})/.exec(out);
   if (!m) throw new Error("EezMockFixture did not print MOCK\n" + out.slice(-800));
@@ -199,27 +218,15 @@ export function deployMockEezSyncBuy(rpc: string, escrow: string, zoneId = 31337
 
 export function deployAhEscrowFixture(rpc: string): string {
   assertLocalRpc(rpc);
-  const forge = resolveForgeBin();
-  if (!forge) throw new Error("forge not found");
-  if (!forgeLibsPresent()) throw new Error("contracts/lok-log/lib missing");
-  const out = execFileSync(
-    forge,
-    [
-      "script",
-      "script/AhEscrowFixture.s.sol:AhEscrowFixture",
-      "--rpc-url",
-      rpc,
-      "--private-key",
-      SUPPORT_ANVIL_K0,
-      "--broadcast",
-      "-vv",
-    ],
-    {
-      cwd: SUPPORT_LOK,
-      encoding: "utf8",
-      env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: "1" },
-    },
-  );
+  const out = runForgeScriptBroadcast([
+    "script",
+    "script/AhEscrowFixture.s.sol:AhEscrowFixture",
+    "--rpc-url",
+    rpc,
+    "--private-key",
+    SUPPORT_ANVIL_K0,
+    "-vv",
+  ]);
   const m = /ESCROW\s+(0x[a-fA-F0-9]{40})/.exec(out);
   if (!m) throw new Error("AhEscrowFixture did not print ESCROW\n" + out.slice(-800));
   return m[1]!;
@@ -276,12 +283,8 @@ export function deployGnosisForkMintAhFixture(
   privateKey: string = SUPPORT_ANVIL_K0,
 ): GnosisForkMintAh {
   assertLocalRpc(rpc);
-  const forge = resolveForgeBin();
-  if (!forge) throw new Error("forge not found");
-  if (!forgeLibsPresent()) throw new Error("contracts/lok-log/lib missing");
   const pk = privateKey.startsWith("0x") ? privateKey : "0x" + privateKey;
-  const out = execFileSync(
-    forge,
+  const out = runForgeScriptBroadcast(
     [
       "script",
       "script/GnosisForkMintAhFixture.s.sol:GnosisForkMintAhFixture",
@@ -289,15 +292,9 @@ export function deployGnosisForkMintAhFixture(
       rpc,
       "--private-key",
       pk,
-      "--broadcast",
       "-vv",
     ],
-    {
-      cwd: SUPPORT_LOK,
-      encoding: "utf8",
-      env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: "1" },
-      maxBuffer: 16 * 1024 * 1024,
-    },
+    { maxBuffer: 16 * 1024 * 1024 },
   );
   const nftMatch = /NFT\s+(0x[a-fA-F0-9]{40})/.exec(out);
   const factoryMatch = /FACTORY\s+(0x[a-fA-F0-9]{40})/.exec(out);
