@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/network-profile.test.ts"
+    "test": "tsx --test src/network-profile.test.ts src/pvp-areas.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
