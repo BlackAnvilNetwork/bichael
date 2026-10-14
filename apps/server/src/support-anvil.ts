@@ -225,6 +225,35 @@ export function deployAhEscrowFixture(rpc: string): string {
   return m[1]!;
 }
 
+/** Deploy PvpBounty + MockOwnerNft with deployer as admin/operator. */
+export function deployPvpBountyFixture(rpc: string): string {
+  assertLocalRpc(rpc);
+  const forge = resolveForgeBin();
+  if (!forge) throw new Error("forge not found");
+  if (!forgeLibsPresent()) throw new Error("contracts/lok-log/lib missing");
+  const out = execFileSync(
+    forge,
+    [
+      "script",
+      "script/PvpBountyFixture.s.sol:PvpBountyFixture",
+      "--rpc-url",
+      rpc,
+      "--private-key",
+      SUPPORT_ANVIL_K0,
+      "--broadcast",
+      "-vv",
+    ],
+    {
+      cwd: SUPPORT_LOK,
+      encoding: "utf8",
+      env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: "1" },
+    },
+  );
+  const m = /PVP_BOUNTY\s+(0x[a-fA-F0-9]{40})/.exec(out);
+  if (!m) throw new Error("PvpBountyFixture did not print PVP_BOUNTY\n" + out.slice(-800));
+  return m[1]!;
+}
+
 /** Public Gnosis RPC for `anvil --fork-url` (never broadcast to this URL). */
 export function gnosisForkUrl(): string | null {
   const raw = (process.env.GNOSIS_RPC_URL ?? process.env.FORK_URL ?? "").trim();

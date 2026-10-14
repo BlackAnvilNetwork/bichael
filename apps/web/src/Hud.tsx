@@ -44,6 +44,7 @@ import {
   type UiSettings,
 } from "./uiSettings";
 import { MobileArcadeControls } from "./MobileArcadeControls";
+import { AshPitPanel, AshPitSlainBanner } from "./AshPitPanel";
 import { clearVirtualStick } from "./moveInput";
 import {
   HOTBAR_DRAG_MIME,
@@ -582,6 +583,7 @@ export function Hud() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [partyOpen, setPartyOpen] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(false);
+  const [ashPitOpen, setAshPitOpen] = useState(false);
   const [uiSettings, setUiSettings] = useState<UiSettings>(() => loadUiSettings());
   const [menuFocus, setMenuFocus] = useState<string>("character");
   const [bookTab, setBookTab] = useState<string>("time");
@@ -872,6 +874,22 @@ export function Hud() {
           <button
             type="button"
             role="menuitem"
+            className={`hud-cmd-btn${menuFocus === "ashpit" ? " selected" : ""}${
+              you.pvp?.bountyOpen ? " ash-pit-marked" : ""
+            }`}
+            title="Ash Pit — PvP bounty arena (L30)"
+            onMouseEnter={() => setMenuFocus("ashpit")}
+            onFocus={() => setMenuFocus("ashpit")}
+            onClick={() => {
+              setMenuFocus("ashpit");
+              setAshPitOpen((v) => !v);
+            }}
+          >
+            Ash Pit{you.pvp?.bountyOpen ? " · ★" : ""}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
             className={`hud-cmd-btn${menuFocus === "explorer" ? " selected" : ""}`}
             onMouseEnter={() => setMenuFocus("explorer")}
             onFocus={() => setMenuFocus("explorer")}
@@ -935,6 +953,8 @@ export function Hud() {
         </div>
       )}
       {explorerOpen && <ExplorerPanel onClose={() => setExplorerOpen(false)} />}
+      {ashPitOpen && <AshPitPanel onClose={() => setAshPitOpen(false)} />}
+      <AshPitSlainBanner />
       {partyOpen && wallet && (
         <PartyPanel
           party={snapshot?.party ?? null}

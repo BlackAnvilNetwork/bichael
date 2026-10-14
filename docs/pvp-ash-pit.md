@@ -38,7 +38,22 @@ exercisable before the operator watcher ships.
 
 ## Server WS
 
-- `pvp/bountyPlace` — must stand in a PvP area
-- `pvp/bountyCancel` — reclaim without dying
-- `engage` a player wallet/name inside the arena when they have an open bounty
+- **`pvp/join`** — teleport into Ash Pit + place bounty (easy join / rejoin)
+- **`pvp/leave`** — cancel bounty and warp to hub
+- `pvp/bountyPlace` / `pvp/bountyCancel` — place/cancel without teleport
+- `engage` a marked player (gold ring) inside the arena
+- On slay: `pvpKill` clears victim bounty, kick to hub, client gets `pvp/slain` + **Join again**
 - Leaving the arena with an open bounty auto-cancels (refund mirror)
+
+## Deploy
+
+- `Deploy.s.sol` deploys `PvpBounty` (OPERATOR = LISTING key)
+- Env: `LOK_PVP_BOUNTY` (filled from deploy JSON)
+- Anvil/local: synthetic receipts (`pvpSyntheticReceiptsAllowed`) — no real ETH
+- Gnosis: require live escrow + watcher before open/kill (synthetic refused)
+
+## Client
+
+- Commands → **Ash Pit** panel (Join / Leave)
+- Slain banner with one-click rejoin
+- Marked players show a gold ring; click to engage

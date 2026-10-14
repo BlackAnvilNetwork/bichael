@@ -440,6 +440,21 @@ export function connectSocket() {
       }
     } else if (msg.type === "log") {
       g.pushLog(msg.message);
+    } else if (msg.type === "pvp/joined") {
+      g.setPvpSlainPrompt(null);
+      g.pushLog(`Ash Pit — joined ${msg.areaName} (L${msg.levelCap} cap).`);
+    } else if (msg.type === "pvp/left") {
+      g.setPvpSlainPrompt(null);
+      g.pushLog("Left the Ash Pit.");
+    } else if (msg.type === "pvp/slain") {
+      g.setPvpSlainPrompt({
+        slayerName: msg.slayerName,
+        bountyWei: msg.bountyWei,
+        areaId: msg.areaId,
+      });
+      g.pushLog(
+        `${msg.slayerName} claimed your bounty. ${msg.canRejoin ? "Join again to fight." : ""}`,
+      );
     } else if (msg.type === "error") {
       if (authInFlight) {
         authInFlight = false;

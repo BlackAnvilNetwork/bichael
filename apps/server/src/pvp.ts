@@ -28,7 +28,10 @@ export type PvpBountyReceipt = {
   fillKey: string;
 };
 
-/** Synthetic escrow receipt for local/anvil until PvpBounty.sol is wired live. */
+/**
+ * Synthetic escrow receipt for local/anvil only.
+ * Callers must check `pvpSyntheticReceiptsAllowed()` before using.
+ */
 export function syntheticPvpReceipt(tag: string): PvpBountyReceipt {
   const digest = createHash("sha256")
     .update(`lok-pvp:${tag}:`)
@@ -37,6 +40,15 @@ export function syntheticPvpReceipt(tag: string): PvpBountyReceipt {
   const txHash = (`0x${digest.toString("hex")}`) as `0x${string}`;
   const logIndex = 0;
   return { txHash, logIndex, fillKey: `${txHash}-${logIndex}` };
+}
+
+/** Center spawn for an area (join teleport). */
+export function pvpAreaSpawn(area: PvpAreaDef): { x: number; z: number; facing: number } {
+  return {
+    x: area.spawn.x,
+    z: area.spawn.z,
+    facing: area.spawn.facing ?? 0,
+  };
 }
 
 export function areaAtPlayer(x: number, z: number): PvpAreaDef | undefined {

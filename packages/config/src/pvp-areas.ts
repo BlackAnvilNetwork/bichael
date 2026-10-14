@@ -28,6 +28,8 @@ export type PvpAreaDef = {
    */
   levelCap: number;
   bounds: PvpAreaBounds;
+  /** Join teleport / respawn pad inside the arena. */
+  spawn: { x: number; z: number; facing?: number };
   /** Flavor for UI / logs. */
   blurb: string;
 };
@@ -48,8 +50,9 @@ export const ASH_PIT: PvpAreaDef = {
     minZ: -18,
     maxZ: 8,
   },
+  spawn: { x: -57, z: -5, facing: 0 },
   blurb:
-    "Place 1 xDAI on your head. Level 30 / support 15. Slain here — bounty to the slayer.",
+    "Join with 1 xDAI on your head. Level 30 / support 15. Slain — bounty to the slayer; rejoin anytime.",
 };
 
 /** All registered PvP areas (extend as more arenas ship). */

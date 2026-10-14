@@ -14,6 +14,7 @@ describe("pvp areas", () => {
     assert.equal(ASH_PIT.levelCap, 30);
     assert.equal(PVP_BOUNTY_WEI, "1000000000000000000");
     assert.ok(pvpAreaAt(-60, -5)?.id === "ash_pit");
+    assert.ok(pvpAreaAt(ASH_PIT.spawn.x, ASH_PIT.spawn.z)?.id === "ash_pit");
     assert.equal(pvpAreaAt(0, 0), undefined);
   });
 

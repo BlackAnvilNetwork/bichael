@@ -112,6 +112,7 @@ export function applySettlementDeployFile(env: NodeJS.ProcessEnv = process.env):
     ["LOK_NFT", c.CharacterNFT],
     ["LOK_FACTORY", c.CharacterFactory],
     ["LOK_AH_ESCROW", c.AhEscrow],
+    ["LOK_PVP_BOUNTY", c.PvpBounty],
     ["LOK_CHECKPOINT", c.CharacterCheckpoint],
     ["LOK_RULESETS", c.RulesetRegistry],
     ["LOK_ITEMS", c.Items],

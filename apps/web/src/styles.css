@@ -3945,3 +3945,52 @@ html[data-ui-layout="mobile"] .hud-layout-mobile .hud-bottom {
     grid-template-columns: repeat(5, minmax(40px, 1fr));
   }
 }
+
+/* Ash Pit PvP */
+.ash-pit-panel {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  width: min(340px, calc(100vw - 24px));
+  padding: 14px 16px 16px;
+  z-index: 60;
+}
+.ash-pit-status {
+  margin: 10px 0 12px;
+  color: var(--cmd-pill-text);
+  opacity: 0.9;
+  line-height: 1.35;
+}
+.ash-pit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ash-pit-actions .hud-cmd-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.hud-cmd-btn.ash-pit-marked {
+  color: #e8c060;
+}
+.ash-pit-slain-banner {
+  pointer-events: auto;
+  position: fixed;
+  left: 50%;
+  bottom: 120px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100vw - 24px));
+  padding: 10px 14px;
+  background: rgba(18, 12, 10, 0.92);
+  border: 1px solid var(--ba-bronze-dim, #8a6a3a);
+  border-radius: 3px;
+  color: #f2e6d0;
+  font-family: var(--ui-font);
+  font-size: 13px;
+  z-index: 70;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}

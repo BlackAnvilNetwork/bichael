@@ -27,6 +27,8 @@ contract PvpBounty is Pausable {
 
     /// @dev tokenId → open bounty paid by that character's owner at place time.
     mapping(uint256 tokenId => bool) public open;
+    /// @dev Original placer — cancel always refunds this address (Transfer-safe).
+    mapping(uint256 tokenId => address) public payerOf;
     mapping(bytes32 role => mapping(address account => bool)) private _roles;
     uint256 private _locked = 1;
 
@@ -102,18 +104,24 @@ contract PvpBounty is Pausable {
         if (characterNft.ownerOf(tokenId) != msg.sender) revert NotOwner();
         if (open[tokenId]) revert AlreadyOpen();
         open[tokenId] = true;
+        payerOf[tokenId] = msg.sender;
         emit BountyOpened(tokenId, msg.sender, BOUNTY_WEI);
     }
 
-    /// @notice Refund to current NFT owner (leave arena / cancel).
-    function cancel(uint256 tokenId) external whenNotPaused nonReentrant {
+    /// @notice Refund to the original payer (leave arena / cancel). Allowed while paused.
+    function cancel(uint256 tokenId) external nonReentrant {
         if (!open[tokenId]) revert NotOpen();
         address owner = characterNft.ownerOf(tokenId);
-        if (msg.sender != owner && !hasRole(OPERATOR_ROLE, msg.sender)) revert NotOwner();
+        address payer = payerOf[tokenId];
+        if (msg.sender != owner && msg.sender != payer && !hasRole(OPERATOR_ROLE, msg.sender)) {
+            revert NotOwner();
+        }
         open[tokenId] = false;
-        (bool ok, ) = payable(owner).call{value: BOUNTY_WEI}("");
+        payerOf[tokenId] = address(0);
+        address payable refundTo = payable(payer != address(0) ? payer : owner);
+        (bool ok, ) = refundTo.call{value: BOUNTY_WEI}("");
         require(ok, "refund failed");
-        emit BountyCancelled(tokenId, owner, BOUNTY_WEI);
+        emit BountyCancelled(tokenId, refundTo, BOUNTY_WEI);
     }
 
     /// @notice Pay the victim's bounty to the current owner of `slayerTokenId`.
@@ -126,6 +134,7 @@ contract PvpBounty is Pausable {
         if (victimTokenId == slayerTokenId) revert SelfClaim();
         if (!open[victimTokenId]) revert NotOpen();
         open[victimTokenId] = false;
+        payerOf[victimTokenId] = address(0);
         address payable payout = payable(characterNft.ownerOf(slayerTokenId));
         if (payout == address(0)) revert BadAddress();
         (bool ok, ) = payout.call{value: BOUNTY_WEI}("");

@@ -8,8 +8,10 @@ import {CharacterCheckpoint} from "../src/CharacterCheckpoint.sol";
 import {CharacterFactory} from "../src/CharacterFactory.sol";
 import {RulesetRegistry} from "../src/RulesetRegistry.sol";
 import {AhEscrow} from "../src/AhEscrow.sol";
+import {PvpBounty} from "../src/PvpBounty.sol";
 // KekVault.sol + CharacterCheckpoint.vault stay until a batched redeploy drops custody deposits.
 // Play path AH uses AhEscrow (deployed and granted LISTING_ROLE here).
+// PvP head-bounties use PvpBounty (OPERATOR_ROLE = LISTING key by default).
 
 /// Deploys the log-model character stack behind UUPS proxies, wires roles, then hands admin to the Safe.
 /// The deployer is the temporary admin and renounces at the end (when deployer != admin).
@@ -71,6 +73,7 @@ contract Deploy is Script {
         CharacterFactory factory;
         RulesetRegistry rulesets;
         AhEscrow ahEscrow;
+        PvpBounty pvpBounty;
         address nftImpl;
         address checkpointImpl;
         address factoryImpl;
@@ -235,6 +238,8 @@ contract Deploy is Script {
             _proxy(rulesetsImpl, abi.encodeCall(RulesetRegistry.initialize, (deployer, RULESET_MIN_DELAY)))
         );
         d.ahEscrow = new AhEscrow(deployer, address(d.nft), payable(c.feeRecipient));
+        // LISTING EOA is the PvP operator (claim after verified slay), same as AH listing role.
+        d.pvpBounty = new PvpBounty(address(d.nft), deployer, c.listing);
 
         // wiring
         d.nft.setState(address(d.checkpoint));
@@ -248,6 +253,7 @@ contract Deploy is Script {
         d.rulesets.grantRole(d.rulesets.EMERGENCY_ROLE(), c.emergency);
         d.ahEscrow.grantRole(d.ahEscrow.LISTING_ROLE(), c.listing);
         d.ahEscrow.grantRole(d.ahEscrow.GUARDIAN_ROLE(), c.guardian);
+        d.pvpBounty.grantRole(d.pvpBounty.GUARDIAN_ROLE(), c.guardian);
         d.factory.grantRole(d.factory.GUARDIAN_ROLE(), c.guardian);
 
         // Production UUPS: pin upgrades to Timelock before admin handoff.
@@ -267,15 +273,18 @@ contract Deploy is Script {
             d.factory.grantRole(adminRole, c.admin);
             d.rulesets.grantRole(adminRole, c.admin);
             d.ahEscrow.grantRole(d.ahEscrow.DEFAULT_ADMIN_ROLE(), c.admin);
+            d.pvpBounty.grantRole(d.pvpBounty.DEFAULT_ADMIN_ROLE(), c.admin);
             // Revoke temporary deployer roles before renouncing admin.
             if (c.listing != deployer) {
                 d.ahEscrow.revokeRole(d.ahEscrow.LISTING_ROLE(), deployer);
             }
             if (c.guardian != deployer) {
                 d.ahEscrow.revokeRole(d.ahEscrow.GUARDIAN_ROLE(), deployer);
+                d.pvpBounty.revokeRole(d.pvpBounty.GUARDIAN_ROLE(), deployer);
                 d.factory.revokeRole(d.factory.GUARDIAN_ROLE(), deployer);
             }
             d.ahEscrow.revokeRole(d.ahEscrow.DEFAULT_ADMIN_ROLE(), deployer);
+            d.pvpBounty.revokeRole(d.pvpBounty.DEFAULT_ADMIN_ROLE(), deployer);
             d.nft.renounceRole(adminRole, deployer);
             d.checkpoint.renounceRole(adminRole, deployer);
             d.factory.renounceRole(adminRole, deployer);
@@ -291,6 +300,7 @@ contract Deploy is Script {
         console.log("CharacterFactory    ", address(d.factory));
         console.log("RulesetRegistry     ", address(d.rulesets));
         console.log("AhEscrow            ", address(d.ahEscrow));
+        console.log("PvpBounty           ", address(d.pvpBounty));
         console.log("nftImpl             ", d.nftImpl);
         console.log("checkpointImpl      ", d.checkpointImpl);
         console.log("factoryImpl         ", d.factoryImpl);

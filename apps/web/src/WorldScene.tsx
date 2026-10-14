@@ -719,8 +719,26 @@ function RemotePlayerBillboard({ unitId, unit }: { unitId: string; unit: UnitSna
       onClick={(e) => {
         e.stopPropagation();
         useGame.getState().setSelectedTarget(unitId);
+        // Ash Pit — engage marked bounty players for PvP.
+        if (unitRef.current.pvpBounty) {
+          send({ type: "engage", targetId: unitId });
+        }
       }}
     >
+      {/* Bounty mark — gold ring under marked PvP fighters */}
+      {unit.pvpBounty && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} renderOrder={2}>
+          <ringGeometry args={[0.5, 0.72, 36]} />
+          <meshBasicMaterial
+            color="#d4a017"
+            transparent
+            opacity={0.75}
+            depthWrite={false}
+            toneMapped={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
       <group ref={billboard}>
         <mesh
           ref={meshRef}
@@ -2182,18 +2200,23 @@ function SheetBillboardInner({
         e.stopPropagation();
         if (unitRef.current.kind === "mob" || unitRef.current.kind === "player") {
           useGame.getState().setSelectedTarget(unitRef.current.id);
-          if (unitRef.current.kind === "mob") {
+          if (
+            unitRef.current.kind === "mob" ||
+            (unitRef.current.kind === "player" && unitRef.current.pvpBounty)
+          ) {
             send({ type: "engage", targetId: unitRef.current.id });
           }
         }
       }}
     >
-      {/* Selected-target ring (mobs) */}
+      {/* Selected-target ring (mobs + marked PvP players) */}
       <mesh
         ref={targetRing}
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0.04, 0]}
-        visible={isSelected && unit.kind === "mob"}
+        visible={
+          isSelected && (unit.kind === "mob" || (unit.kind === "player" && !!unit.pvpBounty))
+        }
         renderOrder={2}
       >
         <ringGeometry args={[0.55, 0.78, 40]} />

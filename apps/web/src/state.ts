@@ -70,6 +70,12 @@ type GameState = {
   selectedTarget: string | null;
   npcDialog: NpcDialog | null;
   explorer: ExplorerView | null;
+  /** After a PvP bounty loss — show rejoin CTA until dismissed or joined. */
+  pvpSlainPrompt: {
+    slayerName: string;
+    bountyWei: string;
+    areaId: string;
+  } | null;
   setPhase: (p: Phase) => void;
   setWallet: (w: string | null) => void;
   setConnected: (c: boolean) => void;
@@ -85,6 +91,7 @@ type GameState = {
   setSelectedTarget: (id: string | null) => void;
   setNpcDialog: (d: NpcDialog | null) => void;
   setExplorer: (page: ExplorerView) => void;
+  setPvpSlainPrompt: (p: GameState["pvpSlainPrompt"]) => void;
   me: () => UnitSnapshot | null;
 };
 
@@ -103,6 +110,7 @@ export const useGame = create<GameState>((set, get) => ({
   selectedTarget: null,
   npcDialog: null,
   explorer: null,
+  pvpSlainPrompt: null,
   setPhase: (phase) => set({ phase }),
   setWallet: (wallet) => set({ wallet: wallet ? wallet.toLowerCase() : null }),
   setConnected: (connected) => set({ connected }),
@@ -154,6 +162,7 @@ export const useGame = create<GameState>((set, get) => ({
   setSelectedTarget: (selectedTarget) => set({ selectedTarget }),
   setNpcDialog: (npcDialog) => set({ npcDialog }),
   setExplorer: (explorer) => set({ explorer }),
+  setPvpSlainPrompt: (pvpSlainPrompt) => set({ pvpSlainPrompt }),
   me: () => {
     const s = get().snapshot;
     const w = get().wallet;
