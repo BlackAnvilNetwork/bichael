@@ -16,7 +16,7 @@ import { formatEther } from "viem";
 import { buyAsksWithWallet } from "./ah-buy";
 import { eezSyncBuyAvailable, listHomeChainOptions } from "./eez-home-chain";
 import { buyAsksWithEezSync } from "./eez-sync-buy";
-import { ItemCatalogDetails, ItemTipHost } from "./itemTip";
+import { ItemCatalogDetails, ItemTipHost, UsedInRecipes } from "./itemTip";
 import { send } from "./net";
 import { settlementSymbol } from "./settlement-label";
 import { useGame } from "./state";
@@ -424,6 +424,7 @@ export function AuctionBook({ listings, buyer, ahEscrow, eezSyncBuy }: Props) {
               <div className="item-panel-details">
                 <ItemCatalogDetails tokenId={buying.itemId} />
               </div>
+              <UsedInRecipes tokenId={buying.itemId} />
             </div>
             <button type="button" className="cmd-close-btn" onClick={() => setBuyingId(null)}>
               Close

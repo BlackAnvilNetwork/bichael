@@ -1,6 +1,16 @@
-import { getItem, itemIcon, scaleGearStat, type ItemDef, type ItemStats } from "@bellgrave/items";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  CRAFT_SKILL_LABEL,
+  getItem,
+  itemIcon,
+  scaleGearStat,
+  usedInRecipes,
+  type ItemDef,
+  type ItemStats,
+  type UsedInRecipe,
+} from "@bellgrave/items";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useGame } from "./state";
 
 const JOB_ABBR: Record<string, string> = {
   knight: "KNT",
@@ -223,9 +233,114 @@ export function ItemTipHost({
         createPortal(
           <div className="skill-tip item-hover-tip" role="tooltip" style={tipStyle(anchor)}>
             <ItemCatalogDetails tokenId={tokenId} />
+            <UsedInRecipes tokenId={tokenId} compact />
           </div>,
           document.body,
         )}
+    </div>
+  );
+}
+
+/** Tooltip shows this many recipe results, then "+N more". */
+const USED_IN_TIP_LIMIT = 3;
+/** Detail view renders this many rows before "Show all". */
+const USED_IN_DETAIL_LIMIT = 12;
+
+/** Recipes using this item, with live have/need from the player's bag and gathered materials. */
+function useUsedIn(tokenId: number): UsedInRecipe[] {
+  const inventory = useGame((s) => s.snapshot?.you?.inventory);
+  const baseMats = useGame((s) => s.snapshot?.you?.baseMats);
+  const craftSkills = useGame((s) => s.snapshot?.you?.craftSkills);
+  const slug = getItem(tokenId)?.slug;
+  return useMemo(
+    () => (slug ? usedInRecipes(slug, inventory ?? [], baseMats ?? {}, craftSkills ?? {}) : []),
+    [slug, inventory, baseMats, craftSkills],
+  );
+}
+
+function resultLabel(row: UsedInRecipe): string {
+  return row.outputQty > 1 ? row.def.name + " x" + row.outputQty : row.def.name;
+}
+
+/**
+ * "Used in" crafting recipes for a material or component (#211). Read-only.
+ * `compact` is the hover summary; otherwise every recipe with ingredients and have/need.
+ * Renders nothing for items no recipe uses.
+ */
+export function UsedInRecipes({ tokenId, compact = false }: { tokenId: number; compact?: boolean }) {
+  const rows = useUsedIn(tokenId);
+  const [showAll, setShowAll] = useState(false);
+  if (rows.length === 0) return null;
+
+  if (compact) {
+    const shown = rows.slice(0, USED_IN_TIP_LIMIT);
+    const more = rows.length - shown.length;
+    return (
+      <div className="used-in used-in--tip">
+        <div className="used-in-label">Used in</div>
+        {shown.map((row) => (
+          <div key={row.def.id} className={row.haveAllMaterials ? "used-in-tip-line ready" : "used-in-tip-line"}>
+            {row.haveAllMaterials ? <span className="used-in-ready" aria-label="You have every ingredient">{"\u2713 "}</span> : null}
+            {resultLabel(row)}
+          </div>
+        ))}
+        {more > 0 && <div className="used-in-more">+{more} more</div>}
+      </div>
+    );
+  }
+
+  const shown = showAll ? rows : rows.slice(0, USED_IN_DETAIL_LIMIT);
+  return (
+    <div className="used-in used-in--detail" aria-label="Recipes that use this item">
+      <div className="used-in-label">
+        Used in {rows.length} recipe{rows.length === 1 ? "" : "s"}
+      </div>
+      <div className="used-in-list">
+        {shown.map((row) => (
+          <div key={row.def.id} className={row.haveAllMaterials ? "used-in-row ready" : "used-in-row"}>
+            <img
+              src={itemIcon(row.def.id)}
+              alt=""
+              width={24}
+              height={24}
+              className="used-in-icon"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.opacity = "0.25";
+              }}
+            />
+            <div className="used-in-body">
+              <div className="used-in-name">
+                {row.haveAllMaterials ? <span className="used-in-ready" aria-label="You have every ingredient">{"\u2713 "}</span> : null}
+                {resultLabel(row)}
+              </div>
+              <div className="used-in-skill" style={{ color: row.skillLevel >= row.needLevel ? undefined : "#d4a070" }}>
+                {CRAFT_SKILL_LABEL[row.craftSkill]} Lv.{row.needLevel}
+                {row.skillLevel < row.needLevel ? " (you " + row.skillLevel + ")" : ""}
+              </div>
+              <div className="used-in-mats">
+                {row.groups.map((g, gi) => (
+                  <span key={gi} className="used-in-group">
+                    {g.options.map((m, mi) => (
+                      <span key={m.slug}>
+                        {mi > 0 ? <span className="used-in-or"> or </span> : null}
+                        <span className={m.ok ? "used-in-have ok" : "used-in-have"}>
+                          {m.name} {m.have}/{m.qty}
+                        </span>
+                      </span>
+                    ))}
+                    {gi < row.groups.length - 1 ? <span className="used-in-sep"> {"\u00b7"} </span> : null}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {rows.length > shown.length && (
+        <button type="button" className="cmd-pill-tab used-in-all" onClick={() => setShowAll(true)}>
+          Show all {rows.length}
+        </button>
+      )}
     </div>
   );
 }

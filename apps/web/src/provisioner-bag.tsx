@@ -2,7 +2,7 @@ import { getItem, npcSellTotalGold, npcSellUnitGold } from "@bellgrave/items";
 import { ahFeeSplit, type InventorySlot, type LokItemBalance } from "@bellgrave/protocol";
 import { useState } from "react";
 import { formatEther, parseEther } from "viem";
-import { ItemCatalogDetails, ItemTipHost } from "./itemTip";
+import { ItemCatalogDetails, ItemTipHost, UsedInRecipes } from "./itemTip";
 import { send } from "./net";
 import { settlementExampleAsk, settlementSymbol } from "./settlement-label";
 import { useGame } from "./state";
@@ -149,6 +149,7 @@ export function ProvisionerBag({ inventory, logItems, inbox, others }: Props) {
                   <div className="item-panel-details">
                     <ItemCatalogDetails tokenId={cell.tokenId} />
                   </div>
+                  <UsedInRecipes tokenId={cell.tokenId} />
                   <button
                     type="button"
                     className="cmd-pill-tab"
@@ -297,6 +298,7 @@ export function ProvisionerBag({ inventory, logItems, inbox, others }: Props) {
                   <div className="item-panel-details">
                     <ItemCatalogDetails tokenId={row.tokenId} />
                   </div>
+                  <UsedInRecipes tokenId={row.tokenId} />
                   <button
                     type="button"
                     className="cmd-pill-tab"

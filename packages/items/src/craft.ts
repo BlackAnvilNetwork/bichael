@@ -1,5 +1,5 @@
 ﻿import { CATALOG, CATALOG_BY_ID, CATALOG_BY_SLUG } from "./catalog.generated";
-import type { CraftSkill, ItemDef } from "./types";
+import { craftOutputQty, type CraftSkill, type ItemDef } from "./types";
 
 export const CRAFT_SKILLS: CraftSkill[] = [
   "smithing",
@@ -350,4 +350,109 @@ export function getCraftableItem(id: number): ItemDef | undefined {
   if (!recipeMaterialsComplete(def)) return undefined;
   if (recipeMaterialGroups(def).length === 0) return undefined;
   return def;
+}
+
+/** True when `def` is a recipe the craft command accepts (same gate as getCraftableItem). */
+function isCraftableRecipe(def: ItemDef): boolean {
+  if (!def.recipe || !def.craftSkill || def.craftLevel == null) return false;
+  if (!recipeMaterialsComplete(def)) return false;
+  return recipeMaterialGroups(def).length > 0;
+}
+
+let USED_IN_INDEX: Map<string, ItemDef[]> | null = null;
+
+/** Ingredient slug -> craftable results that take it in any AND-slot or OR option. Built once. */
+function usedInIndex(): Map<string, ItemDef[]> {
+  if (USED_IN_INDEX) return USED_IN_INDEX;
+  const index = new Map<string, ItemDef[]>();
+  for (const def of CATALOG) {
+    if (!isCraftableRecipe(def)) continue;
+    const seen = new Set<string>();
+    for (const group of recipeMaterialGroups(def)) {
+      for (const opt of group.options) {
+        if (seen.has(opt.slug)) continue;
+        seen.add(opt.slug);
+        const list = index.get(opt.slug);
+        if (list) list.push(def);
+        else index.set(opt.slug, [def]);
+      }
+    }
+  }
+  USED_IN_INDEX = index;
+  return index;
+}
+
+/**
+ * Craftable recipes that use `slug` as an ingredient (#211 "Used in").
+ * Reads the same recipe data and craftability gate the craft command uses, so it can't drift.
+ */
+export function recipesUsingMaterial(slug: string): ItemDef[] {
+  return usedInIndex().get(slug)?.slice() ?? [];
+}
+
+export type UsedInIngredient = RecipeMat & { have: number; ok: boolean };
+export type UsedInGroup = { options: UsedInIngredient[]; ok: boolean };
+
+export type UsedInRecipe = {
+  def: ItemDef;
+  /** Items produced per craft (pack yield). */
+  outputQty: number;
+  craftSkill: CraftSkill;
+  needLevel: number;
+  skillLevel: number;
+  /** AND-slots with have/need per OR option. */
+  groups: UsedInGroup[];
+  /** Every AND-slot has at least one affordable option. */
+  haveAllMaterials: boolean;
+  /** 0-1 share of AND-slots satisfied (partial credit per slot). */
+  matFrac: number;
+};
+
+/**
+ * Recipes using `slug`, with the player's have/need per ingredient.
+ * Sorted: all materials owned first, then closest to complete, then lowest craft level, then name.
+ */
+export function usedInRecipes(
+  slug: string,
+  inventory: { tokenId: number; amount: number }[],
+  baseMats: Record<string, number>,
+  craftSkills?: Partial<Record<CraftSkill, CraftSkillState>>,
+): UsedInRecipe[] {
+  const out: UsedInRecipe[] = [];
+  for (const def of recipesUsingMaterial(slug)) {
+    let parts = 0;
+    let all = true;
+    const groups: UsedInGroup[] = recipeMaterialGroups(def).map((group) => {
+      let best = 0;
+      const options = group.options.map((opt) => {
+        const have = ownedMatQty(opt.slug, inventory, baseMats);
+        best = Math.max(best, Math.min(1, have / Math.max(1, opt.qty)));
+        return { ...opt, have, ok: have >= opt.qty };
+      });
+      const ok = options.some((o) => o.ok);
+      if (!ok) all = false;
+      parts += best;
+      return { options, ok };
+    });
+    const craftSkill = def.craftSkill!;
+    out.push({
+      def,
+      outputQty: craftOutputQty(def),
+      craftSkill,
+      needLevel: def.craftLevel!,
+      skillLevel: craftSkills?.[craftSkill]?.level ?? 1,
+      groups,
+      haveAllMaterials: all,
+      matFrac: groups.length ? parts / groups.length : 0,
+    });
+  }
+  out.sort(
+    (a, b) =>
+      Number(b.haveAllMaterials) - Number(a.haveAllMaterials) ||
+      b.matFrac - a.matFrac ||
+      a.needLevel - b.needLevel ||
+      a.def.name.localeCompare(b.def.name) ||
+      a.def.id - b.def.id,
+  );
+  return out;
 }

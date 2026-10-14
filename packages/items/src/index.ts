@@ -37,10 +37,15 @@ export {
   recipeMaterialGroups,
   recipeMaterials,
   recipeMaterialsComplete,
+  recipesUsingMaterial,
+  usedInRecipes,
   type CloseCraftCandidate,
   type CraftSkillState,
   type RecipeMat,
   type RecipeMatGroup,
+  type UsedInGroup,
+  type UsedInIngredient,
+  type UsedInRecipe,
 } from "./craft";
 export { npcSellUnitGold, npcSellTotalGold } from "./npc-sell";
 export { chainFungibleId, chainUniqueId, chainFungibleIdHex } from "./chain-ids";
