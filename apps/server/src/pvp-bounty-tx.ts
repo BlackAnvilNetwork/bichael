@@ -98,16 +98,11 @@ function rpcUrl(env: NodeJS.ProcessEnv = process.env): string | null {
 }
 
 function operatorKey(env: NodeJS.ProcessEnv = process.env): string | null {
-  // Prefer LOK_LISTING_KEY (Deploy OPERATOR = LISTING). Fall back to owner/deployer
-  // when that EOA was also granted OPERATOR_ROLE (Gnosis admin interim).
-  // Do not use listingRoleKey() — it returns null whenever AhEscrow is set without
-  // LOK_LISTING_KEY, which would block PvpBounty claim/cancel even with LOK_OWNER_KEY.
+  // OPERATOR = LISTING on Deploy / DeployPvpBountyGnosis. Require LOK_LISTING_KEY —
+  // never fall back to LOK_OWNER_KEY / PRIVATE_KEY (admin must not live on the server).
   const listing = env.LOK_LISTING_KEY?.trim() || "";
   if (/^0x[0-9a-fA-F]{64}$/.test(listing)) return listing;
-  const fromListingHelper = listingRoleKey(env);
-  if (fromListingHelper) return fromListingHelper;
-  const owner = env.LOK_OWNER_KEY?.trim() || env.PRIVATE_KEY?.trim() || "";
-  return /^0x[0-9a-fA-F]{64}$/.test(owner) ? owner : null;
+  return listingRoleKey(env);
 }
 
 function anvilChain(chainId: number): Chain {

@@ -54,7 +54,7 @@ mirrors.
 - Against official NFT `0x48aFeC…289F`; ADMIN `0x08cD…4e01`; OPERATOR = LISTING `0xbFa2…9E76`
 - Live address: `0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e` (`deployments/gnosis.json`)
 - Env: `NETWORK=gnosis` fills `LOK_PVP_BOUNTY`
-- Operator keys: prefer `LOK_LISTING_KEY` (LISTING). Admin `0x08cD…` also has `OPERATOR_ROLE`, so `LOK_OWNER_KEY` can claim/cancel when listing key is absent (AH listing still needs `LOK_LISTING_KEY`)
+- Operator: **`LOK_LISTING_KEY` only** (LISTING `0xbFa2…`). Never put the admin key on the server.
 - Synthetic refused on Gnosis unless `LOK_PVP_SYNTHETIC=1` (never for production)
 - Local anvil only: `DeployPvpBountyAnvil` + `deployments/anvil.json` (dev)
 

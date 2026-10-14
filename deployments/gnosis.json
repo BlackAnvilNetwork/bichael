@@ -33,10 +33,6 @@
     "amountWei": "1000000000000000000",
     "admin": "0x08cDab8b049D2A42125C3A2bf1bF1E2f619C4e01",
     "operator": "0xbFa29a6EE3d1188aa0A9e0c783E5Da620b859E76",
-    "operatorsExtra": [
-      "0x08cDab8b049D2A42125C3A2bf1bF1E2f619C4e01"
-    ],
-    "operatorsExtraNote": "ADMIN also granted OPERATOR_ROLE (tx 0xfb56dd42…) so LOK_OWNER_KEY can claim/cancel until LOK_LISTING_KEY is on the host.",
     "nft": "0x48aFeC17A56c5Bd32ABDbcAD57f16d3859b1289F",
     "status": "live",
     "deployedAt": "2026-10-14T05:32:50Z",
@@ -44,7 +40,8 @@
     "deployTx": "0x2c2f05f35f1263e106d5065566dd0866d50e1be915bb39e5fed4afbf60512aeb",
     "deployScript": "script/DeployPvpBountyGnosis.s.sol",
     "explorer": "https://gnosisscan.io/address/0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e",
-    "blockscout": "https://gnosis.blockscout.com/address/0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e"
+    "blockscout": "https://gnosis.blockscout.com/address/0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e",
+    "operatorNote": "OPERATOR_ROLE = LISTING only. Admin interim OPERATOR revoked in tx 0x119038af\u2026a7933c."
   },
   "implementations": {
     "CharacterNFT": "0x51731566b350Cf6558E39b16234a28471D9DEC80",
@@ -124,7 +121,8 @@
       "note": "Admin 0x08cD\u20264e01 setStartingJob(j,true) for j\u22601 on 2026-10-13. Job 1 (knight) was already enabled at deploy (setStartingJob1). On-chain isStartingJob(0..6) all true after these txs."
     },
     "proposeRuleset": "0x42ff771bdb11a59b50b99b37e61ce268b2586810613a71b27ae210fa3319d00b",
-    "pvpBountyDeploy": "0x2c2f05f35f1263e106d5065566dd0866d50e1be915bb39e5fed4afbf60512aeb"
+    "pvpBountyDeploy": "0x2c2f05f35f1263e106d5065566dd0866d50e1be915bb39e5fed4afbf60512aeb",
+    "pvpBountyRevokeAdminOperator": "0x119038af9c6b07ee101dad1132a4c034d80a1e28f62067e301102bf0f2a7933c"
   },
   "ruleset": {
     "hash": "0x609dbdea7256550cb09322d314c81adb20752ed273bc2372e29044b96e949cdc",
