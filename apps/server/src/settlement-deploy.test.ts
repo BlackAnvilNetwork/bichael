@@ -49,7 +49,7 @@ describe("applySettlementDeployFile", () => {
     assert.ok(env.LOK_CHAIN_RPC?.includes("gnosis"));
     assert.equal(env.LOK_NFT, "0x48aFeC17A56c5Bd32ABDbcAD57f16d3859b1289F");
     assert.equal(env.LOK_AH_ESCROW, "0x4669488AE862D7cbf979878fCb1e1b9b80fba6Df");
-    // PvpBounty filled once DeployPvpBountyGnosis is recorded in gnosis.json.
+    assert.equal(env.LOK_PVP_BOUNTY, "0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e");
   });
 
   it("does not override existing env on anvil", () => {

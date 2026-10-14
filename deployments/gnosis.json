@@ -24,17 +24,23 @@
     "CharacterCheckpoint": "0x8eb4CaCc8b7Dae677FA92B7962f8Ee6E4795A6E0",
     "CharacterFactory": "0xA78a61c0E16A74eC64F3d876D222F1e46334ac24",
     "RulesetRegistry": "0xdd7B66451529918273fe4E0d9f9fdf261194a6e0",
-    "AhEscrow": "0x4669488AE862D7cbf979878fCb1e1b9b80fba6Df"
+    "AhEscrow": "0x4669488AE862D7cbf979878fCb1e1b9b80fba6Df",
+    "PvpBounty": "0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e"
   },
   "pvpBounty": {
+    "address": "0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e",
     "amount": "1 xDAI",
     "amountWei": "1000000000000000000",
     "admin": "0x08cDab8b049D2A42125C3A2bf1bF1E2f619C4e01",
     "operator": "0xbFa29a6EE3d1188aa0A9e0c783E5Da620b859E76",
     "nft": "0x48aFeC17A56c5Bd32ABDbcAD57f16d3859b1289F",
-    "status": "pending-broadcast",
+    "status": "live",
+    "deployedAt": "2026-10-14T05:32:50Z",
+    "deployBlock": 48747389,
+    "deployTx": "0x2c2f05f35f1263e106d5065566dd0866d50e1be915bb39e5fed4afbf60512aeb",
     "deployScript": "script/DeployPvpBountyGnosis.s.sol",
-    "note": "Broadcast with CONFIRM_BROADCAST=1 ./script/broadcast-deploy-pvp-bounty-gnosis.sh then set contracts.PvpBounty."
+    "explorer": "https://gnosisscan.io/address/0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e",
+    "blockscout": "https://gnosis.blockscout.com/address/0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e"
   },
   "implementations": {
     "CharacterNFT": "0x51731566b350Cf6558E39b16234a28471D9DEC80",
@@ -55,7 +61,8 @@
       "CharacterCheckpoint_impl": "https://sourcify.dev/server/verify-ui/jobs/20655e6b-d6dc-44ce-a9f4-4ce7b861e5d4",
       "CharacterFactory_impl": "https://sourcify.dev/server/verify-ui/jobs/d501991c-2860-4f71-ba8e-4c74654cf839",
       "RulesetRegistry_impl": "https://sourcify.dev/server/verify-ui/jobs/57500ff5-b337-462f-a47f-d7e3977eac83",
-      "AhEscrow": "https://sourcify.dev/server/verify-ui/jobs/90025970-a4c8-426e-910a-1b653b21f629"
+      "AhEscrow": "https://sourcify.dev/server/verify-ui/jobs/90025970-a4c8-426e-910a-1b653b21f629",
+      "PvpBounty": "https://sourcify.dev/server/verify-ui/jobs/94de43eb-0cc3-48e9-8606-8814802075a6"
     },
     "blockscout": {
       "method": "forge verify-contract --verifier etherscan --verifier-url https://gnosis.blockscout.com/api",
@@ -69,7 +76,8 @@
       "CharacterCheckpoint_proxy": "https://gnosis.blockscout.com/address/0x8eb4CaCc8b7Dae677FA92B7962f8Ee6E4795A6E0?tab=contract",
       "CharacterFactory_proxy": "https://gnosis.blockscout.com/address/0xA78a61c0E16A74eC64F3d876D222F1e46334ac24?tab=contract",
       "RulesetRegistry_proxy": "https://gnosis.blockscout.com/address/0xdd7B66451529918273fe4E0d9f9fdf261194a6e0?tab=contract",
-      "TimelockController": "https://gnosis.blockscout.com/address/0x73c8b994719e3703AFDCa419317Fc5Bc563A7F37?tab=contract"
+      "TimelockController": "https://gnosis.blockscout.com/address/0x73c8b994719e3703AFDCa419317Fc5Bc563A7F37?tab=contract",
+      "PvpBounty": "https://gnosis.blockscout.com/address/0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e?tab=contract"
     }
   },
   "transactions": {
@@ -109,9 +117,10 @@
       "4_sorcerer": "0xf9bb09596fb623e559cbe395161efc4942cffa7689c456c8d73bd66cc64cc6b8",
       "5_fighter": "0x9cd87249a32fc1425bfe6d7160de7b3d29deb81c6a9ece9b759f64ed262cbc6a",
       "6_battle_mage": "0xa1db183fc60bbdb1bb5abe35654bb60bc898e8d1c203305ac8a49af5bb9f05ce",
-      "note": "Admin 0x08cD…4e01 setStartingJob(j,true) for j≠1 on 2026-10-13. Job 1 (knight) was already enabled at deploy (setStartingJob1). On-chain isStartingJob(0..6) all true after these txs."
+      "note": "Admin 0x08cD\u20264e01 setStartingJob(j,true) for j\u22601 on 2026-10-13. Job 1 (knight) was already enabled at deploy (setStartingJob1). On-chain isStartingJob(0..6) all true after these txs."
     },
-    "proposeRuleset": "0x42ff771bdb11a59b50b99b37e61ce268b2586810613a71b27ae210fa3319d00b"
+    "proposeRuleset": "0x42ff771bdb11a59b50b99b37e61ce268b2586810613a71b27ae210fa3319d00b",
+    "pvpBountyDeploy": "0x2c2f05f35f1263e106d5065566dd0866d50e1be915bb39e5fed4afbf60512aeb"
   },
   "ruleset": {
     "hash": "0x609dbdea7256550cb09322d314c81adb20752ed273bc2372e29044b96e949cdc",

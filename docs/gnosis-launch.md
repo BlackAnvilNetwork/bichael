@@ -78,14 +78,19 @@ For a **single known treasury EOA** that holds `DEFAULT_ADMIN_ROLE`, `EMERGENCY`
 
 ## PvP bounty (additive)
 
-Ash Pit head-bounty is **1 xDAI** via `PvpBounty.sol` (not part of the original package deploy).
+Ash Pit head-bounty is **1 xDAI** via `PvpBounty.sol`.
+
+**Live (2026-10-14):** `0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e`  
+[gnosisscan](https://gnosisscan.io/address/0x02bDDCaF5a19fD9Be7f39fC7419F794CECE9E64e) · tx `0x2c2f05f3…12aeb`
+
+ADMIN `0x08cD…4e01`, OPERATOR = LISTING `0xbFa2…9E76` (server `LOK_LISTING_KEY` claims/cancels). `NETWORK=gnosis` fills `LOK_PVP_BOUNTY` from `deployments/gnosis.json`.
+
+Re-deploy (rare):
 
 ```bash
 set -a && source .env.gnosis && set +a
 CONFIRM_BROADCAST=1 ./script/broadcast-deploy-pvp-bounty-gnosis.sh
 ```
-
-Defaults: NFT / ADMIN / LISTING from `deployments/gnosis.json`. OPERATOR = LISTING (server `LOK_LISTING_KEY` claims/cancels). Record `contracts.PvpBounty` then restart with `NETWORK=gnosis`.
 
 ## Deploy + verify
 
