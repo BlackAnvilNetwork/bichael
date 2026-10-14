@@ -11,13 +11,15 @@ import {
   type AttrKey,
 } from "@bellgrave/combat";
 import {
-  aggregateEquipmentStats,
+  aggregateEquipmentStatsScaled,
   getItem,
   itemIcon,
   itemName,
+  scaleGearStat,
   type EquipSlot,
+  type ItemStats,
 } from "@bellgrave/items";
-import { formatJobs, formatPrimaryEffects } from "./itemTip";
+import { formatJobs, formatPrimaryEffects, formatScaledStats } from "./itemTip";
 import type { SnapshotMessage, UnitSnapshot } from "@bellgrave/protocol";
 import { useMemo } from "react";
 import { send } from "./net";
@@ -76,7 +78,7 @@ export function EquipPanel({ you, me, onClose }: Props) {
     you.skillUnlocked ?? [],
     you.freeStats ?? {},
   );
-  const gearStats = aggregateEquipmentStats(you.equip);
+  const gearStats = aggregateEquipmentStatsScaled(you.equip, you.level);
   const stats = {
     str: derived.total.str + (gearStats.str ?? 0),
     dex: derived.total.dex + (gearStats.dex ?? 0),
@@ -263,9 +265,13 @@ function BagItemRow({
   showActions: boolean;
 }) {
   const def = getItem(item.tokenId);
-  const statsLine = formatPrimaryEffects(def?.stats, def?.consume?.hp);
+  const ilevel = def?.craftLevel ?? 1;
+  const isEquipment = def?.kind === "equipment";
+  const isUnderleveled = isEquipment && you.level < ilevel;
+  const statsLine = isUnderleveled && def?.stats
+    ? formatScaledStats(def.stats, you.level, ilevel)
+    : formatPrimaryEffects(def?.stats, def?.consume?.hp);
   const jobsLine = formatJobs(def?.jobRestrict);
-  const ilevel = def?.craftLevel;
   const actions = showActions ? bagItemActions(item, you) : null;
   const equipped = Object.values(you.equip).includes(item.tokenId);
 
@@ -287,9 +293,14 @@ function BagItemRow({
           <span className="equip-item-qty"> x{item.amount}</span>
         </div>
         {statsLine ? <div className="equip-item-stats">{statsLine}</div> : null}
-        {(ilevel != null || jobsLine) && (
+        {(def?.craftLevel != null || jobsLine || isUnderleveled) && (
           <div className="equip-item-meta">
-            {ilevel != null && <span className="equip-item-ilevel">iLv. {ilevel}</span>}
+            {def?.craftLevel != null && <span className="equip-item-ilevel">iLv. {def.craftLevel}</span>}
+            {isUnderleveled && (
+              <span className="equip-item-scaled" title={`Full stats at level ${ilevel}`}>
+                (full at Lv.{ilevel})
+              </span>
+            )}
             {jobsLine ? <span className="equip-item-jobs">{jobsLine}</span> : null}
           </div>
         )}

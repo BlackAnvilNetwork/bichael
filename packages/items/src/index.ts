@@ -15,6 +15,7 @@ export {
   budgetPoints,
   craftGoldCost,
   craftOutputQty,
+  scaleGearStat,
   type ItemRarity,
 } from "./types";
 export { CATALOG, CATALOG_BY_ID, CATALOG_BY_SLUG } from "./catalog.generated";
@@ -55,7 +56,7 @@ export {
 } from "./exportable-slugs";
 
 import { CATALOG_BY_ID } from "./catalog.generated";
-import { EQUIP_SLOTS, type Equipment, type EquipSlot, type ItemDef, type ItemStats } from "./types";
+import { EQUIP_SLOTS, scaleGearStat, type Equipment, type EquipSlot, type ItemDef, type ItemStats } from "./types";
 
 /** MVP legacy IDs â€” stable across catalog regen. */
 export const ITEM = {
@@ -103,6 +104,34 @@ export function aggregateEquipmentStats(
     if (!def || def.slot !== slot) continue;
     for (const [key, value] of Object.entries(def.stats ?? {}) as [keyof ItemStats, number][]) {
       total[key] = (total[key] ?? 0) + value;
+    }
+  }
+  return total;
+}
+
+/**
+ * Sum catalog stats for items equipped, scaled by player level vs item level (craftLevel).
+ * When playerLevel >= itemIlvl, full stats apply. Below that, stats scale linearly.
+ * Formula: effective = floor(catalogStat * playerLevel / itemIlvl)
+ *
+ * @param equipment - Equipment map (slot → tokenId)
+ * @param playerLevel - Player's current level for scaling
+ * @returns Aggregated stats scaled to player level
+ */
+export function aggregateEquipmentStatsScaled(
+  equipment: Partial<Record<EquipSlot, number | null | undefined>>,
+  playerLevel: number,
+): ItemStats {
+  const total: ItemStats = {};
+  for (const slot of EQUIP_SLOTS) {
+    const tokenId = equipment[slot];
+    if (tokenId == null) continue;
+    const def = getItem(tokenId);
+    if (!def || def.slot !== slot) continue;
+    const itemIlvl = def.craftLevel ?? 1;
+    for (const [key, value] of Object.entries(def.stats ?? {}) as [keyof ItemStats, number][]) {
+      const scaled = scaleGearStat(value, playerLevel, itemIlvl);
+      total[key] = (total[key] ?? 0) + scaled;
     }
   }
   return total;

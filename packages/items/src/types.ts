@@ -138,3 +138,21 @@ export function hqStats(nq: ItemStats | undefined): ItemStats {
 export function budgetPoints(craftLevel: number): number {
   return Math.max(1, Math.floor(craftLevel / 5) + 1);
 }
+
+/**
+ * Scale a gear stat down when the player level is below the item's level (craftLevel).
+ * effective = floor(catalogStat * playerLevel / itemIlvl)
+ * When playerLevel >= itemIlvl, return full catalog stat.
+ *
+ * @param stat - The catalog stat value (e.g. def: 20)
+ * @param playerLevel - Player's current level
+ * @param itemIlvl - Item's level (craftLevel in the catalog)
+ * @returns Scaled stat value, or full stat if player has reached item level
+ */
+export function scaleGearStat(stat: number, playerLevel: number, itemIlvl: number): number {
+  if (!Number.isFinite(stat) || stat <= 0) return 0;
+  if (!Number.isFinite(playerLevel) || playerLevel <= 0) return 0;
+  if (!Number.isFinite(itemIlvl) || itemIlvl <= 0) return stat;
+  if (playerLevel >= itemIlvl) return stat;
+  return Math.floor((stat * playerLevel) / itemIlvl);
+}

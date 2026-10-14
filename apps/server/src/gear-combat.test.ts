@@ -35,12 +35,67 @@ test("player defense is VIT defense plus equipped gear def", () => {
   assert.equal(playerDefense(20, -50), defenseFromVit(20));
   assert.equal(playerDefense(20, Number.NaN), defenseFromVit(20));
 
-  const geared = { equip: { body: IRON_MAIL, head: BRONZE_CAP } };
+  // High-level player (level >= item level) gets full stats.
+  const geared = { equip: { body: IRON_MAIL, head: BRONZE_CAP }, level: 100 };
   assert.equal(gearDef(geared), 23);
   assert.equal(playerDefenseWithGear(geared, 20), defenseFromVit(20) + 23);
   // Gear in the wrong slot does not count (same rule as aggregateEquipmentStats).
-  assert.equal(gearDef({ equip: { head: IRON_MAIL } }), 0);
-  assert.equal(gearDef({ equip: {} }), 0);
+  assert.equal(gearDef({ equip: { head: IRON_MAIL }, level: 100 }), 0);
+  assert.equal(gearDef({ equip: {}, level: 100 }), 0);
+});
+
+test("gear stats scale with player level vs item level (#103)", () => {
+  // Iron Mail: iLv 28, def 20, vit 7, hp 29
+  // Bronze Cap: iLv 8, def 3
+  const ironMailIlv = getItem(IRON_MAIL)!.craftLevel!;
+  const bronzeCapIlv = getItem(BRONZE_CAP)!.craftLevel!;
+  assert.equal(ironMailIlv, 28, "Iron Mail iLv fixture");
+  assert.equal(bronzeCapIlv, 8, "Bronze Cap iLv fixture");
+
+  // At level 28+, Iron Mail gives full 20 def
+  const atLevel = { equip: { body: IRON_MAIL }, level: 28 };
+  assert.equal(gearDef(atLevel), 20, "full def at item level");
+
+  const aboveLevel = { equip: { body: IRON_MAIL }, level: 50 };
+  assert.equal(gearDef(aboveLevel), 20, "full def above item level");
+
+  // At level 14 (half of 28), Iron Mail gives floor(20 * 14/28) = 10 def
+  const halfLevel = { equip: { body: IRON_MAIL }, level: 14 };
+  assert.equal(gearDef(halfLevel), 10, "half def at half level");
+
+  // At level 2, Iron Mail gives floor(20 * 2/28) = 1 def
+  const lowLevel = { equip: { body: IRON_MAIL }, level: 2 };
+  assert.equal(gearDef(lowLevel), 1, "minimal def at low level");
+
+  // Combining items with different iLevels: each scales independently
+  // At level 14, Iron Mail (iLv 28) gives floor(20 * 14/28) = 10
+  // Bronze Cap (iLv 8) at level 14 > iLv 8, so full 3
+  const mixedGear = { equip: { body: IRON_MAIL, head: BRONZE_CAP }, level: 14 };
+  assert.equal(gearDef(mixedGear), 10 + 3, "mixed gear: scaled mail + full cap");
+});
+
+test("gear MAB scales with player level (#103)", () => {
+  // Ashbeam Staff: iLv 6, mab 7
+  // Sovereign Staff: iLv (check), mab 49
+  const ashbeamIlv = getItem(ASHBEAM_STAFF)!.craftLevel!;
+  const sovereignIlv = getItem(SOVEREIGN_STAFF)!.craftLevel!;
+  assert.equal(ashbeamIlv, 6, "Ashbeam Staff iLv fixture");
+
+  // At level 6+, Ashbeam gives full 7 mab
+  const atLevel = { equip: { main: ASHBEAM_STAFF }, level: 6 };
+  assert.equal(gearMab(atLevel), 7, "full mab at item level");
+
+  // At level 3 (half of 6), Ashbeam gives floor(7 * 3/6) = 3 mab
+  const halfLevel = { equip: { main: ASHBEAM_STAFF }, level: 3 };
+  assert.equal(gearMab(halfLevel), 3, "scaled mab at half level");
+
+  // At level 1, Ashbeam gives floor(7 * 1/6) = 1 mab
+  const lowLevel = { equip: { main: ASHBEAM_STAFF }, level: 1 };
+  assert.equal(gearMab(lowLevel), 1, "minimal mab at low level");
+
+  // At level 100, Sovereign Staff gives full 49 mab
+  const highLevel = { equip: { main: SOVEREIGN_STAFF }, level: 100 };
+  assert.equal(gearMab(highLevel), 49, "full mab for high level player");
 });
 
 function fighterMob(level: number): MobJobCombatant {
@@ -115,10 +170,10 @@ test("gear MAB is a bounded percent bonus on spell damage", () => {
   assert.equal(withGearMab({ equip: {} }, 100), 100);
 });
 
-function sorcPlayer(equip: SorcererPlayer["equip"]): SorcererPlayer & { wallet: string; subjob: JobId } {
+function sorcPlayer(equip: SorcererPlayer["equip"], level = 100): SorcererPlayer & { wallet: string; subjob: JobId } {
   return {
     wallet: "0xsorc",
-    level: 40,
+    level,
     job: "knight",
     subjob: "sorcerer",
     mp: 9_999,
@@ -149,8 +204,8 @@ function sorcPlayer(equip: SorcererPlayer["equip"]): SorcererPlayer & { wallet: 
   };
 }
 
-function nukeDamage(equip: SorcererPlayer["equip"]): number {
-  const p = sorcPlayer(equip);
+function nukeDamage(equip: SorcererPlayer["equip"], level = 100): number {
+  const p = sorcPlayer(equip, level);
   const mob: SorcererMob = {
     id: "m1",
     name: "Dummy",
@@ -170,7 +225,7 @@ function nukeDamage(equip: SorcererPlayer["equip"]): number {
   };
   const logs: string[] = [];
   // Fixed attribute pool so only gear MAB differs between casts.
-  const stats = deriveCharacterAttributes("knight", 40, "sorcerer", []).total;
+  const stats = deriveCharacterAttributes("knight", level, "sorcerer", []).total;
   resolveSorcererAbility(p, "sc_ember_lance", "m1", 1_000, {
     pushLog: (_p, m) => logs.push(m),
     stopRest: () => {},

@@ -98,7 +98,7 @@ import {
 } from "./shiny-hq-runtime";
 import {
   CATALOG_BY_SLUG,
-  aggregateEquipmentStats,
+  aggregateEquipmentStatsScaled,
   catalogIdToChainFungibleId,
   cloneCraftSkills,
   craftGoldCost,
@@ -3049,8 +3049,9 @@ function createPlayer(
   return p;
 }
 
+/** Equipment stats scaled by player level vs item level (#103). */
 function playerEquipmentStats(p: Player) {
-  return aggregateEquipmentStats(p.equip);
+  return aggregateEquipmentStatsScaled(p.equip, p.level);
 }
 
 /** Recompute max HP/MP from job, skill-tree, and equipped catalog bonuses. */

@@ -1,4 +1,4 @@
-import { getItem, itemIcon, type ItemDef, type ItemStats } from "@bellgrave/items";
+import { getItem, itemIcon, scaleGearStat, type ItemDef, type ItemStats } from "@bellgrave/items";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -76,6 +76,37 @@ export function formatPrimaryEffects(stats: ItemStats | undefined, consumeHp?: n
   if (primaryKey == null) return effects;
   const head = `${STAT_LABEL[primaryKey] ?? primaryKey.toUpperCase()}: ${primaryVal}`;
   return effects ? `${head} / ${effects}` : head;
+}
+
+/**
+ * Format stats scaled by player level vs item level (#103).
+ * Shows "STAT: scaled" when level < iLv, with optional "(full at Lv.X)" hint.
+ */
+export function formatScaledStats(
+  stats: ItemStats | undefined,
+  playerLevel: number,
+  itemIlvl: number,
+): string {
+  if (!stats || !Object.keys(stats).length) return "";
+  const scaled = playerLevel < itemIlvl;
+  const entries: string[] = [];
+
+  for (const k of PRIMARY_STAT_KEYS) {
+    const raw = stats[k];
+    if (typeof raw !== "number") continue;
+    const val = scaled ? scaleGearStat(raw, playerLevel, itemIlvl) : raw;
+    entries.push(`${STAT_LABEL[k] ?? k.toUpperCase()}: ${val}`);
+  }
+
+  const attrKeys = ["str", "dex", "vit", "agi", "int", "mnd"] as const;
+  for (const k of attrKeys) {
+    const raw = stats[k];
+    if (typeof raw !== "number") continue;
+    const val = scaled ? scaleGearStat(raw, playerLevel, itemIlvl) : raw;
+    entries.push(`${STAT_LABEL[k] ?? k.toUpperCase()} ${formatSigned(val)}`);
+  }
+
+  return entries.join(" / ");
 }
 
 export function formatJobs(jobRestrict: ItemDef["jobRestrict"]): string {
