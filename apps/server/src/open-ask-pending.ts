@@ -2,8 +2,9 @@
  * Track openAsk broadcasts that may still be in the mempool (M-1).
  * cancelAsk must not treat !used as neverOpened when a broadcast is recorded.
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadDurableJsonObject } from "./durable-json";
 import { defaultLokDir } from "./lok-world";
 
 export const OPEN_ASK_PENDING_FILE = "open-ask-pending.json";
@@ -31,17 +32,17 @@ export class OpenAskPendingStore {
   }
 
   reload(): void {
-    if (!existsSync(this.path)) {
+    const parsed = loadDurableJsonObject<FileShape>(this.path, "open-ask-pending");
+    if (!parsed) {
       this.pending = {};
       return;
     }
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, "utf8")) as FileShape;
-      this.pending =
-        parsed.pending && typeof parsed.pending === "object" ? parsed.pending : {};
-    } catch {
-      this.pending = {};
+    if (!parsed.pending || typeof parsed.pending !== "object" || Array.isArray(parsed.pending)) {
+      throw new Error(
+        "open-ask-pending " + this.path + " is corrupt (expected { pending: object }). Fix or restore it before boot.",
+      );
     }
+    this.pending = parsed.pending;
   }
 
   private persist(): void {

@@ -41,13 +41,19 @@ export function findDryRunEnvHits(env: NodeJS.ProcessEnv = process.env): DryRunD
 }
 
 /**
- * True when dry-run addresses are allowed (explicit opt-in AND not production gnosis
- * without the inspection flag). Production NETWORK=gnosis never allows denylist hits.
+ * True when dry-run addresses are allowed.
+ * #266: NETWORK=anvil alone must not bypass the denylist when LOK_CHAIN_ID is 100/10200.
+ * Production settlement chains require LOK_DRY_RUN_INSPECT=1 in addition to the allow flag.
  */
 export function dryRunDeployAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.LOK_ALLOW_DRY_RUN_DEPLOY?.trim() !== "1") return false;
+  if (env.LOK_DRY_RUN_INSPECT?.trim() === "1") return true;
   const named = (env.NETWORK ?? env.LOK_NETWORK)?.trim().toLowerCase();
-  // Opt-in inspection only — never when claiming production gnosis profile without
-  // also setting a non-production marker. Require explicit LOK_DRY_RUN_INSPECT=1.
-  return env.LOK_DRY_RUN_INSPECT?.trim() === "1" || named === "anvil";
+  const chainRaw = (env.LOK_CHAIN_ID ?? "").trim();
+  const chainId = /^\d+$/.test(chainRaw) ? Number(chainRaw) : NaN;
+  // Never treat chain 100/10200 as "anvil inspection" regardless of NETWORK label.
+  if (chainId === 100 || chainId === 10200 || named === "gnosis" || named === "chiado") {
+    return false;
+  }
+  return named === "anvil";
 }

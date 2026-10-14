@@ -143,14 +143,27 @@ export class MirroredFills {
   }
 }
 
-/** Permanent fill failures only. Unknown/transient errors return null → halt the cursor. */
+/**
+ * Classify engine errors for AskFilled (#245).
+ * Known permanent → specific quarantine reason.
+ * Transient (RPC / nonce / timeout) → null → halt cursor and retry.
+ * Everything else → "unprocessable" quarantine so one unknown string cannot freeze AH.
+ */
 export function reasonFromEngineError(error: string): AskFillQuarantineReason | null {
   if (/unknown listing/i.test(error)) return "unknown-listing";
   if (/self.?transfer|cannot send to self/i.test(error)) return "self-transfer";
   if (/not spawned/i.test(error)) return "not-spawned";
   if (/fill mismatch|does not match/i.test(error)) return "fill-mismatch";
   if (/over.?ask|pay more than the ask/i.test(error)) return "over-ask";
-  return null;
+  // Transient / retryable — keep cursor halted on this block.
+  if (
+    /timeout|timed out|econnreset|econnrefused|enotfound|socket hang up|429|503|502|504|rate.?limit|temporar|nonce too low|replacement transaction|already known|underpriced|pruned history|header not found|block not found/i.test(
+      error,
+    )
+  ) {
+    return null;
+  }
+  return "unprocessable";
 }
 
 export function alertAskFilledQuarantine(entry: QuarantinedAskFill): void {

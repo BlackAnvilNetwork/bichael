@@ -745,6 +745,55 @@ export async function serverMintCharacterFor(
   }
 }
 
+const CHECKPOINT_SUMMARY_ABI = [
+  {
+    type: "function",
+    name: "summary",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+/**
+ * On-chain starting job from CharacterCheckpoint.summary (packed at << 16).
+ * Used so log spawn cannot disagree with createCharacterFor genesis (#279).
+ */
+export async function readCharacterStartingJob(
+  tokenId: string,
+  envIn: NodeJS.ProcessEnv = process.env,
+): Promise<{ ok: true; job: number } | VaultErr> {
+  const rpc = envIn.LOK_CHAIN_RPC?.trim() ?? "";
+  const checkpoint = envIn.LOK_CHECKPOINT?.trim() ?? "";
+  if (!rpc || !checkpoint) return { ok: false, error: "Character checkpoint is not configured." };
+  if (!/^[1-9][0-9]{0,77}$/.test(tokenId)) {
+    return { ok: false, error: "Bad character token id." };
+  }
+  try {
+    const chainId = await chainIdOf(rpc);
+    const pub = publicClient(rpc, chainId);
+    const packed = await pub.readContract({
+      address: checkpoint as `0x${string}`,
+      abi: CHECKPOINT_SUMMARY_ABI,
+      functionName: "summary",
+      args: [BigInt(tokenId)],
+    });
+    if (packed === 0n) {
+      return { ok: false, error: "Character #" + tokenId + " is not initialized on-chain." };
+    }
+    const job = Number((packed >> 16n) & 0xffn);
+    if (!Number.isInteger(job) || job < 0 || job > 255) {
+      return { ok: false, error: "Bad on-chain starting job for #" + tokenId + "." };
+    }
+    return { ok: true, job };
+  } catch (err) {
+    return {
+      ok: false,
+      error: "Could not read checkpoint summary for #" + tokenId + ". " + redact(String(err), []),
+    };
+  }
+}
+
 /**
  * Read `ownerOf(tokenId)` for AH list payout / transfer cancel.
  * Client-supplied payout addresses are never used (mainnet rule 2/4).

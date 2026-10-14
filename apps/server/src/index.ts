@@ -217,11 +217,13 @@ import {
   loadCharacterMintClientConfig,
   linkCharacterNftWithRetry,
   readCharacterNftOwner,
+  readCharacterStartingJob,
   resolveListSellerPayout,
   serverMintCharacterFor,
   verifyCharacterNftOwner,
   type CharacterMintClientConfig,
 } from "./lok-vault";
+import { randomUUID } from "node:crypto";
 import {
   enqueuePendingCancel,
   startNftTransferAskCancelWatcher,
@@ -1315,16 +1317,24 @@ function handleLokList(
         // Still re-check ownership — a Transfer may have raced the openAsk.
         const raced = await readCharacterNftOwner(token);
         if (!raced.ok || raced.holder !== ownerAtList) {
+          // #257: always enqueue when ownership raced — matching the later path.
           const pulled = await cancelAskOnchain({ listingId });
           if (pulled.ok && !("alreadyClosed" in pulled && pulled.alreadyClosed)) {
-            lok.cancelAsk(listingId, token);
+            const undone = lok.cancelAsk(listingId, token);
             clearListingOpened(listingId);
+            if (!undone.ok) {
+              enqueuePendingCancel({ listingId, sellerTokenId: token });
+            }
+          } else if (!pulled.ok) {
+            enqueuePendingCancel({ listingId, sellerTokenId: token });
+          } else {
+            enqueuePendingCancel({ listingId, sellerTokenId: token, ambiguous: true });
           }
           pushLog(
             p,
             "Character NFT owner changed while listing #" +
               listingId +
-              ". The ask was cancelled.",
+              ". Cancel was attempted and queued for retry if needed.",
           );
           send(p.ws, snapshotFor(p));
           return;
@@ -2905,7 +2915,7 @@ function ensurePlayer(wallet: string, ws: WebSocket): Player | undefined {
   if (!p) return undefined;
   p.ws = ws;
   if (!Array.isArray(p.learned)) p.learned = [];
-  if (!p.charId) p.charId = `c_${wallet.slice(-8)}_${Date.now().toString(36)}`;
+  if (!p.charId) p.charId = "c_" + randomUUID().replace(/-/g, "");
   if (p.gender !== "male" && p.gender !== "female" && p.gender !== "pepeka") p.gender = "male";
   if (!Array.isArray(p.unlockCache)) p.unlockCache = [];
   if (typeof p.unlockCacheKey !== "string") p.unlockCacheKey = "";
@@ -2979,7 +2989,8 @@ function createPlayer(
     }
   }
   const vitals = combinedJobVitals(job, 1, null);
-  const charId = existingCharId ?? `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  // #240: crypto.randomUUID — Date.now + 6 random chars can collide.
+  const charId = existingCharId ?? "c_" + randomUUID().replace(/-/g, "");
   const p: Player = {
     wallet,
     charId,
@@ -5352,13 +5363,35 @@ function onMessage(ws: WebSocket, data: string) {
           bindWallet = holder;
         }
       }
-      const charId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const charId = "c_" + randomUUID().replace(/-/g, "");
+      let spawnJob = jobIndex < 0 ? 0 : jobIndex;
+      // #279: log spawn job must match on-chain createCharacterFor genesis.
+      if (bindToken && process.env.LOK_CHECKPOINT?.trim()) {
+        const onchain = await readCharacterStartingJob(bindToken);
+        if (!onchain.ok) {
+          send(ws, { type: "error", message: onchain.error });
+          return;
+        }
+        if (onchain.job !== spawnJob) {
+          send(ws, {
+            type: "error",
+            message:
+              "On-chain starting job (" +
+              onchain.job +
+              ") does not match create job (" +
+              spawnJob +
+              "). Mint and create must use the same job (reuse of a differently-jobbed NFT is refused).",
+          });
+          return;
+        }
+        spawnJob = onchain.job;
+      }
       const claimed = lok.claimName(charId, named.name, bindWallet);
       if (!claimed.ok) {
         send(ws, { type: "error", message: claimed.error });
         return;
       }
-      const spawned = lok.spawn(charId, claimed.name, jobIndex < 0 ? 0 : jobIndex, bindWallet, {
+      const spawned = lok.spawn(charId, claimed.name, spawnJob, bindWallet, {
         ...(bindToken ? { tokenId: bindToken } : {}),
       });
       if (!spawned.ok) {
@@ -5386,7 +5419,7 @@ function onMessage(ws: WebSocket, data: string) {
       const p = createPlayer(wallet, claimed.name, ws, job, gender, charId);
       claimStarter(p);
       if (cachedCharacterMint) {
-        void linkCharacterNftWithRetry(spawned.tokenId, jobIndex < 0 ? 0 : jobIndex, wallet, {
+        void linkCharacterNftWithRetry(spawned.tokenId, spawnJob, wallet, {
           acceptedWallets,
           attempts: 8,
           delayMs: 750,

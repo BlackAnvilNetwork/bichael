@@ -2,8 +2,9 @@
  * Record LISTING cancelAsk broadcasts so a timed-out finality wait can be
  * distinguished from an AskFilled on retry (re-test MED #2).
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadDurableJsonObject } from "./durable-json";
 import { defaultLokDir } from "./lok-world";
 
 export const CANCEL_TX_RECORD_FILE = "cancel-ask-txs.json";
@@ -28,17 +29,17 @@ export class CancelTxRecordStore {
   }
 
   reload(): void {
-    if (!existsSync(this.path)) {
+    const parsed = loadDurableJsonObject<FileShape>(this.path, "cancel-ask-txs");
+    if (!parsed) {
       this.cancels = {};
       return;
     }
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, "utf8")) as FileShape;
-      this.cancels =
-        parsed.cancels && typeof parsed.cancels === "object" ? parsed.cancels : {};
-    } catch {
-      this.cancels = {};
+    if (!parsed.cancels || typeof parsed.cancels !== "object" || Array.isArray(parsed.cancels)) {
+      throw new Error(
+        "cancel-ask-txs " + this.path + " is corrupt (expected { cancels: object }). Fix or restore it before boot.",
+      );
     }
+    this.cancels = parsed.cancels;
   }
 
   private persist(): void {

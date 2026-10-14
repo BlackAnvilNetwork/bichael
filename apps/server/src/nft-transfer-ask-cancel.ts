@@ -153,21 +153,29 @@ function parsePendingRow(row: unknown): PendingCancel | null {
 
 export function readPendingCancels(path: string): PendingCancel[] {
   if (!existsSync(path)) return [];
+  let raw: { pending?: unknown[] };
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as { pending?: unknown[] };
-    if (!Array.isArray(raw.pending)) return [];
-    const out: PendingCancel[] = [];
-    const seen = new Set<string>();
-    for (const row of raw.pending) {
-      const parsed = parsePendingRow(row);
-      if (!parsed || seen.has(parsed.listingId)) continue;
-      seen.add(parsed.listingId);
-      out.push(parsed);
-    }
-    return out;
-  } catch {
-    return [];
+    raw = JSON.parse(readFileSync(path, "utf8")) as { pending?: unknown[] };
+  } catch (err) {
+    // #258: fail closed — silent [] would drop cancel retries and leave chain asks open.
+    throw new Error(
+      "pending-cancel " + path + " could not be read (" + String(err) + "). Fix or restore it before boot.",
+    );
   }
+  if (!Array.isArray(raw.pending)) {
+    throw new Error(
+      "pending-cancel " + path + " is corrupt (expected { pending: array }). Fix or restore it before boot.",
+    );
+  }
+  const out: PendingCancel[] = [];
+  const seen = new Set<string>();
+  for (const row of raw.pending) {
+    const parsed = parsePendingRow(row);
+    if (!parsed || seen.has(parsed.listingId)) continue;
+    seen.add(parsed.listingId);
+    out.push(parsed);
+  }
+  return out;
 }
 
 function normalizePendingRow(row: PendingCancel): PendingCancel {
@@ -459,6 +467,14 @@ export async function cancelOpenAsksForCharacter(
   const cancel =
     opts?.cancelOnchain ??
     (async (listingId: string) => {
+      // #256: if AhEscrow is configured but LISTING key is missing, do NOT pretend
+      // neverOpened — that cancels the log while the chain ask stays buyable.
+      if (ahEscrowAddress(env) && !listingRoleKey(env)) {
+        return {
+          ok: false as const,
+          error: "AhEscrow configured but LOK_LISTING_KEY is missing — refusing log-only cancel",
+        };
+      }
       if (!ahEscrowAddress(env) || !listingRoleKey(env)) {
         return { ok: true as const, neverOpened: true };
       }

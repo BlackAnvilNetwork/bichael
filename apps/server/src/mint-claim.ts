@@ -57,27 +57,36 @@ function persistMintNonces(): void {
 export function configureMintClaimNonceStore(path: string): void {
   mintNonceStorePath = path;
   if (!existsSync(path)) return;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as { nonces?: unknown };
-    if (!Array.isArray(parsed.nonces)) return;
-    const now = Date.now();
-    for (const n of parsed.nonces) {
-      if (typeof n === "string" && n.includes(":")) {
-        usedMintNonces.set(n, now);
-      } else if (
-        n &&
-        typeof n === "object" &&
-        typeof (n as { key?: unknown }).key === "string" &&
-        (n as { key: string }).key.includes(":") &&
-        typeof (n as { at?: unknown }).at === "number"
-      ) {
-        usedMintNonces.set((n as { key: string }).key, (n as { at: number }).at);
-      }
-    }
-    pruneMintNonces(now);
-  } catch {
-    /* ignore corrupt store */
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    // #258: fail closed — a silent reset would allow claim nonce replay after restart.
+    throw new Error(
+      "mint-claim nonces " + path + " could not be read (" + String(err) + "). Fix or restore it before boot.",
+    );
   }
+  const nonces = (parsed as { nonces?: unknown } | null)?.nonces;
+  if (!Array.isArray(nonces)) {
+    throw new Error(
+      "mint-claim nonces " + path + " is corrupt (expected { nonces: array }). Fix or restore it before boot.",
+    );
+  }
+  const now = Date.now();
+  for (const n of nonces) {
+    if (typeof n === "string" && n.includes(":")) {
+      usedMintNonces.set(n, now);
+    } else if (
+      n &&
+      typeof n === "object" &&
+      typeof (n as { key?: unknown }).key === "string" &&
+      (n as { key: string }).key.includes(":") &&
+      typeof (n as { at?: unknown }).at === "number"
+    ) {
+      usedMintNonces.set((n as { key: string }).key, (n as { at: number }).at);
+    }
+  }
+  pruneMintNonces(now);
 }
 
 export function resetMintClaimNoncesForTests(): void {
