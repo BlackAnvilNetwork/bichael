@@ -165,6 +165,36 @@ pub enum Input {
         amount: U256,
         node_ids: Vec<String>,
     },
+    /// Mirror of an on-chain PvP head-bounty escrow open (1 xDAI / 1 native).
+    /// Does **not** credit or debit settlement ETH/`Key::Kek` — payment lives on-chain.
+    /// `amount_wei` must equal [`crate::world::PVP_BOUNTY_WEI`]. `area_id` is the PvP
+    /// area label (server-validated). `tx_hash` + `log_index` bind to the escrow receipt.
+    PvpBountyOpen {
+        token_id: U256,
+        amount_wei: U256,
+        area_id: String,
+        tx_hash: [u8; 32],
+        log_index: u64,
+    },
+    /// Mirror of an on-chain PvP bounty cancel / refund (left the area without dying).
+    /// Does not move ETH on the log. Requires an open bounty for `token_id`.
+    PvpBountyCancel {
+        token_id: U256,
+        area_id: String,
+        tx_hash: [u8; 32],
+        log_index: u64,
+    },
+    /// Mirror of an on-chain PvP bounty claim after a slay inside a PvP area.
+    /// Clears the victim's open bounty. Does **not** move ETH on the log — the
+    /// escrow already paid the slayer on-chain. Both characters are linked.
+    PvpKill {
+        victim: U256,
+        slayer: U256,
+        area_id: String,
+        amount_wei: U256,
+        tx_hash: [u8; 32],
+        log_index: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -419,6 +449,48 @@ Input::CancelAsk { listing_id, seller } => {
             for id in node_ids {
                 push_label(&mut buf, id);
             }
+        }
+        Input::PvpBountyOpen {
+            token_id,
+            amount_wei,
+            area_id,
+            tx_hash,
+            log_index,
+        } => {
+            buf.b256(&domain(b"LOK_PVP_BOUNTY_OPEN_V1"));
+            buf.u256(token_id);
+            buf.u256(amount_wei);
+            push_label(&mut buf, area_id);
+            buf.b256(tx_hash);
+            buf.u64(*log_index);
+        }
+        Input::PvpBountyCancel {
+            token_id,
+            area_id,
+            tx_hash,
+            log_index,
+        } => {
+            buf.b256(&domain(b"LOK_PVP_BOUNTY_CANCEL_V1"));
+            buf.u256(token_id);
+            push_label(&mut buf, area_id);
+            buf.b256(tx_hash);
+            buf.u64(*log_index);
+        }
+        Input::PvpKill {
+            victim,
+            slayer,
+            area_id,
+            amount_wei,
+            tx_hash,
+            log_index,
+        } => {
+            buf.b256(&domain(b"LOK_PVP_KILL_V1"));
+            buf.u256(victim);
+            buf.u256(slayer);
+            push_label(&mut buf, area_id);
+            buf.u256(amount_wei);
+            buf.b256(tx_hash);
+            buf.u64(*log_index);
         }
     }
     keccak256(&buf.bytes)

@@ -53,6 +53,8 @@ pub use ids::{fungible_id, genesis_root, genesis_tag, spawn_tag, unique_id, worl
 pub use state::{commit_entries, label_key, Key, State};
 pub use u256::{parse_address, parse_b256, U256};
 pub use gate::Gate;
-pub use world::{AppliedEvent, CharacterLink, CharacterSnapshot, Listing, World};
+pub use world::{
+    AppliedEvent, CharacterLink, CharacterSnapshot, Listing, OpenPvpBounty, World, PVP_BOUNTY_WEI,
+};
 
 pub use abi::keccak256;

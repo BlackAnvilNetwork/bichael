@@ -196,6 +196,10 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
     beforeSeq: z.number().int().nonnegative().optional(),
     req: z.number().int().nonnegative().optional(),
   }),
+  /** Place 1 xDAI head-bounty while standing in a PvP arena (Ash Pit). */
+  z.object({ type: z.literal("pvp/bountyPlace") }),
+  /** Cancel / reclaim open PvP bounty without dying. */
+  z.object({ type: z.literal("pvp/bountyCancel") }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
@@ -504,6 +508,24 @@ export type SnapshotMessage = {
     /** Effective support level = floor(main/2). 0 if no subjob. */
     subLevel: number;
     level: number;
+    /** Effective combat level under area caps (e.g. Ash Pit min(level, 30)). */
+    combatLevel?: number;
+    /** Black Anvil PvP arena + bounty status for this character. */
+    pvp?: {
+      areaId: string | null;
+      areaName: string | null;
+      levelCap: number | null;
+      bountyOpen: boolean;
+      bountyAreaId: string | null;
+      bountyWei: string | null;
+      ashPit: {
+        id: string;
+        name: string;
+        bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+        levelCap: number;
+        blurb: string;
+      };
+    };
     xp: number;
     dust: number;
     claimedStarter: boolean;

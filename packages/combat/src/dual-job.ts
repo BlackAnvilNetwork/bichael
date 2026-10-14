@@ -18,7 +18,12 @@ import {
   type AttrStats,
   type Vitals,
 } from "./grades";
-import { abilitiesUnlockedForJob, type AbilityId } from "./abilities";
+import {
+  abilitiesUnlockedForJob,
+  abilityIdsForJob,
+  abilityUnlockLevel,
+  type AbilityId,
+} from "./abilities";
 
 /** Main job level required before a support job can be set. */
 export const SUBJOB_UNLOCK_LEVEL = 10;
@@ -142,4 +147,31 @@ export function effectiveJobLevel(
   if (main === job) return Math.max(1, level);
   if (sub === job && supportJobActive(main, level, sub)) return subjobLevel(level);
   return 0;
+}
+
+/**
+ * Apply an area level cap before dual-job math (PvP arenas).
+ * `levelCap` null/undefined = uncapped. Stats, vitals, and ability unlocks
+ * all read the returned effective main level.
+ */
+export function applyAreaLevelCap(actualLevel: number, levelCap?: number | null): number {
+  const lv = Math.max(1, Math.floor(actualLevel));
+  if (levelCap == null || !Number.isFinite(levelCap)) return lv;
+  return Math.min(lv, Math.max(1, Math.floor(levelCap)));
+}
+
+/**
+ * True when a learned ability may fire under area-capped main/support levels.
+ * Main kit: unlock ≤ effective main. Support kit: unlock ≤ floor(main/2).
+ */
+export function abilityUsableUnderCaps(
+  main: JobId,
+  effectiveMainLevel: number,
+  sub: JobId | null | undefined,
+  id: AbilityId,
+): boolean {
+  const unlock = abilityUnlockLevel(id);
+  if (abilityIdsForJob(main).includes(id) && unlock <= effectiveMainLevel) return true;
+  if (!supportJobActive(main, effectiveMainLevel, sub)) return false;
+  return abilityIdsForJob(sub).includes(id) && unlock <= subjobLevel(effectiveMainLevel);
 }

@@ -101,10 +101,22 @@ pub struct AppliedEvent {
     pub links: Vec<CharacterLink>,
 }
 
+/// Fixed head-bounty for Black Anvil PvP (1 native / 1 xDAI in wei).
+pub const PVP_BOUNTY_WEI: u64 = 1_000_000_000_000_000_000;
+
+/// Open PvP bounty tracked by the world (mirror of on-chain escrow; no ETH on the log).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenPvpBounty {
+    pub amount_wei: U256,
+    pub area_id: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct World {
     characters: BTreeMap<U256, Character>,
     listings: BTreeMap<U256, Listing>,
+    /// token_id → open head-bounty. Rebuilt by replay. No settlement balance.
+    pvp_bounties: BTreeMap<U256, OpenPvpBounty>,
     next_seq: u64,
 }
 
@@ -113,6 +125,7 @@ impl World {
         Self {
             characters: BTreeMap::new(),
             listings: BTreeMap::new(),
+            pvp_bounties: BTreeMap::new(),
             next_seq: 0,
         }
     }
@@ -237,6 +250,16 @@ impl World {
 
     pub fn listings(&self) -> impl Iterator<Item = &Listing> {
         self.listings.values()
+    }
+
+    /// Open PvP head-bounty for a character, if any.
+    pub fn pvp_bounty(&self, token_id: &U256) -> Option<&OpenPvpBounty> {
+        self.pvp_bounties.get(token_id)
+    }
+
+    /// All open PvP bounties (token_id, bounty).
+    pub fn pvp_bounties(&self) -> impl Iterator<Item = (&U256, &OpenPvpBounty)> {
+        self.pvp_bounties.iter()
     }
 
     /// Spendable item balances for one character. Listed stacks are not included.
@@ -488,6 +511,60 @@ impl World {
             item_id,
             amount,
             seller,
+            tx_hash,
+            log_index,
+        })
+    }
+
+    /// Mirror an on-chain PvP bounty escrow open. No ETH on the log.
+    pub fn append_pvp_bounty_open(
+        &mut self,
+        token_id: U256,
+        amount_wei: U256,
+        area_id: String,
+        tx_hash: [u8; 32],
+        log_index: u64,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::PvpBountyOpen {
+            token_id,
+            amount_wei,
+            area_id,
+            tx_hash,
+            log_index,
+        })
+    }
+
+    /// Mirror an on-chain PvP bounty cancel/refund. No ETH on the log.
+    pub fn append_pvp_bounty_cancel(
+        &mut self,
+        token_id: U256,
+        area_id: String,
+        tx_hash: [u8; 32],
+        log_index: u64,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::PvpBountyCancel {
+            token_id,
+            area_id,
+            tx_hash,
+            log_index,
+        })
+    }
+
+    /// Mirror an on-chain PvP bounty claim after a slay. No ETH on the log.
+    pub fn append_pvp_kill(
+        &mut self,
+        victim: U256,
+        slayer: U256,
+        area_id: String,
+        amount_wei: U256,
+        tx_hash: [u8; 32],
+        log_index: u64,
+    ) -> Result<AppliedEvent, EngineError> {
+        self.apply(Input::PvpKill {
+            victim,
+            slayer,
+            area_id,
+            amount_wei,
             tx_hash,
             log_index,
         })
@@ -1185,6 +1262,66 @@ impl World {
                 }
                 touch.insert(*token_id);
             }
+            Input::PvpBountyOpen {
+                token_id,
+                amount_wei,
+                area_id,
+                tx_hash: _,
+                log_index: _,
+            } => {
+                if *amount_wei != U256::from_u64(PVP_BOUNTY_WEI) {
+                    return Err(EngineError::BadBountyAmount);
+                }
+                parse_label(area_id)?;
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                if self.pvp_bounties.contains_key(token_id) {
+                    return Err(EngineError::AlreadyBounty);
+                }
+                touch.insert(*token_id);
+            }
+            Input::PvpBountyCancel {
+                token_id,
+                area_id,
+                tx_hash: _,
+                log_index: _,
+            } => {
+                parse_label(area_id)?;
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                let open = self.pvp_bounties.get(token_id).ok_or(EngineError::NoBounty)?;
+                if open.area_id != *area_id {
+                    return Err(EngineError::BountyMismatch);
+                }
+                touch.insert(*token_id);
+            }
+            Input::PvpKill {
+                victim,
+                slayer,
+                area_id,
+                amount_wei,
+                tx_hash: _,
+                log_index: _,
+            } => {
+                if victim == slayer {
+                    return Err(EngineError::SelfTransfer);
+                }
+                if *amount_wei != U256::from_u64(PVP_BOUNTY_WEI) {
+                    return Err(EngineError::BadBountyAmount);
+                }
+                parse_label(area_id)?;
+                if !self.characters.contains_key(victim) || !self.characters.contains_key(slayer) {
+                    return Err(EngineError::NotSpawned);
+                }
+                let open = self.pvp_bounties.get(victim).ok_or(EngineError::NoBounty)?;
+                if open.area_id != *area_id || open.amount_wei != *amount_wei {
+                    return Err(EngineError::BountyMismatch);
+                }
+                touch.insert(*victim);
+                touch.insert(*slayer);
+            }
             Input::CancelAsk { listing_id, seller } => {
                 let listing = self.listings.get(listing_id).ok_or(EngineError::UnknownListing)?;
                 if !listing.book {
@@ -1412,6 +1549,29 @@ impl World {
                 seller,
                 ..
             } => self.chain_fill(*listing_id, *buyer, *price_wei, *item_id, *amount, *seller, touch),
+            Input::PvpBountyOpen {
+                token_id,
+                amount_wei,
+                area_id,
+                ..
+            } => {
+                self.pvp_bounties.insert(
+                    *token_id,
+                    OpenPvpBounty {
+                        amount_wei: *amount_wei,
+                        area_id: area_id.clone(),
+                    },
+                );
+                Ok(())
+            }
+            Input::PvpBountyCancel { token_id, .. } => {
+                self.pvp_bounties.remove(token_id);
+                Ok(())
+            }
+            Input::PvpKill { victim, .. } => {
+                self.pvp_bounties.remove(victim);
+                Ok(())
+            }
             Input::GoldPaidRespec { token_id, amount, node_ids } => {
                 if touch.contains(token_id) {
                     let ch = self.characters.get_mut(token_id).ok_or(EngineError::NotSpawned)?;

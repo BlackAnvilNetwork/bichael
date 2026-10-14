@@ -75,6 +75,14 @@ pub enum EngineError {
     FillMismatch,
     /// NPC sell amount does not match the engine price table.
     BadPrice,
+    /// Character already has an open PvP bounty.
+    AlreadyBounty,
+    /// Character has no open PvP bounty to cancel or claim.
+    NoBounty,
+    /// PvP bounty amount or area does not match the open escrow.
+    BountyMismatch,
+    /// PvP bounty amount is not the fixed 1×10^18 wei ruleset value.
+    BadBountyAmount,
 }
 
 impl fmt::Display for EngineError {
@@ -117,6 +125,10 @@ impl fmt::Display for EngineError {
             Self::OverAsk => write!(f, "buyer would pay more than the ask"),
             Self::FillMismatch => write!(f, "chain fill does not match the ask"),
             Self::BadPrice => write!(f, "npc sell price does not match the table"),
+            Self::AlreadyBounty => write!(f, "pvp bounty already open"),
+            Self::NoBounty => write!(f, "no open pvp bounty"),
+            Self::BountyMismatch => write!(f, "pvp bounty does not match"),
+            Self::BadBountyAmount => write!(f, "pvp bounty must be 1e18 wei"),
         }
     }
 }
@@ -244,7 +256,10 @@ impl Engine {
             | Input::ReclaimAsk { .. }
             | Input::SendInbox { .. }
             | Input::TakeInbox { .. }
-            | Input::ChainFill { .. } => Err(EngineError::NotOnCharacterLog),
+            | Input::ChainFill { .. }
+            | Input::PvpBountyOpen { .. }
+            | Input::PvpBountyCancel { .. }
+            | Input::PvpKill { .. } => Err(EngineError::NotOnCharacterLog),
             // GoldPaidRespec is applied on the character log (gold + skills).
             Input::LevelUp { token_id, level } => self.apply_level(*token_id, *level),
             Input::LearnAbility { token_id, ability_id } => self.learn(*token_id, ability_id),

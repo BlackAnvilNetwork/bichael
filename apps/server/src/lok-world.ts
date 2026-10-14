@@ -66,7 +66,12 @@ type EngineListing = {
   listedAt?: number;
   book?: boolean;
 };
-type EngineState = { characters: EngineCharacter[]; listings: EngineListing[] };
+type EnginePvpBounty = { tokenId: string; amountWei: string; areaId: string };
+type EngineState = {
+  characters: EngineCharacter[];
+  listings: EngineListing[];
+  pvpBounties?: EnginePvpBounty[];
+};
 type ApplyBody = {
   ok?: boolean;
   error?: string;
@@ -237,7 +242,7 @@ export class LokWorld {
   private readonly exp: LokExports;
   private readonly bindPath: string;
   private bind: BindFile;
-  private state: EngineState = { characters: [], listings: [] };
+  private state: EngineState = { characters: [], listings: [], pvpBounties: [] };
   /** Custody nonces observed by the server. Not loaded from the client and not a chain watcher. */
   private custody = new Map<string, CustodyInbound>();
   private chainFills = new Map<string, ChainFillInbound>();
@@ -591,6 +596,76 @@ export class LokWorld {
 
   goldPaidRespec(tokenId: string, amount: string, nodeIds: string[]): LokResult {
     return this.apply({ op: "goldPaidRespec", tokenId, amount, nodeIds });
+  }
+
+  /** Open PvP bounty for a token, if any (from engine state). */
+  pvpBountyOf(tokenId: string): EnginePvpBounty | undefined {
+    return (this.state.pvpBounties ?? []).find((b) => b.tokenId === tokenId);
+  }
+
+  /** True when this character has an open head-bounty on the log. */
+  hasPvpBounty(tokenId: string): boolean {
+    return !!this.pvpBountyOf(tokenId);
+  }
+
+  /**
+   * Mirror an on-chain PvP bounty escrow open. Does not credit or debit settlement ETH.
+   * `fillKey` is `${txHash}-${logIndex}` for dedupe (same pattern as ChainFill).
+   */
+  pvpBountyOpen(
+    tokenId: string,
+    amountWei: string,
+    areaId: string,
+    txHash: string,
+    logIndex: number | string,
+  ): LokResult {
+    return this.apply({
+      op: "pvpBountyOpen",
+      tokenId,
+      amountWei,
+      areaId,
+      txHash,
+      logIndex,
+    });
+  }
+
+  /** Mirror an on-chain PvP bounty cancel/refund. */
+  pvpBountyCancel(
+    tokenId: string,
+    areaId: string,
+    txHash: string,
+    logIndex: number | string,
+  ): LokResult {
+    return this.apply({
+      op: "pvpBountyCancel",
+      tokenId,
+      areaId,
+      txHash,
+      logIndex,
+    });
+  }
+
+  /**
+   * Mirror an on-chain PvP bounty claim after a slay. Clears the victim's open bounty.
+   * Does not move ETH on the log.
+   */
+  pvpKill(
+    victim: string,
+    slayer: string,
+    areaId: string,
+    amountWei: string,
+    txHash: string,
+    logIndex: number | string,
+  ): LokResult {
+    return this.apply({
+      op: "pvpKill",
+      victim,
+      slayer,
+      areaId,
+      amountWei,
+      txHash,
+      logIndex,
+    });
   }
 
   /**

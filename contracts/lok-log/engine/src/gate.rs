@@ -297,6 +297,14 @@ fn state_body(world: &World) -> serde_json::Map<String, Value> {
             "book": listing.book,
         }));
     }
+    let mut pvp_bounties = Vec::new();
+    for (token_id, bounty) in world.pvp_bounties() {
+        pvp_bounties.push(json!({
+            "tokenId": token_id.to_dec(),
+            "amountWei": bounty.amount_wei.to_dec(),
+            "areaId": bounty.area_id,
+        }));
+    }
     let mut map = serde_json::Map::new();
     map.insert("len".to_string(), json!(world.len()));
     map.insert("head".to_string(), json!(hex32(&world.head())));
@@ -305,6 +313,7 @@ fn state_body(world: &World) -> serde_json::Map<String, Value> {
         json!({
             "characters": characters,
             "listings": listings,
+            "pvpBounties": pvp_bounties,
         }),
     );
     map

@@ -16,7 +16,7 @@ import { withOwnerKeyQueue } from "./owner-tx-queue";
  * (see deployments/gnosis.json on #221 — proposed tx 0x42ff771b…, activatesAt 1792037555).
  * Do not bump without a new RulesetRegistry propose.
  */
-export const LOCAL_RULESET_WASM_SHA256 = "6577236dc54fc3fb63e8542326e8414f90bafdb6093fa484af47985ef70e8e2e";
+export const LOCAL_RULESET_WASM_SHA256 = "211b53fb470c2f62744b9acc21cb29082831b557cadd4f6ca6dfe49eb09a7b8f";
 
 /**
  * Ruleset id derived from the wasm pin: `keccak256(utf8(LOCAL_RULESET_WASM_SHA256))`.

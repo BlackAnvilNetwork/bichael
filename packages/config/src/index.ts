@@ -181,6 +181,19 @@ export {
 export { paleHollowLandmarks, type PaleHollowLandmark } from "./pale-hollow-landmarks";
 
 export {
+  PVP_BOUNTY_WEI,
+  ASH_PIT,
+  PVP_AREAS,
+  pvpAreaById,
+  pvpAreaAt,
+  inPvpArea,
+  cappedMainLevel,
+  cappedSubjobLevel,
+  type PvpAreaBounds,
+  type PvpAreaDef,
+} from "./pvp-areas";
+
+export {
   SHINY_HQ_CHANCE_DEFAULT,
   SHINY_LEVEL_BONUS,
   SHINY_CLONE_COUNT,
