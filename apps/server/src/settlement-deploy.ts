@@ -48,8 +48,8 @@ export function applySettlementDeployFile(env: NodeJS.ProcessEnv = process.env):
   const profile = applyNetworkProfileEnv(env as Record<string, string | undefined>);
   const chainId = envSettlementChainId(env);
 
-  if (chainId !== 100 && chainId !== 10200) {
-    // Anvil / unknown: profile may have filled RPC; nothing else to load.
+  if (chainId !== 100 && chainId !== 10200 && chainId !== 31337) {
+    // Unknown chain: profile may have filled RPC; nothing else to load.
     return;
   }
 
@@ -135,6 +135,13 @@ export function applySettlementDeployFile(env: NodeJS.ProcessEnv = process.env):
     }
     fill(env, key, value);
   }
+  // Anvil local: deployer key is the PvpBounty OPERATOR (and often LISTING).
+  if (chainId === 31337) {
+    const anvilK0 =
+      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    if (!env.LOK_OWNER_KEY?.trim()) env.LOK_OWNER_KEY = anvilK0;
+    if (!env.LOK_LISTING_KEY?.trim()) env.LOK_LISTING_KEY = anvilK0;
+  }
   if (c.MockItems && !c.Items) {
     console.error(
       "[bellgrave] ALERT: deploy file lists MockItems but no Items — refusing LOK_ITEMS fill.",
@@ -174,6 +181,8 @@ export function applySettlementDeployFile(env: NodeJS.ProcessEnv = process.env):
       (env.LOK_NFT ?? "") +
       " escrow=" +
       (env.LOK_AH_ESCROW ?? "") +
+      " pvp=" +
+      (env.LOK_PVP_BOUNTY ?? "") +
       " rpc=" +
       redactRpcUrl(env.LOK_CHAIN_RPC ?? ""),
   );

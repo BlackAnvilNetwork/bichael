@@ -196,10 +196,12 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
     beforeSeq: z.number().int().nonnegative().optional(),
     req: z.number().int().nonnegative().optional(),
   }),
-  /** Teleport into Ash Pit and place a head-bounty (join / rejoin). */
+  /** Teleport into Ash Pit after on-chain place (or anvil synthetic). */
   z.object({
     type: z.literal("pvp/join"),
     areaId: z.string().min(1).max(64).optional(),
+    /** Tx hash of PvpBounty.place — required when live escrow is configured. */
+    placeTxHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
   }),
   /** Cancel bounty and return to the hub. */
   z.object({ type: z.literal("pvp/leave") }),
@@ -433,6 +435,16 @@ export type AhEscrowClientConfig = {
   currency?: SettlementCurrencyView;
 };
 
+/** Client config for PvpBounty.place (1 native head-bounty). */
+export type PvpBountyClientConfig = {
+  address: string;
+  bountyWei: string;
+  /** When true, server accepts synthetic receipts — no wallet place needed. */
+  synthetic: boolean;
+  rpcUrl: string;
+  chainId: number;
+};
+
 /** Local / EEZ sync-buy client config (pay from home chain). */
 export type EezSyncBuyClientConfig = {
   syncBuyEnabled: boolean;
@@ -467,7 +479,7 @@ export type LokSnapshot = {
   /** Present when the server exposes a public RPC + AhEscrow address for wallet buys. */
   ahEscrow?: AhEscrowClientConfig | null;
   /** Present when PvpBounty escrow (or anvil synthetic) is available. */
-  pvpBounty?: { address: string; bountyWei: string; synthetic: boolean } | null;
+  pvpBounty?: PvpBountyClientConfig | null;
   /** Present when EEZ / local mock sync buy is configured. */
   eezSyncBuy?: EezSyncBuyClientConfig | null;
   /** Present when the player should pay createCharacter{value} for the NFT. */
@@ -537,7 +549,7 @@ export type SnapshotMessage = {
         levelCap: number;
         blurb: string;
       };
-      escrow?: { address: string; bountyWei: string; synthetic: boolean } | null;
+      escrow?: PvpBountyClientConfig | null;
     };
     xp: number;
     dust: number;
@@ -635,6 +647,15 @@ export type ServerMessage =
       areaName: string;
       bountyWei: string;
       levelCap: number;
+    }
+  | {
+      type: "pvp/placeNeeded";
+      areaId: string;
+      tokenId: string;
+      bountyWei: string;
+      address: string;
+      rpcUrl: string;
+      chainId: number;
     }
   | { type: "pvp/left"; areaId: string }
   | {

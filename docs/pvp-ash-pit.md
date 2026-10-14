@@ -31,29 +31,31 @@ Fixed `amountWei` = `1000000000000000000`. Linked onto victim (and slayer for
 
 ## On-chain
 
-`contracts/lok-log/src/PvpBounty.sol` — place / cancel / operator `claim`.
-Live fill path mirrors AhEscrow → log (server watches receipts). Local/anvil
-currently appends synthetic `txHash`/`logIndex` receipts so the ledger path is
-exercisable before the operator watcher ships.
+`contracts/lok-log/src/PvpBounty.sol` — player `place` (1 ether), operator/owner
+`cancel`, operator `claim`. Settlement ETH never hits the character log — the
+server verifies the place receipt (or recovers `BountyOpened`), then appends
+`pvpBountyOpen` / `pvpBountyCancel` / `pvpKill` mirrors.
 
 ## Server WS
 
-- **`pvp/join`** — teleport into Ash Pit + place bounty (easy join / rejoin)
-- **`pvp/leave`** — cancel bounty and warp to hub
-- `pvp/bountyPlace` / `pvp/bountyCancel` — place/cancel without teleport
+- **`pvp/join`** (+ optional `placeTxHash`) — teleport into Ash Pit after escrow
+- **`pvp/placeNeeded`** — live path: client must `PvpBounty.place` then rejoin
+- **`pvp/leave`** — operator cancel + warp to hub
+- `pvp/bountyPlace` / `pvp/bountyCancel` — aliases for join / leave
 - `engage` a marked player (gold ring) inside the arena
-- On slay: `pvpKill` clears victim bounty, kick to hub, client gets `pvp/slain` + **Join again**
-- Leaving the arena with an open bounty auto-cancels (refund mirror)
+- On slay: on-chain `claim` → `pvpKill` → kick + `pvp/slain` + **Join again**
+- Leaving the arena with an open bounty auto-cancels (on-chain refund)
 
 ## Deploy
 
-- `Deploy.s.sol` deploys `PvpBounty` (OPERATOR = LISTING key)
-- Env: `LOK_PVP_BOUNTY` (filled from deploy JSON)
-- Anvil/local: synthetic receipts (`pvpSyntheticReceiptsAllowed`) — no real ETH
-- Gnosis: require live escrow + watcher before open/kill (synthetic refused)
+- `Deploy.s.sol` / `DeployPvpBountyAnvil.s.sol` — OPERATOR = deployer / LISTING
+- Anvil addresses: `deployments/anvil.json` (`PvpBounty` + NFT + Factory)
+- Env: `LOK_PVP_BOUNTY` (auto-filled from deploy JSON when `NETWORK=anvil`)
+- Anvil keys: `settlement-deploy` fills `LOK_OWNER_KEY` / `LOK_LISTING_KEY` = K0
+- Synthetic only when no bounty addr, or `LOK_PVP_SYNTHETIC=1`
 
 ## Client
 
-- Commands → **Ash Pit** panel (Join / Leave)
-- Slain banner with one-click rejoin
+- Commands → **Ash Pit** panel — Join pays 1 native then warps
+- Slain banner with one-click rejoin (fresh place)
 - Marked players show a gold ring; click to engage

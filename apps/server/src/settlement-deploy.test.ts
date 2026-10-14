@@ -60,6 +60,23 @@ describe("applySettlementDeployFile", () => {
     assert.equal(env.LOK_AH_ESCROW, undefined);
   });
 
+  it("NETWORK=anvil fills PvpBounty + deployer K0 from deployments/anvil.json", () => {
+    const env: NodeJS.ProcessEnv = { NETWORK: "anvil" };
+    applySettlementDeployFile(env);
+    assert.equal(env.LOK_CHAIN_ID, "31337");
+    assert.equal(env.LOK_PVP_BOUNTY, "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0");
+    assert.equal(env.LOK_NFT, "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512");
+    assert.equal(
+      env.LOK_LISTING_KEY,
+      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    );
+    assert.equal(
+      env.LOK_OWNER_KEY,
+      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    );
+    assert.ok(env.LOK_CHAIN_RPC?.includes("8545"));
+  });
+
   it("refuses address fill from dry-run-only deploy files unless opted in", () => {
     const dir = mkdtempSync(join(tmpdir(), "lok-deploy-"));
     const path = join(dir, "gnosis-dry.json");

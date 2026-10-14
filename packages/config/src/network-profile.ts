@@ -62,7 +62,8 @@ export const NETWORK_PROFILES: Record<NetworkName, NetworkProfile> = {
     explorer: "",
     blockscout: "",
     confirmations: 1,
-    deployFile: "",
+    /** Local CREATE addresses from MintFixture + DeployPvpBountyAnvil on a fresh anvil. */
+    deployFile: "deployments/anvil.json",
     currency: SETTLEMENT_BY_CHAIN[31337]!,
   },
 };
