@@ -21,6 +21,10 @@ const ESCROW_ABI = parseAbi([
   "function hasRole(bytes32 role, address account) view returns (bool)",
   "function LISTING_ROLE() view returns (bytes32)",
 ]);
+const PVP_BOUNTY_ABI = parseAbi([
+  "function hasRole(bytes32 role, address account) view returns (bool)",
+  "function OPERATOR_ROLE() view returns (bytes32)",
+]);
 const FACTORY_ABI = parseAbi(["function mintFee() view returns (uint256)"]);
 
 export function isProductionSettlementChain(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -52,6 +56,8 @@ export function assertProductionEnvShape(env: NodeJS.ProcessEnv = process.env): 
   const escrow = env.LOK_AH_ESCROW?.trim() || ahEscrowAddress(env);
   const rpc = env.LOK_CHAIN_RPC?.trim() || env.LOK_PUBLIC_RPC?.trim();
   const listingKey = env.LOK_LISTING_KEY?.trim() || listingRoleKey(env);
+  const ownerKey = env.LOK_OWNER_KEY?.trim() || env.PRIVATE_KEY?.trim() || "";
+  const pvpBounty = env.LOK_PVP_BOUNTY?.trim() || "";
   const statusToken = env.LOK_OPS_STATUS_TOKEN?.trim();
 
   const missing: string[] = [];
@@ -59,7 +65,11 @@ export function assertProductionEnvShape(env: NodeJS.ProcessEnv = process.env): 
   if (!factory) missing.push("LOK_FACTORY");
   if (!escrow) missing.push("LOK_AH_ESCROW");
   if (!rpc) missing.push("LOK_CHAIN_RPC");
-  if (!listingKey) missing.push("LOK_LISTING_KEY");
+  // AH needs LOK_LISTING_KEY (pinned LISTING EOA). PvpBounty claim/cancel can use
+  // LOK_OWNER_KEY when that address holds OPERATOR_ROLE (admin interim on Gnosis).
+  if (!listingKey && !(pvpBounty && /^0x[0-9a-fA-F]{64}$/.test(ownerKey))) {
+    missing.push("LOK_LISTING_KEY");
+  }
   if (!statusToken && (env.NETWORK ?? "").toLowerCase() === "gnosis") {
     missing.push("LOK_OPS_STATUS_TOKEN");
   }
@@ -178,6 +188,58 @@ export async function assertProductionContractsLive(
           ok: false,
           error:
             "LISTING_ROLE check failed: " +
+            (err instanceof Error ? err.message : String(err)),
+        };
+      }
+    } else {
+      // No LISTING key — AhEscrow openAsk/cancelAsk disabled. PvpBounty still needs an OPERATOR.
+      const ownerRaw = env.LOK_OWNER_KEY?.trim() || env.PRIVATE_KEY?.trim() || "";
+      const bounty = env.LOK_PVP_BOUNTY?.trim();
+      if (!bounty || !/^0x[0-9a-fA-F]{40}$/.test(bounty)) {
+        return {
+          ok: false,
+          error:
+            "LOK_LISTING_KEY missing and LOK_PVP_BOUNTY unset — cannot operate AhEscrow or PvpBounty",
+        };
+      }
+      if (!/^0x[0-9a-fA-F]{64}$/.test(ownerRaw)) {
+        return {
+          ok: false,
+          error: "LOK_LISTING_KEY missing — set it, or LOK_OWNER_KEY with PvpBounty OPERATOR_ROLE",
+        };
+      }
+      try {
+        const acct = privateKeyToAccount(ownerRaw as `0x${string}`);
+        const opRole = await pub.readContract({
+          address: bounty as `0x${string}`,
+          abi: PVP_BOUNTY_ABI,
+          functionName: "OPERATOR_ROLE",
+        });
+        const isOp = await pub.readContract({
+          address: bounty as `0x${string}`,
+          abi: PVP_BOUNTY_ABI,
+          functionName: "hasRole",
+          args: [opRole, acct.address],
+        });
+        if (!isOp) {
+          return {
+            ok: false,
+            error:
+              "LOK_OWNER_KEY address " +
+              acct.address +
+              " lacks OPERATOR_ROLE on PvpBounty (and LOK_LISTING_KEY is unset)",
+          };
+        }
+        console.warn(
+          "[bellgrave] LOK_LISTING_KEY unset — AhEscrow listing txs disabled; " +
+            "PvpBounty claim/cancel via LOK_OWNER_KEY " +
+            acct.address,
+        );
+      } catch (err) {
+        return {
+          ok: false,
+          error:
+            "PvpBounty OPERATOR_ROLE check failed: " +
             (err instanceof Error ? err.message : String(err)),
         };
       }

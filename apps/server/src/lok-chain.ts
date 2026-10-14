@@ -18,7 +18,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 /** Fill empty env keys from a gitignored local file. Never overrides a value already set. */
 export function loadLokEnv(env: NodeJS.ProcessEnv = process.env, paths?: string[]): void {
-  const files = paths ?? [join(here, "../.env.local"), join(here, "../../../.env.local")];
+  const files =
+    paths ??
+    [
+      join(here, "../.env.local"),
+      join(here, "../../../.env.local"),
+      // Cloud Agent secure store (never committed).
+      "/cursor/stores/self/secure/server-keys.env",
+    ];
   for (const path of files) {
     if (!existsSync(path)) continue;
     for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {

@@ -33,6 +33,10 @@
     "amountWei": "1000000000000000000",
     "admin": "0x08cDab8b049D2A42125C3A2bf1bF1E2f619C4e01",
     "operator": "0xbFa29a6EE3d1188aa0A9e0c783E5Da620b859E76",
+    "operatorsExtra": [
+      "0x08cDab8b049D2A42125C3A2bf1bF1E2f619C4e01"
+    ],
+    "operatorsExtraNote": "ADMIN also granted OPERATOR_ROLE (tx 0xfb56dd42…) so LOK_OWNER_KEY can claim/cancel until LOK_LISTING_KEY is on the host.",
     "nft": "0x48aFeC17A56c5Bd32ABDbcAD57f16d3859b1289F",
     "status": "live",
     "deployedAt": "2026-10-14T05:32:50Z",
