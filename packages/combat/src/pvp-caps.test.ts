@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { abilityUsableUnderCaps, applyAreaLevelCap } from "./dual-job.ts";
+import { abilityUsableUnderCaps, applyAreaLevelCap } from "./dual-job";
 
 describe("pvp level caps", () => {
   it("clamps main level", () => {

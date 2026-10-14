@@ -6,7 +6,7 @@ import {
   cappedMainLevel,
   cappedSubjobLevel,
   pvpAreaAt,
-} from "./pvp-areas.ts";
+} from "./pvp-areas";
 
 describe("pvp areas", () => {
   it("Ash Pit is level-30 PvP with 1e18 bounty", () => {

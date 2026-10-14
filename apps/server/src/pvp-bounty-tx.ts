@@ -200,8 +200,11 @@ export async function chainPvpCancel(
           account,
           chain: wallet.chain,
         });
-        const conf = settlementConfirmations(env);
-        const receipt = await pub.waitForTransactionReceipt({ hash, confirmations: conf });
+        const conf = Number(settlementConfirmations(env));
+        const receipt = await pub.waitForTransactionReceipt({
+          hash,
+          confirmations: conf >= 1 ? conf : 1,
+        });
         if (receipt.status !== "success") return { ok: false, error: "PvpBounty.cancel reverted" };
         const fields = eventReceipt(receipt, "BountyCancelled");
         if (!fields) return { ok: false, error: "PvpBounty.cancel missing event" };
@@ -230,8 +233,11 @@ export async function chainPvpClaim(
           account,
           chain: wallet.chain,
         });
-        const conf = settlementConfirmations(env);
-        const receipt = await pub.waitForTransactionReceipt({ hash, confirmations: conf });
+        const conf = Number(settlementConfirmations(env));
+        const receipt = await pub.waitForTransactionReceipt({
+          hash,
+          confirmations: conf >= 1 ? conf : 1,
+        });
         if (receipt.status !== "success") return { ok: false, error: "PvpBounty.claim reverted" };
         const fields = eventReceipt(receipt, "BountyClaimed");
         if (!fields) return { ok: false, error: "PvpBounty.claim missing event" };
@@ -258,9 +264,10 @@ export async function receiptFromPlaceTx(
       chain: anvilChain(settlementChainId(env)),
       transport: http(rpc),
     });
+    const conf = Number(settlementConfirmations(env));
     const receipt = await pub.waitForTransactionReceipt({
       hash: txHash as Hex,
-      confirmations: settlementConfirmations(env),
+      confirmations: conf >= 1 ? conf : 1,
     });
     if (receipt.status !== "success") return { ok: false, error: "place tx reverted" };
     for (const log of receipt.logs) {
