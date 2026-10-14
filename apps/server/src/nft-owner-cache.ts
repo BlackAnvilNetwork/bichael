@@ -1,6 +1,8 @@
 /**
  * Cached CharacterNFT ownerOf, updated at Transfer finality.
  * Character-scoped actions authorize against this cache (fallback: live eth_call).
+ *
+ * #285: live ownerOf writes must not clobber a confirmed Transfer block with block=0.
  */
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -19,6 +21,16 @@ type CacheFile = { owners: Record<string, NftOwnerEntry> };
 
 export function nftOwnerCachePath(dataDir: string = defaultLokDir()): string {
   return join(dataDir, NFT_OWNER_CACHE_FILE);
+}
+
+/** Numeric rank for cache watermarks; invalid → 0. */
+export function nftOwnerBlockRank(block: string | number | bigint): bigint {
+  try {
+    const n = typeof block === "bigint" ? block : BigInt(String(block).trim() || "0");
+    return n < 0n ? 0n : n;
+  } catch {
+    return 0n;
+  }
 }
 
 export class NftOwnerCache {
@@ -52,20 +64,38 @@ export class NftOwnerCache {
     return row?.owner ?? null;
   }
 
-  set(tokenId: string, owner: string, block: string | number | bigint): void {
+  getEntry(tokenId: string): NftOwnerEntry | null {
+    return this.owners[tokenId] ?? null;
+  }
+
+  /**
+   * Store owner. Monotonic by block:
+   * - never let block 0 (unknown / live eth_call) overwrite a confirmed block > 0
+   * - never move the watermark backwards
+   */
+  set(tokenId: string, owner: string, block: string | number | bigint): boolean {
     const o = owner.trim().toLowerCase();
-    if (!/^0x[0-9a-f]{40}$/.test(o) || !/^[1-9][0-9]{0,77}$/.test(tokenId)) return;
+    if (!/^0x[0-9a-f]{40}$/.test(o) || !/^[1-9][0-9]{0,77}$/.test(tokenId)) return false;
+    const nextBlock = String(block);
+    const nextRank = nftOwnerBlockRank(nextBlock);
+    const prev = this.owners[tokenId];
+    if (prev) {
+      const prevRank = nftOwnerBlockRank(prev.block);
+      if (nextRank === 0n && prevRank > 0n) return false;
+      if (nextRank < prevRank) return false;
+    }
     this.owners[tokenId] = {
       owner: o,
-      block: String(block),
+      block: nextBlock,
       updatedAt: new Date().toISOString(),
     };
     this.persist();
+    return true;
   }
 
   /** Apply a finalized ERC-721 Transfer (skip mint-from-zero is caller's job). */
-  onTransfer(tokenId: string, to: string, block: string | number | bigint): void {
-    this.set(tokenId, to, block);
+  onTransfer(tokenId: string, to: string, block: string | number | bigint): boolean {
+    return this.set(tokenId, to, block);
   }
 }
 
@@ -97,6 +127,7 @@ export async function resolveCharacterController(
   }
   const live = await readCharacterNftOwner(tokenId, opts?.env);
   if (!live.ok) return { ok: false, error: live.error };
+  // block=0 means "unconfirmed live read" — must not clobber Transfer watermarks (#285).
   cache.set(tokenId, live.holder, 0);
   return { ok: true, owner: live.holder.toLowerCase(), source: "live" };
 }

@@ -136,8 +136,10 @@ export function applyNetworkProfileEnv(
   if (!env.LOK_CHAIN_RPC?.trim() && urls[0]) {
     env.LOK_CHAIN_RPC = urls[0];
   }
-  if (!env.LOK_PUBLIC_RPC?.trim() && env.LOK_CHAIN_RPC?.trim()) {
-    env.LOK_PUBLIC_RPC = env.LOK_CHAIN_RPC;
+  // Client-facing RPC must stay keyless (#272). Prefer profile public URLs —
+  // never copy a possibly keyed LOK_CHAIN_RPC into LOK_PUBLIC_RPC.
+  if (!env.LOK_PUBLIC_RPC?.trim() && urls[0]) {
+    env.LOK_PUBLIC_RPC = urls[0];
   }
   return profile;
 }

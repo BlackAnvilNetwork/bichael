@@ -10,6 +10,7 @@ import { createPublicClient, http, type Hex } from "viem";
 import type { AhEscrowClientConfig } from "@bellgrave/protocol";
 import { appKitConfigured } from "./appkit";
 import { burnerIdentityAllowed } from "./burner-identity";
+import { assertPayAddress, payRpcUrl } from "./pay-trust";
 import { hasInjectedWallet, payWalletSessionOpts } from "./pay-wallet";
 import { getWalletSession, type WalletSession } from "./wallet";
 
@@ -50,6 +51,9 @@ export async function buyAsksWithWallet(opts: {
   if (!/^[1-9][0-9]{0,77}$/.test(opts.buyerTokenId)) {
     return { ok: false, error: "Bad buyer character id.", hashes: [] };
   }
+  const pinned = assertPayAddress("escrow", opts.escrow.address);
+  if (!pinned.ok) return { ok: false, error: pinned.error, hashes: [] };
+  const rpcUrl = payRpcUrl(opts.escrow.chainId, opts.escrow.rpcUrl);
   const flags: PayWalletFlags =
     opts.forceWalletFlags ??
     {
@@ -67,7 +71,7 @@ export async function buyAsksWithWallet(opts: {
   try {
     session = await (opts.getSession ?? getWalletSession)({
       chainId: opts.escrow.chainId,
-      rpcUrl: opts.escrow.rpcUrl,
+      rpcUrl,
       allowBurnerFallback: sessionOpts.allowBurnerFallback,
       preferWalletConnect: sessionOpts.preferWalletConnect,
     });
@@ -85,7 +89,7 @@ export async function buyAsksWithWallet(opts: {
       hashes: [],
     };
   }
-  const publicClient = createPublicClient({ transport: http(opts.escrow.rpcUrl) });
+  const publicClient = createPublicClient({ transport: http(rpcUrl) });
   const hashes: Hex[] = [];
   for (const fill of opts.fills) {
     if (!/^[1-9][0-9]{0,77}$/.test(fill.listingId)) {
@@ -112,7 +116,7 @@ export async function buyAsksWithWallet(opts: {
             id: opts.escrow.chainId,
             name: cur.name,
             nativeCurrency: { name: cur.name, symbol: cur.symbol, decimals: cur.decimals },
-            rpcUrls: { default: { http: [opts.escrow.rpcUrl] } },
+            rpcUrls: { default: { http: [rpcUrl] } },
           };
         })(),
       });

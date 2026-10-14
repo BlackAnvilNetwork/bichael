@@ -7,6 +7,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { findDryRunEnvHits, dryRunDeployAllowed } from "./dry-run-denylist";
 import { listingRoleKey, ahEscrowAddress } from "./ah-escrow";
 import { characterMintEnvConfigured } from "./lok-vault";
+import { assertPublicRpcSafe } from "./public-rpc";
 import { envSettlementChainId } from "./settlement-chain";
 
 /** Pinned production LISTING EOA (docs/gnosis-launch.md). */
@@ -75,6 +76,9 @@ export function assertProductionEnvShape(env: NodeJS.ProcessEnv = process.env): 
   if (!characterMintEnvConfigured(env)) {
     return { ok: false, error: "character mint env incomplete on production chain" };
   }
+  // #272: snapshots must never embed keyed operator RPCs.
+  const pub = assertPublicRpcSafe(env);
+  if (!pub.ok) return pub;
   return { ok: true };
 }
 

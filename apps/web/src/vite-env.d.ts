@@ -25,6 +25,10 @@ interface ImportMetaEnv {
   readonly VITE_CHAIN_ID?: string;
   /** Named settlement profile: gnosis | chiado | anvil (see @bellgrave/config NETWORK_PROFILES). */
   readonly VITE_NETWORK?: string;
+  /** Optional AhEscrow address pin — refuse pay if server snapshot disagrees (#265). */
+  readonly VITE_AH_ESCROW?: string;
+  /** Optional CharacterFactory address pin — refuse mint if server snapshot disagrees (#265). */
+  readonly VITE_FACTORY?: string;
 }
 
 interface ImportMeta {

@@ -186,8 +186,9 @@ function ensureRpcEnv(env: NodeJS.ProcessEnv, profile: NetworkProfile): void {
   if (!env.LOK_CHAIN_RPC?.trim()) {
     env.LOK_CHAIN_RPC = urls[0] || profile.rpcUrls[0] || "";
   }
-  if (!env.LOK_PUBLIC_RPC?.trim() && env.LOK_CHAIN_RPC?.trim()) {
-    env.LOK_PUBLIC_RPC = env.LOK_CHAIN_RPC;
+  // #272: never copy possibly keyed LOK_CHAIN_RPC into client-facing public RPC.
+  if (!env.LOK_PUBLIC_RPC?.trim() && profile.rpcUrls[0]) {
+    env.LOK_PUBLIC_RPC = profile.rpcUrls[0];
   }
 }
 

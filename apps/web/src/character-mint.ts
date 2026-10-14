@@ -9,6 +9,7 @@ import { freshMintNonce, mintClaimMessage } from "./mint-claim";
 import { clearPendingMint, readPendingMint, writePendingMint } from "./pending-mint";
 import { appKitConfigured } from "./appkit";
 import { burnerIdentityAllowed } from "./burner-identity";
+import { assertPayAddress, payRpcUrl } from "./pay-trust";
 import { hasInjectedWallet, payWalletSessionOpts } from "./pay-wallet";
 import { burnerAccount, getWalletSession } from "./wallet";
 
@@ -137,18 +138,21 @@ export async function mintCharacterWithWallet(opts: {
   if (!Number.isInteger(opts.job) || opts.job < 0 || opts.job > 255) {
     return { ok: false, error: "Bad job for mint." };
   }
+  const factoryPin = assertPayAddress("factory", opts.mint.factory);
+  if (!factoryPin.ok) return { ok: false, error: factoryPin.error };
   let fee: bigint;
   try {
     fee = BigInt(opts.mint.mintFee);
   } catch {
     return { ok: false, error: "Bad mint fee." };
   }
+  const rpcUrl = payRpcUrl(opts.mint.chainId, opts.mint.rpcUrl);
   const cur = settlementCurrency(opts.mint.chainId);
   const chain = {
     id: opts.mint.chainId,
     name: cur.name,
     nativeCurrency: { name: cur.name, symbol: cur.symbol, decimals: cur.decimals },
-    rpcUrls: { default: { http: [opts.mint.rpcUrl] } },
+    rpcUrls: { default: { http: [rpcUrl] } },
   };
   const hasInjected = hasInjectedWallet();
   const burnerAllowed = burnerIdentityAllowed();
@@ -160,7 +164,7 @@ export async function mintCharacterWithWallet(opts: {
   try {
     const session = await getWalletSession({
       chainId: opts.mint.chainId,
-      rpcUrl: opts.mint.rpcUrl,
+      rpcUrl,
       allowBurnerFallback: sessionFlags.allowBurnerFallback,
       preferWalletConnect: sessionFlags.preferWalletConnect,
     });
@@ -171,7 +175,7 @@ export async function mintCharacterWithWallet(opts: {
       };
     }
     const pub = createPublicClient({
-      transport: http(opts.mint.rpcUrl),
+      transport: http(rpcUrl),
     });
     const payer = session.address.toLowerCase();
     const game = opts.gameWallet.toLowerCase();

@@ -26,6 +26,7 @@ import {
 } from "./lok-ask-filled-quarantine";
 import { opsAlert, watcherLagAlertBlocks } from "./ops-log";
 import { redactRpcUrl } from "./ops-redact";
+import { resolvePublicRpcUrl } from "./public-rpc";
 import { readWatcherCursor, writeWatcherCursor } from "./watcher-cursor";
 import { defaultLokDir, type LokWorld } from "./lok-world";
 
@@ -213,7 +214,8 @@ export function ahEscrowClientConfig(env: NodeJS.ProcessEnv = process.env): {
   currency: ReturnType<typeof settlementCurrencyView>;
 } | null {
   const address = ahEscrowAddress(env);
-  const rpcUrl = (env.LOK_PUBLIC_RPC?.trim() || env.LOK_CHAIN_RPC?.trim() || "").replace(/\/$/, "");
+  // #272: only keyless public RPC in snapshots — never LOK_CHAIN_RPC secrets.
+  const rpcUrl = resolvePublicRpcUrl(env);
   if (!address || !rpcUrl) return null;
   if (!/^https?:\/\//i.test(rpcUrl) && !rpcUrl.startsWith("ws")) return null;
   // Prefer RPC-cached eth_chainId (boot refresh); fall back to LOK_CHAIN_ID.

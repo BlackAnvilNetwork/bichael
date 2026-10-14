@@ -600,6 +600,57 @@ function kickWalletSessions(wallet: string, reason: string): void {
   }
 }
 
+/**
+ * #271: drop a character from every accountRoster so the new NFT owner can adopt
+ * and the seller cannot char/enter after Transfer.
+ */
+function releaseCharacterFromRoster(charId: string, reason?: string): Player | undefined {
+  let found: Player | undefined;
+  for (const [wallet, slots] of [...accountRoster.entries()]) {
+    const p = slots.get(charId);
+    if (!p) continue;
+    found = p;
+    slots.delete(charId);
+    if (slots.size === 0) accountRoster.delete(wallet);
+    rememberPlayer(p);
+    for (const [id, live] of [...players.entries()]) {
+      if (live.charId !== charId) continue;
+      try {
+        if (reason) {
+          pushLog(live, reason);
+          send(live.ws, { type: "error", message: reason });
+        }
+        live.ws.close(4001, "ownership");
+      } catch {
+        /* ignore */
+      }
+      players.delete(id);
+      walletToPlayer.delete(id);
+    }
+  }
+  return found;
+}
+
+/** Live NFT ownership gate for session-bound character actions (#252 / #274). */
+async function requireLiveCharacterOwner(p: Player): Promise<boolean> {
+  if (!p.wallet || !isEthAddress(p.wallet)) {
+    pushLog(p, "A wallet is required.");
+    return false;
+  }
+  const token = lok.tokenFor(p.charId);
+  if (!token) return true;
+  const owned = await sessionOwnsCharacter(p.wallet, token, { preferLive: true });
+  if (owned.ok) return true;
+  pushLog(p, owned.error);
+  try {
+    send(p.ws, { type: "error", message: owned.error });
+  } catch {
+    /* ignore */
+  }
+  releaseCharacterFromRoster(p.charId, owned.error);
+  return false;
+}
+
 const lok: LokWorld = await (async (): Promise<LokWorld> => {
   try {
     loadLokEnv();
@@ -630,14 +681,17 @@ const lok: LokWorld = await (async (): Promise<LokWorld> => {
     startNftTransferAskCancelWatcher(world, {
       onOwnershipChange: (change) => {
         if (change.from && change.from !== change.to) {
-          kickWalletSessions(
-            change.from,
+          const reason =
             "Character NFT #" +
-              change.tokenId +
-              " transferred to " +
-              change.to +
-              ". Session control released.",
-          );
+            change.tokenId +
+            " transferred to " +
+            change.to +
+            ". Session control released.";
+          // #271: release roster by charId so buyer adoptOrphanLogs can bind.
+          if (change.charId) {
+            releaseCharacterFromRoster(change.charId, reason);
+          }
+          kickWalletSessions(change.from, reason);
         }
       },
     });
@@ -952,74 +1006,80 @@ function notifyAhEscrowFill(fill: AskFilledApplied) {
 }
 
 function handleLokImport(p: Player, tokenId: number, amount: number) {
-  const starter = starterAmount(p.inventory, tokenId);
-  const plain = stackAmount(p.inventory, tokenId) - starter;
-  if (starter > 0 && amount > plain) {
-    pushLog(
-      p,
-      "Starter gear cannot be imported, listed, traded, or exported. Discard it from your bag if you do not want it. Nothing was moved.",
-    );
-    return;
-  }
-  if (!Number.isInteger(amount) || amount <= 0 || plain < amount) {
-    pushLog(p, "You do not have that many to import. Nothing was moved.");
-    return;
-  }
-  const token = lokToken(p);
-  if (!token) {
-    pushLog(p, "Could not open your log identity.");
-    return;
-  }
-  const def = getItem(tokenId);
-  if (def && def.kind === "base") {
-    if (!takeMat(p, def.slug, amount)) {
+  void requireLiveCharacterOwner(p).then((ok) => {
+    if (!ok) return;
+    const starter = starterAmount(p.inventory, tokenId);
+    const plain = stackAmount(p.inventory, tokenId) - starter;
+    if (starter > 0 && amount > plain) {
+      pushLog(
+        p,
+        "Starter gear cannot be imported, listed, traded, or exported. Discard it from your bag if you do not want it. Nothing was moved.",
+      );
+      return;
+    }
+    if (!Number.isInteger(amount) || amount <= 0 || plain < amount) {
       pushLog(p, "You do not have that many to import. Nothing was moved.");
       return;
     }
-  } else if (!takeItem(p.inventory, tokenId, amount)) {
-    pushLog(p, "You do not have that many to import. Nothing was moved.");
-    return;
-  }
-  // Persist the bag before the log append so a crash cannot restore a bag that still has the stack.
-  rememberPlayer(p);
-  const res = lok.importFromBag(token, String(tokenId), String(amount));
-  if (!res.ok) {
-    if (def && def.kind === "base") grantBaseMat(p, def.slug, amount);
-    else addItem(p.inventory, tokenId, amount);
+    const token = lokToken(p);
+    if (!token) {
+      pushLog(p, "Could not open your log identity.");
+      return;
+    }
+    const def = getItem(tokenId);
+    if (def && def.kind === "base") {
+      if (!takeMat(p, def.slug, amount)) {
+        pushLog(p, "You do not have that many to import. Nothing was moved.");
+        return;
+      }
+    } else if (!takeItem(p.inventory, tokenId, amount)) {
+      pushLog(p, "You do not have that many to import. Nothing was moved.");
+      return;
+    }
+    // Persist the bag before the log append so a crash cannot restore a bag that still has the stack.
     rememberPlayer(p);
-    pushLog(p, res.error);
-    return;
-  }
-  pushLog(p, "Imported " + itemLabel(tokenId) + " x" + amount + " from your bag into the log.");
-  send(p.ws, snapshotFor(p));
+    const res = lok.importFromBag(token, String(tokenId), String(amount));
+    if (!res.ok) {
+      if (def && def.kind === "base") grantBaseMat(p, def.slug, amount);
+      else addItem(p.inventory, tokenId, amount);
+      rememberPlayer(p);
+      pushLog(p, res.error);
+      return;
+    }
+    pushLog(p, "Imported " + itemLabel(tokenId) + " x" + amount + " from your bag into the log.");
+    send(p.ws, snapshotFor(p));
+  });
 }
 
 function handleLokExport(p: Player, tokenId: number, amount: number) {
-  const token = lokToken(p);
-  if (!token) {
-    pushLog(p, "Could not open your log identity.");
-    return;
-  }
-  // Log-bag export uses the catalog id. Launch fungibles also resolve a chain id for
-  // operators (mint/withdraw path not wired yet). Equipment has no unique Items id.
-  const chainFungible = isLaunchExportableFungible(tokenId) ? catalogIdToChainFungibleId(tokenId) : null;
-  const res = lok.exportItem(token, String(tokenId), String(amount));
-  if (!res.ok) {
-    pushLog(p, res.error);
-    return;
-  }
-  addItem(p.inventory, tokenId, amount);
-  const exported = getItem(tokenId);
-  if (exported && exported.kind === "base") {
-    p.baseMats[exported.slug] = (p.baseMats[exported.slug] ?? 0) + amount;
-  }
-  rememberPlayer(p);
-  const chainNote =
-    chainFungible != null
-      ? " Chain fungible id 0x" + chainFungible.toString(16) + " (Items mint not submitted)."
-      : " No chain withdrawal was submitted.";
-  pushLog(p, "Exported " + itemLabel(tokenId) + " x" + amount + " to your bag." + chainNote);
-  send(p.ws, snapshotFor(p));
+  void requireLiveCharacterOwner(p).then((ok) => {
+    if (!ok) return;
+    const token = lokToken(p);
+    if (!token) {
+      pushLog(p, "Could not open your log identity.");
+      return;
+    }
+    // Log-bag export uses the catalog id. Launch fungibles also resolve a chain id for
+    // operators (mint/withdraw path not wired yet). Equipment has no unique Items id.
+    const chainFungible = isLaunchExportableFungible(tokenId) ? catalogIdToChainFungibleId(tokenId) : null;
+    const res = lok.exportItem(token, String(tokenId), String(amount));
+    if (!res.ok) {
+      pushLog(p, res.error);
+      return;
+    }
+    addItem(p.inventory, tokenId, amount);
+    const exported = getItem(tokenId);
+    if (exported && exported.kind === "base") {
+      p.baseMats[exported.slug] = (p.baseMats[exported.slug] ?? 0) + amount;
+    }
+    rememberPlayer(p);
+    const chainNote =
+      chainFungible != null
+        ? " Chain fungible id 0x" + chainFungible.toString(16) + " (Items mint not submitted)."
+        : " No chain withdrawal was submitted.";
+    pushLog(p, "Exported " + itemLabel(tokenId) + " x" + amount + " to your bag." + chainNote);
+    send(p.ws, snapshotFor(p));
+  });
 }
 
 function playerByCharId(charId: string): Player | undefined {
@@ -1116,19 +1176,22 @@ function spendLogGold(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!Number.isSafeInteger(amount) || amount < 0) return Promise.resolve({ ok: false, error: "Bad gold cost." });
   if (amount === 0) return Promise.resolve({ ok: true });
-  const token = lokToken(p);
-  if (!token) return Promise.resolve({ ok: false, error: "Could not open your log identity." });
-  return guardedKekMove(token, async () => {
-    let bal: bigint;
-    let cost: bigint;
-    try {
-      bal = BigInt(lok.goldOf(token));
-      cost = BigInt(amount);
-    } catch {
-      return { ok: false, error: "Bad gold balance." };
-    }
-    if (bal < cost) return { ok: false, error: "Need " + amount + " gold (you have " + bal.toString() + ")." };
-    return lok.goldSpend(token, sink, String(amount));
+  return requireLiveCharacterOwner(p).then((ok) => {
+    if (!ok) return { ok: false as const, error: "Character NFT ownership required." };
+    const token = lokToken(p);
+    if (!token) return { ok: false as const, error: "Could not open your log identity." };
+    return guardedKekMove(token, async () => {
+      let bal: bigint;
+      let cost: bigint;
+      try {
+        bal = BigInt(lok.goldOf(token));
+        cost = BigInt(amount);
+      } catch {
+        return { ok: false as const, error: "Bad gold balance." };
+      }
+      if (bal < cost) return { ok: false as const, error: "Need " + amount + " gold (you have " + bal.toString() + ")." };
+      return lok.goldSpend(token, sink, String(amount));
+    });
   });
 }
 
@@ -3275,6 +3338,8 @@ function claimStarter(p: Player) {
   addStack(p.inventory, STARTER_POTION_ID, STARTER_POTION_AMOUNT, true);
   p.claimedStarter = true;
   p.equip.main = weapon.tokenId;
+  // #273: persist before the 15s save loop so a crash cannot re-grant.
+  rememberPlayer(p);
   // Not written to the log. A later real drop of the same id is a separate, sellable stack.
   pushLog(
     p,
@@ -4944,9 +5009,21 @@ function adoptOrphanLogs(wallet: string, ws: WebSocket) {
   const owner = wallet.toLowerCase();
   const owned = lok.charsForWallet(owner);
   if (owned.length === 0) return;
+  // #271: only block adopt when another roster still holds a live-owned slot.
+  // releaseCharacterFromRoster clears sold characters so buyers can bind.
   const taken = new Set<string>();
-  for (const slots of accountRoster.values()) {
-    for (const id of slots.keys()) taken.add(id);
+  for (const [rosterWallet, slots] of accountRoster.entries()) {
+    for (const id of slots.keys()) {
+      if (rosterWallet === owner) {
+        taken.add(id);
+        continue;
+      }
+      const tok = lok.tokenFor(id);
+      const cached = tok ? nftOwnerCache().get(tok) : null;
+      if (cached && cached === rosterWallet) taken.add(id);
+      else if (!cached) taken.add(id);
+      else releaseCharacterFromRoster(id);
+    }
   }
   const rows = owned.filter((row) => !taken.has(row.charId));
   if (rows.length === 0) return;
@@ -5381,8 +5458,13 @@ function onMessage(ws: WebSocket, data: string) {
       send(ws, { type: "error", message: "Create a character first." });
       return;
     }
-    pushLog(p, "Welcome back to the Shard Dwellings.");
-    send(p.ws, snapshotFor(p));
+    // #271: refuse enter when session wallet no longer owns the character NFT.
+    const entered = p;
+    void requireLiveCharacterOwner(entered).then((ok) => {
+      if (!ok) return;
+      pushLog(entered, "Welcome back to the Shard Dwellings.");
+      send(entered.ws, snapshotFor(entered));
+    });
     return;
   }
 
@@ -5392,6 +5474,13 @@ function onMessage(ws: WebSocket, data: string) {
     return;
   }
 
+  // #274: live ownership gate for character-mutating play (after Transfer kick window).
+  const needsOwnerGate =
+    msg.type !== "move" &&
+    msg.type !== "disengage" &&
+    msg.type !== "lok/explore" &&
+    !String(msg.type).startsWith("party/");
+  const runPlayerMessage = () => {
   switch (msg.type) {
     case "claim/starter":
       claimStarter(p);
@@ -5541,6 +5630,14 @@ function onMessage(ws: WebSocket, data: string) {
     default:
       break;
   }
+  };
+  if (needsOwnerGate) {
+    void requireLiveCharacterOwner(p).then((ok) => {
+      if (ok) runPlayerMessage();
+    });
+    return;
+  }
+  runPlayerMessage();
 }
 
 const AUTH_ORIGINS = authAllowlist();

@@ -7,6 +7,7 @@ import { createPublicClient, createWalletClient, http, keccak256, toBytes, type 
 import { privateKeyToAccount } from "viem/accounts";
 import { renameSync, writeFileSync } from "node:fs";
 import { withOwnerKeyQueue } from "./owner-tx-queue";
+import { resolvePublicRpcUrl } from "./public-rpc";
 
 /**
  * sha256 of the checked-in engine bundle (contracts/lok-log/engine/pkg/lok_engine.wasm).
@@ -187,7 +188,8 @@ export async function readStartingJobs(
 /** True when RPC/factory/NFT env is set so the player mint path should load. */
 export function characterMintEnvConfigured(envIn: NodeJS.ProcessEnv = process.env): boolean {
   const env = envOf(envIn);
-  const publicRpc = envIn.LOK_PUBLIC_RPC?.trim() || env.rpc;
+  // Operator RPC may be keyed; client mint config needs a public URL (#272).
+  const publicRpc = resolvePublicRpcUrl(envIn);
   if (!env.rpc || !env.factory || !env.nft || !publicRpc) return false;
   return publicRpc.startsWith("http://") || publicRpc.startsWith("https://");
 }
@@ -361,7 +363,8 @@ export async function loadCharacterMintClientConfig(
 ): Promise<CharacterMintLoadResult> {
   if (!characterMintEnvConfigured(envIn)) return { status: "disabled" };
   const env = envOf(envIn);
-  const publicRpc = envIn.LOK_PUBLIC_RPC?.trim() || env.rpc;
+  const publicRpc = resolvePublicRpcUrl(envIn);
+  if (!publicRpc) return { status: "disabled" };
   try {
     const chainId = await chainIdOf(env.rpc);
     // Anvil + configured settlement chains (Gnosis 100 / Chiado 10200). Others stay off.
