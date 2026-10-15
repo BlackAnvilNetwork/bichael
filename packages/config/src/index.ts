@@ -85,6 +85,7 @@ export {
 export {
   PALE_HOLLOW_BOUNDS,
   PH_HUB,
+  PH_HUB_REAR_WALL,
   PH_SEGMENT_A,
   PH_SEGMENT_B,
   PH_SEGMENT_C,
@@ -149,6 +150,7 @@ export {
   PH_TRAIL_WIDTH,
   PH_TRAIL_STONE_WIDTH,
   paleHollowWalkable,
+  paleHollowInHubRearWall,
   paleHollowClampMove,
   paleHollowBridgeCrossings,
   paleHollowBankPoint,

@@ -21,6 +21,34 @@ export const PH_HUB = {
 } as const;
 
 /**
+ * Impassable footprint of the visual `HubRearRockWall` in PaleHollowMap
+ * (mossy chalk cliff on the camp's north rear). The mesh runs about x -9..9,
+ * z 7.4..10.5; this rect is that body with a small pad so a point-mover
+ * cannot clip the boxes.
+ *
+ * It does not span the hub. The camp stays enterable:
+ *   - south face of the camp (spawn at z 2) is open
+ *   - west gap: x < minX (hub continues to -14, apron further)
+ *   - east gap: x > maxX (the east trail already leaves near x 10, z 6)
+ * North of the cliff (outdoor spawn at z 14) connects through those side gaps.
+ */
+export const PH_HUB_REAR_WALL = {
+  minX: -9.4,
+  maxX: 9.4,
+  minZ: 7.15,
+  maxZ: 10.85,
+} as const;
+
+export function paleHollowInHubRearWall(x: number, z: number): boolean {
+  return (
+    x >= PH_HUB_REAR_WALL.minX &&
+    x <= PH_HUB_REAR_WALL.maxX &&
+    z >= PH_HUB_REAR_WALL.minZ &&
+    z <= PH_HUB_REAR_WALL.maxZ
+  );
+}
+
+/**
  * Shared hub apron beyond `PH_HUB` — single source for height ramp, tree/prop
  * clearings, and placement. Rect SDF (not a circle) so diagonals don't seam.
  */
@@ -1073,6 +1101,7 @@ export function paleHollowInRiverWall(x: number, z: number): boolean {
  * Soft-gate landmark "bridge" biomes are dry land and remain walkable.
  */
 export function paleHollowWalkable(x: number, z: number): boolean {
+  if (paleHollowInHubRearWall(x, z)) return false;
   if (paleHollowOnBridge(x, z)) return true;
   if (paleHollowInOpenWater(x, z)) return false;
   if (paleHollowInRiverWall(x, z)) return false;

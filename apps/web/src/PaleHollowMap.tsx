@@ -7,14 +7,13 @@ import {
   PALE_HOLLOW_TERRAIN_SEG_X,
   PALE_HOLLOW_TERRAIN_SEG_Z,
   paleHollowBiome,
-  paleHollowClampMove,
+  clampPaleHollow,
   paleHollowGroundHeight,
   paleHollowHeight,
   paleHollowInBuildingClearing,
   paleHollowInOpenWater,
   paleHollowPlaceOnDryLand,
   paleHollowTerrainWeights,
-  paleHollowWalkable,
   type PaleHollowBiome,
 } from "@bellgrave/config";
 import { CATALOG_BY_SLUG } from "@bellgrave/items";
@@ -657,15 +656,11 @@ function makeTerrainMaterial(maps: {
 
 function onTerrainClick(e: { stopPropagation: () => void; point: THREE.Vector3 }) {
   e.stopPropagation();
-  const g = useGame.getState();
-  const me = g.wallet ? g.snapshot?.units.find((u) => u.id === g.wallet) : undefined;
-  if (me) {
-    const c = paleHollowClampMove(me.x, me.z, e.point.x, e.point.z);
-    send({ type: "move", x: c.x, z: c.z });
-    return;
-  }
-  if (!paleHollowWalkable(e.point.x, e.point.z)) return;
-  send({ type: "move", x: e.point.x, z: e.point.z });
+  // The server owns the route (#120). Send the clicked point, not a straight
+  // slide — a pre-clamp would stop on the near face of a wall. There is no
+  // client path ribbon; if one is added it must use paleHollowWalkable.
+  const c = clampPaleHollow(e.point.x, e.point.z);
+  send({ type: "move", x: c.x, z: c.z });
 }
 
 function hash2(i: number, j: number) {
@@ -945,7 +940,10 @@ function makeHubDirtGeo(radius: number, segs = 48): THREE.PlaneGeometry {
   return g;
 }
 
-/** Mossy chalk cliff framing the camp's north rear — not a thin strip. */
+/**
+ * Mossy chalk cliff framing the camp's north rear — not a thin strip.
+ * Movement blocking is `PH_HUB_REAR_WALL` (side gaps stay open); this mesh is the art.
+ */
 function HubRearRockWall({
   y0,
   stoneMap,

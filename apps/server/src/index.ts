@@ -87,6 +87,7 @@ import {
   paleHollowWalkable,
   PVP_BOUNTY_WEI,
 } from "@bellgrave/config";
+import { paleHollowFindPath } from "./nav-grid";
 import {
   ASH_PIT as ASH_PIT_AREA,
   areaAtPlayer,
@@ -355,6 +356,12 @@ type Player = {
   tp: number;
   targetId: string | null;
   moveTo: { x: number; z: number } | null;
+  /** Waypoints after `moveTo` from grid A* (#120). */
+  movePath: { x: number; z: number }[];
+  /** Goal the current route was planned toward, so chase can avoid replanning every tick. */
+  navGoal: { x: number; z: number } | null;
+  /** Path finished short of navGoal (blocked). Chase waits until the target moves. */
+  navHold: boolean;
   anim: UnitSnapshot["anim"];
   flux: boolean;
   aether: boolean;
@@ -2585,19 +2592,51 @@ function facingTo(fromX: number, fromZ: number, toX: number, toZ: number): numbe
   return Math.atan2(toX - fromX, toZ - fromZ);
 }
 
-/** Point just inside melee range of the target, along the player→target line. */
-function meleeApproach(
-  fromX: number,
-  fromZ: number,
-  toX: number,
-  toZ: number,
-  stopDist = MELEE_RANGE * 0.85,
-): { x: number; z: number } | null {
-  const dx = toX - fromX;
-  const dz = toZ - fromZ;
+function clearRoute(p: Player) {
+  p.moveTo = null;
+  p.movePath = [];
+  p.navGoal = null;
+  p.navHold = false;
+}
+
+/** Click, gather, and blocked chase all share this. The path stops at the closest reachable cell. */
+function assignRoute(p: Player, x: number, z: number) {
+  const path = paleHollowFindPath(p.x, p.z, x, z);
+  p.navGoal = { x, z };
+  p.navHold = false;
+  if (path.length === 0) {
+    p.moveTo = null;
+    p.movePath = [];
+    return;
+  }
+  p.moveTo = path[0]!;
+  p.movePath = path.slice(1);
+}
+
+/**
+ * Close to melee range. A clear line still slides with clampPlayerMove.
+ * If the rear wall (or any blocker) sits on that line, plan a path around it
+ * instead of stepping through. Replan only when the goal shifts.
+ */
+function closeViaRoute(p: Player, toX: number, toZ: number) {
+  const dx = toX - p.x;
+  const dz = toZ - p.z;
   const d = Math.hypot(dx, dz);
-  if (d <= stopDist) return null;
-  return clampPlayerMove(fromX, fromZ, toX - (dx / d) * stopDist, toZ - (dz / d) * stopDist);
+  const stop = MELEE_RANGE * 0.85;
+  if (d <= stop) return;
+  const gx = toX - (dx / d) * stop;
+  const gz = toZ - (dz / d) * stop;
+  const straight = clampPlayerMove(p.x, p.z, gx, gz);
+  if (Math.hypot(straight.x - gx, straight.z - gz) < 0.45) {
+    p.moveTo = straight;
+    p.movePath = [];
+    p.navGoal = { x: gx, z: gz };
+    p.navHold = false;
+    return;
+  }
+  const shifted = !p.navGoal || Math.hypot(p.navGoal.x - gx, p.navGoal.z - gz) > 1.25;
+  if (!shifted && (p.moveTo || p.navHold)) return;
+  assignRoute(p, gx, gz);
 }
 
 /** Keep closing on engaged target until in swing range. */
@@ -2606,8 +2645,7 @@ function chaseEngaged(p: Player) {
   if (mob && mob.alive) {
     const d = dist(p.x, p.z, mob.x, mob.z);
     if (d <= MELEE_RANGE) return;
-    const pt = meleeApproach(p.x, p.z, mob.x, mob.z);
-    if (pt) p.moveTo = pt;
+    closeViaRoute(p, mob.x, mob.z);
     return;
   }
   const foe =
@@ -2620,8 +2658,7 @@ function chaseEngaged(p: Player) {
 function chaseEngagedPlayer(p: Player, foe: Player) {
   const d = dist(p.x, p.z, foe.x, foe.z);
   if (d <= MELEE_RANGE) return;
-  const pt = meleeApproach(p.x, p.z, foe.x, foe.z);
-  if (pt) p.moveTo = pt;
+  closeViaRoute(p, foe.x, foe.z);
 }
 
 /** How far to look for the next fight after a kill. */
@@ -3179,6 +3216,9 @@ function createPlayer(
     tp: 0,
     targetId: null,
     moveTo: null,
+    movePath: [],
+    navGoal: null,
+    navHold: false,
     anim: "idle",
     flux: false,
     aether: false,
@@ -3576,7 +3616,7 @@ function downPlayer(p: Player, now: number): "reraise" | "fallen" | "already" {
     p.anim = "idle";
     pushLog(p, "Ember Vigil — you rise in sacred light!");
   } else if (outcome === "fallen") {
-    p.moveTo = null;
+    clearRoute(p);
     p.targetId = null;
     p.anim = "dead";
     p.animUntil = 0;
@@ -3593,7 +3633,7 @@ function respawnAtHub(p: Player, reason = "You fallâ€¦ and wake in the Shard
   p.x = PH_HUB_SPAWN.x;
   p.z = PH_HUB_SPAWN.z;
   syncUnitY(p);
-  p.moveTo = null;
+  clearRoute(p);
   p.targetId = null;
   p.anim = "idle";
   p.animUntil = 0;
@@ -3699,7 +3739,7 @@ function warpIntoPit(p: Player, pit: typeof ASH_PIT_AREA, refill: boolean) {
   p.x = spawn.x;
   p.z = spawn.z;
   p.facing = spawn.facing;
-  p.moveTo = null;
+  clearRoute(p);
   p.targetId = null;
   p.zoneId = pit.zoneId;
   syncUnitY(p);
@@ -5428,7 +5468,7 @@ function tickSimBody() {
       respawnAtHub(p);
     }
     if (p.hp <= 0 && now < p.fallenUntil) {
-      p.moveTo = null;
+      clearRoute(p);
       p.targetId = null;
       p.anim = "dead";
       continue;
@@ -5458,35 +5498,51 @@ function tickSimBody() {
     if (p.moveTo) {
       stopRest(p, "You stand and break your rest.");
       const speed = playerMoveSpeed(p, now);
-      const dx = p.moveTo.x - p.x;
-      const dz = p.moveTo.z - p.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 0.15) {
-        p.moveTo = null;
-        syncUnitY(p);
-        p.walkUntil = now + 150;
-        if (now >= p.animUntil) p.anim = "walk";
-      } else {
+      let guard = 0;
+      while (p.moveTo && guard++ < 4) {
+        const dx = p.moveTo.x - p.x;
+        const dz = p.moveTo.z - p.z;
+        const d = Math.hypot(dx, dz);
+        if (d < 0.2) {
+          const next = p.movePath.shift();
+          if (next) {
+            p.moveTo = next;
+            continue;
+          }
+          const goal = p.navGoal;
+          p.moveTo = null;
+          if (goal && Math.hypot(goal.x - p.x, goal.z - p.z) > 0.8) p.navHold = true;
+          syncUnitY(p);
+          p.walkUntil = now + 150;
+          if (now >= p.animUntil) p.anim = "walk";
+          break;
+        }
         const step = Math.min(d, speed * dt);
         const nx = p.x + (dx / d) * step;
         const nz = p.z + (dz / d) * step;
         const c = clampPlayerMove(p.x, p.z, nx, nz);
-        // Blocked by water/wall — cancel path instead of skating along the barrier
-        if (Math.hypot(c.x - p.x, c.z - p.z) < 1e-4 && !paleHollowWalkable(nx, nz)) {
+        // No progress against a blocker — stop. Do not rubber-band through it.
+        if (Math.hypot(c.x - p.x, c.z - p.z) < 1e-4) {
           p.moveTo = null;
-        } else {
-          p.x = c.x;
-          p.z = c.z;
-          // Ignore tiny residual heading noise near the waypoint
-          if (d > 0.35) p.facing = facingTo(0, 0, dx, dz);
-          p.walkUntil = now + 200;
-          // Don't stomp an active swing/cast pose
-          if (now >= p.animUntil) p.anim = "walk";
+          p.movePath = [];
+          if (p.navGoal && Math.hypot(p.navGoal.x - p.x, p.navGoal.z - p.z) > 0.8) p.navHold = true;
+          break;
         }
+        p.x = c.x;
+        p.z = c.z;
+        // Ignore tiny residual heading noise near the waypoint
+        if (d > 0.35) p.facing = facingTo(0, 0, dx, dz);
+        p.walkUntil = now + 200;
+        // Don't stomp an active swing/cast pose
+        if (now >= p.animUntil) p.anim = "walk";
         syncUnitY(p);
+        break;
       }
-    } else if (p.anim === "walk" && now >= p.walkUntil) {
-      if (now >= p.animUntil) p.anim = "idle";
+    } else {
+      if (p.movePath.length) p.movePath = [];
+      if (p.anim === "walk" && now >= p.walkUntil) {
+        if (now >= p.animUntil) p.anim = "idle";
+      }
     }
 
     if (p.anim === "rest") {
@@ -5659,7 +5715,7 @@ function handleGather(p: Player, nodeId: string) {
   const d = dist(p.x, p.z, node.x, node.z);
   if (d > GATHER_RANGE) {
     pushLog(p, "Move closer to gather.");
-    p.moveTo = clampPlayerMove(p.x, p.z, node.x, node.z);
+    assignRoute(p, node.x, node.z);
     return;
   }
   const now = Date.now();
@@ -5674,7 +5730,7 @@ function handleGather(p: Player, nodeId: string) {
   }
   stopRest(p, "You break rest to gather.");
   p.targetId = null;
-  p.moveTo = null;
+  clearRoute(p);
   p.facing = facingTo(p.x, p.z, node.x, node.z);
   // Channel: the yield is granted by tickGathering once interactMs has elapsed.
   p.gathering = beginGatherChannel(node, p, now);
@@ -6344,8 +6400,8 @@ function onMessage(ws: WebSocket, data: string) {
       }
       // Manual move cancels engage so chase doesn't overwrite the click/WASD
       if (p.targetId) p.targetId = null;
-      p.moveTo = clampPlayerMove(p.x, p.z, msg.x, msg.z);
-      warnSoftGate(p, p.moveTo.z);
+      assignRoute(p, msg.x, msg.z);
+      if (p.moveTo) warnSoftGate(p, p.movePath.at(-1)?.z ?? p.moveTo.z);
       break;
     case "gather":
       handleGather(p, msg.nodeId);
