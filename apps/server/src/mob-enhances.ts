@@ -3,7 +3,10 @@
  * Protect, Shell, Haste, Stoneskin, and Berserk are cast by field mobs.
  * False Guard stays on the list because Rogue already applies it.
  * Player enfeebles (Dia, Bio, Slow, Silence, and the rest) are not enhancements.
+ * Innate magResist is not an enhancement — Unravel does not strip it.
  */
+import { magicResistMul } from "@bellgrave/combat";
+import { asCastWindup, interruptCastOnDamage } from "./mob-cast-interrupt";
 
 export type MobEnhanceHost = {
   protectUntil?: number;
@@ -17,6 +20,11 @@ export type MobEnhanceHost = {
   atkBuffUntil?: number;
   atkBuffMul?: number;
   falseGuardUntil?: number;
+  /**
+   * Innate magic defense (MND). Magic hits consult it before Shell.
+   * Not an enhancement — stripMobEnhances leaves it alone.
+   */
+  magResist?: number;
 };
 
 function read(host: MobEnhanceHost, key: keyof MobEnhanceHost): number {
@@ -37,6 +45,7 @@ export function emptyMobEnhances(): Required<MobEnhanceHost> {
     atkBuffUntil: 0,
     atkBuffMul: 1,
     falseGuardUntil: 0,
+    magResist: 0,
   };
 }
 
@@ -82,6 +91,10 @@ export function takeMobHit(
 ): number {
   if (raw <= 0) return 0;
   let dmg = raw;
+  if (kind === "magic") {
+    const resist = read(host, "magResist");
+    if (resist > 0) dmg = Math.max(1, Math.floor(dmg * magicResistMul(resist)));
+  }
   if (kind === "physical" && read(host, "protectUntil") > now) {
     dmg = Math.max(1, Math.floor(dmg * (read(host, "protectPhysMul") || 1)));
   }
@@ -98,5 +111,8 @@ export function takeMobHit(
       host.stoneskinUntil = 0;
     }
   }
-  return Math.max(0, dmg);
+  const dealt = Math.max(0, dmg);
+  const wind = asCastWindup(host);
+  if (wind && dealt > 0) interruptCastOnDamage(wind, now, dealt);
+  return dealt;
 }

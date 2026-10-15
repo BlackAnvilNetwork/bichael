@@ -35,6 +35,46 @@ export function playerDefense(vit: number, gearDef = 0): number {
   return defenseFromVit(vit) + gear;
 }
 
+/**
+ * Magic defense from Mind. Incoming spells consult this the way physical
+ * hits consult defenseFromVit. 10 MND = 12 defense.
+ */
+export function magicDefenseFromMnd(mnd: number): number {
+  if (!Number.isFinite(mnd) || mnd <= 0) return 0;
+  return Math.floor(mnd * 1.2);
+}
+
+/**
+ * Magic defense a spell is rolled against: MND plus catalog `mdb`.
+ * Gear MDB is the magic counterpart of armor `def` (#81).
+ */
+export function playerMagicDefense(mnd: number, gearMdb = 0): number {
+  const gear = Number.isFinite(gearMdb) ? Math.max(0, Math.floor(gearMdb)) : 0;
+  return magicDefenseFromMnd(mnd) + gear;
+}
+
+/** Incoming magic never drops below this fraction from resistance alone. */
+export const MAGIC_RESIST_FLOOR = 0.55;
+/** Softness of the resist curve. Higher defense shaves def / (def + K). */
+export const MAGIC_RESIST_K = 180;
+
+/**
+ * Multiplier for incoming magic from magic defense.
+ * 0 defense = 1. Stacked MND/MDB approaches MAGIC_RESIST_FLOOR and never hits 0.
+ */
+export function magicResistMul(magDef: number): number {
+  const def = Number.isFinite(magDef) ? Math.max(0, magDef) : 0;
+  if (def <= 0) return 1;
+  const shaved = def / (def + MAGIC_RESIST_K);
+  return Math.max(MAGIC_RESIST_FLOOR, 1 - shaved);
+}
+
+/** Apply magic resistance. A positive hit stays at least 1. */
+export function mitigateMagicDamage(raw: number, magDef: number): number {
+  if (!(raw > 0)) return 0;
+  return Math.max(1, Math.floor(raw * magicResistMul(magDef)));
+}
+
 /** Gear Magic Attack Bonus: each point of `mab` is +1% spell damage. */
 export const MAB_PCT_PER_POINT = 0.01;
 /** Gear MAB caps at +100% spell damage. */

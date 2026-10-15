@@ -59,6 +59,12 @@ export function gearMab(p: Geared): number {
   return aggregateEquipmentStatsScaled(p.equip ?? {}, playerLevel).mab ?? 0;
 }
 
+/** Summed `mdb` from equipped catalog gear, scaled by player level. Incoming magic consults this (#81). */
+export function gearMdb(p: Geared): number {
+  const playerLevel = p.level ?? 100;
+  return Math.max(0, Math.floor(aggregateEquipmentStatsScaled(p.equip ?? {}, playerLevel).mdb ?? 0));
+}
+
 /** VIT defense plus gear `def`; the same number the character sheet shows. */
 export function playerDefenseWithGear(p: Geared, vit: number): number {
   return playerDefense(vit, gearDef(p));

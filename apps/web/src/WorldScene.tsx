@@ -955,6 +955,8 @@ function MobBillboard({ unitId, unit }: { unitId: string; unit: UnitSnapshot }) 
       castLocalStart.current > 0 &&
       performance.now() - castLocalStart.current < castLocalDur.current;
     const casting = anim === "cast" && (u.animUntil > Date.now() || castLocalOn);
+    // Cinder Burst reuses the same ground circle, drawn wider so the splash reads.
+    const aoeMul = (u.castAoe ?? 0) > 0 ? 1.75 : 1;
 
     if (castTelegraph.current) {
       // Soft under-glow ring — support layer centered on feet
@@ -965,7 +967,7 @@ function MobBillboard({ unitId, unit }: { unitId: string; unit: UnitSnapshot }) 
           (performance.now() - castLocalStart.current) / Math.max(1, castLocalDur.current),
         );
         const t = performance.now() / 1000;
-        const sc = 0.85 + life * 0.55 + Math.sin(t * 6) * 0.04;
+        const sc = (0.85 + life * 0.55 + Math.sin(t * 6) * 0.04) * aoeMul;
         castTelegraph.current.position.set(0, 0.04, 0);
         castTelegraph.current.rotation.x = -Math.PI / 2;
         castTelegraph.current.rotation.y = 0;
@@ -984,7 +986,7 @@ function MobBillboard({ unitId, unit }: { unitId: string; unit: UnitSnapshot }) 
           1,
           (performance.now() - castLocalStart.current) / Math.max(1, castLocalDur.current),
         );
-        const pulse = 1.05 + Math.sin(t * 7) * 0.06 + life * 0.28;
+        const pulse = (1.05 + Math.sin(t * 7) * 0.06 + life * 0.28) * aoeMul;
         castCircleGround.current.position.set(0, 0.055, 0);
         castCircleGround.current.rotation.x = -Math.PI / 2;
         castCircleGround.current.rotation.y = 0;
@@ -1004,7 +1006,7 @@ function MobBillboard({ unitId, unit }: { unitId: string; unit: UnitSnapshot }) 
           1,
           (performance.now() - castLocalStart.current) / Math.max(1, castLocalDur.current),
         );
-        const pulse = 0.78 + Math.sin(t * 9) * 0.05 + life * 0.18;
+        const pulse = (0.78 + Math.sin(t * 9) * 0.05 + life * 0.18) * aoeMul;
         castCircleInner.current.position.set(0, 0.07, 0);
         castCircleInner.current.rotation.x = -Math.PI / 2;
         castCircleInner.current.rotation.y = 0;
@@ -1027,7 +1029,7 @@ function MobBillboard({ unitId, unit }: { unitId: string; unit: UnitSnapshot }) 
         // Spin with the outer circle so ribbons feel grown from it
         castRibbonGroup.current.rotation.y = t * 1.35;
         const grow = 0.22 + life * 0.78;
-        const radius = 0.95 + life * 0.2 + Math.sin(t * 5) * 0.03;
+        const radius = (0.95 + life * 0.2 + Math.sin(t * 5) * 0.03) * aoeMul;
         // Shared ribbon map — one UV scroll for the whole curtain
         if (enemyCastRibbonTex) {
           enemyCastRibbonTex.offset.y = (t * 0.85) % 1;
@@ -1544,6 +1546,7 @@ function SheetBillboardInner({
     const fwdX = Math.sin(faceAng);
     const fwdZ = Math.cos(faceAng);
     const castFwd = u.kind === "mob" ? 0 : 0.15;
+    const aoeMul = u.kind === "mob" && (u.castAoe ?? 0) > 0 ? 1.75 : 1;
 
     if (castTelegraph.current) {
       castTelegraph.current.visible = casting;
@@ -1552,7 +1555,7 @@ function SheetBillboardInner({
         const dur = Math.max(800, Math.min(1200, remain + 50));
         const life = 1 - Math.min(1, remain / dur);
         const t = performance.now() / 1000;
-        const sc = u.kind === "mob" ? 0.85 + life * 0.55 + Math.sin(t * 6) * 0.04 : 0.7 + life * 1.4;
+        const sc = (u.kind === "mob" ? 0.85 + life * 0.55 + Math.sin(t * 6) * 0.04 : 0.7 + life * 1.4) * aoeMul;
         castTelegraph.current.position.set(fwdX * castFwd, 0.04, fwdZ * castFwd);
         castTelegraph.current.rotation.x = -Math.PI / 2;
         castTelegraph.current.rotation.y = 0;
@@ -1572,7 +1575,7 @@ function SheetBillboardInner({
         const t = performance.now() / 1000;
         const remain = Math.max(0, u.animUntil - Date.now());
         const life = 1 - Math.min(1, remain / 1000);
-        const pulse = 1.05 + Math.sin(t * 7) * 0.06 + life * 0.28;
+        const pulse = (1.05 + Math.sin(t * 7) * 0.06 + life * 0.28) * aoeMul;
         castCircleGround.current.position.set(0, 0.055, 0);
         castCircleGround.current.rotation.x = -Math.PI / 2;
         castCircleGround.current.rotation.y = 0;
@@ -1589,7 +1592,7 @@ function SheetBillboardInner({
         const t = performance.now() / 1000;
         const remain = Math.max(0, u.animUntil - Date.now());
         const life = 1 - Math.min(1, remain / 1000);
-        const pulse = 0.78 + Math.sin(t * 9) * 0.05 + life * 0.18;
+        const pulse = (0.78 + Math.sin(t * 9) * 0.05 + life * 0.18) * aoeMul;
         castCircleInner.current.position.set(0, 0.07, 0);
         castCircleInner.current.rotation.x = -Math.PI / 2;
         castCircleInner.current.rotation.y = 0;
@@ -1610,7 +1613,7 @@ function SheetBillboardInner({
         const life = 1 - Math.min(1, remain / 1000);
         castRibbonGroup.current.rotation.y = t * 1.35;
         const grow = 0.22 + life * 0.78;
-        const radius = 0.95 + life * 0.2 + Math.sin(t * 5) * 0.03;
+        const radius = (0.95 + life * 0.2 + Math.sin(t * 5) * 0.03) * aoeMul;
         if (enemyCastRibbonTex) {
           enemyCastRibbonTex.offset.y = (t * 0.85) % 1;
         }

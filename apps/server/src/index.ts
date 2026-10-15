@@ -22,6 +22,8 @@ import {
   deriveCharacterAttributes,
   defenseFromVit,
   playerDefense,
+  playerMagicDefense,
+  mitigateMagicDamage,
   evasionFromAgi,
   critFromAgi,
   freeSkillHubs,
@@ -168,14 +170,19 @@ import { GATHER_RANGE, beginGatherChannel, tickGatherChannel, type GatherChannel
 import {
   MOB_CAST_ANIM_MS,
   MOB_CAST_WINDUP_MS,
+  MOB_CINDER_RADIUS,
   mobAutoAttackRoll,
   mobAutoIsMagic,
   mobEngageRange,
+  mobMagicDefense,
   mobMpForJob,
+  pickMobFocus,
   resolveMobJob,
   tryMobJobAbility,
+  type MobFocusCandidate,
   type PendingMobCastResolve,
 } from "./mob-job-ai";
+import { interruptCastOnDamage } from "./mob-cast-interrupt";
 import type {
   AbilityId,
   Equipment,
@@ -544,13 +551,20 @@ type Mob = {
   /** Unix ms when pending cast resolves (0 = none). Tell leads the hit. */
   pendingCastHitAt: number;
   pendingCastTarget: string | null;
-  pendingCastKind: "" | "damage" | "slow" | "miss";
+  pendingCastKind: "" | "damage" | "slow" | "miss" | "aoe";
   pendingCastDmg: number;
   pendingCastLog: string;
   pendingCastSlowMs: number;
   pendingCastMovePct: number;
   /** Pending hit is magic (cast auto / bolt) — resolves through mag DT (#55). */
   pendingCastMagic: boolean;
+  /** AoE radius for a pending Cinder Burst. 0 = single target. */
+  pendingCastAoe: number;
+  /** Innate magic defense from the mob's MND. Player spells consult it. */
+  magResist: number;
+  /** Set when a hit cancels a wind-up. Delivered on the next mob tick. */
+  interruptShout: string;
+  interruptShoutTo: string | null;
   atkBuffUntil: number;
   atkBuffMul: number;
   protectUntil: number;
@@ -2023,7 +2037,11 @@ function spawnFieldMob(
     pendingCastSlowMs: 0,
     pendingCastMovePct: 0,
     pendingCastMagic: false,
+    pendingCastAoe: 0,
+    interruptShout: "",
+    interruptShoutTo: null,
     ...emptyMobEnhances(),
+    magResist: mobMagicDefense(job, level),
     roamTx: Number.NaN,
     roamTz: Number.NaN,
     // Stagger first wander so packs don't sync-step
@@ -2934,6 +2952,7 @@ function snapshotFor(p: Player): SnapshotMessage {
       anim: mob.alive ? mob.anim : "dead",
       animUntil: mob.alive ? mob.animUntil : 0,
       targetId: mob.alive ? mob.targetId : null,
+      castAoe: mob.alive && mob.pendingCastAoe > 0 ? mob.pendingCastAoe : undefined,
       buffs: mobBuffs(mob),
       archetype: mob.archetype,
       job: mob.job,
@@ -5031,6 +5050,7 @@ function clearMobPendingCast(mob: Mob) {
   mob.pendingCastSlowMs = 0;
   mob.pendingCastMovePct = 0;
   mob.pendingCastMagic = false;
+  mob.pendingCastAoe = 0;
 }
 
 function scheduleMobPendingCast(
@@ -5042,11 +5062,12 @@ function scheduleMobPendingCast(
   mob.pendingCastHitAt = now + MOB_CAST_WINDUP_MS;
   mob.pendingCastTarget = targetWallet;
   mob.pendingCastKind = resolve.type;
-  mob.pendingCastDmg = resolve.type === "damage" ? resolve.dmg : 0;
+  mob.pendingCastDmg = resolve.type === "damage" || resolve.type === "aoe" ? resolve.dmg : 0;
   mob.pendingCastLog = resolve.log;
   mob.pendingCastSlowMs = resolve.type === "slow" ? resolve.durationMs : 0;
   mob.pendingCastMovePct = resolve.type === "slow" ? resolve.movePct : 0;
-  mob.pendingCastMagic = resolve.type !== "slow" && resolve.magic === true;
+  mob.pendingCastAoe = resolve.type === "aoe" ? resolve.radius : 0;
+  mob.pendingCastMagic = resolve.type === "aoe" || (resolve.type !== "slow" && resolve.magic === true);
 }
 
 /**
@@ -5071,7 +5092,14 @@ function applyPendingMobDamage(
       dmg = Math.max(1, Math.floor(dmg * 1.15));
     }
   }
-  // Magic → Asylum / Fealty / Shell / Mana Wall + tree magDt; physical → phys DT.
+  // Magic resistance (MND + gear MDB) before Asylum / Fealty / Shell / Mana Wall / tree magDt.
+  let resisted = false;
+  if (magic) {
+    const before = dmg;
+    const magDef = playerMagicDefense(playerCombatStats(target).mnd, playerEquipmentStats(target).mdb ?? 0);
+    dmg = mitigateMagicDamage(dmg, magDef);
+    resisted = dmg < before;
+  }
   dmg = Math.max(0, Math.floor(dmg * pendingHitDtMul(target, now, magic, playerTreeBonuses(target))));
   dmg = absorbStoneskin(target, now, dmg);
   const beforeShield = target.healAbsorbHp;
@@ -5102,8 +5130,25 @@ function applyPendingMobDamage(
   if (soaked > 0) notes.push(`${soaked} absorbed`);
   if (wall.bled > 0) notes.push(`${wall.bled} MP`);
   if (now < mob.addleUntil) notes.push("Addled");
+  if (resisted) notes.push("Resisted");
   const base = hitLog.endsWith(".") ? hitLog.slice(0, -1) : hitLog;
   pushLog(target, notes.length > 0 ? `${base} (${notes.join(", ")}).` : `${base}.`);
+}
+
+/** Same fallen-window rules as a single magic hit. PvP skips the fallen window. */
+function downIfMobKilled(mob: Mob, target: Player, now: number, flee = true) {
+  if (target.hp > 0) return;
+  const inPvp = pvpReraiseBlocked(target);
+  if (inPvp) {
+    target.reraiseUntil = 0;
+    respawnAtHub(target);
+  } else {
+    downPlayer(target, now);
+  }
+  if (flee && (inPvp || target.hp <= 0) && mob.shiny && !mob.shinyClone) {
+    shinyFleeAfterPlayerKill(mob, now);
+    pushLog(target, mob.name + " flees into the Hollow...");
+  }
 }
 
 /**
@@ -5123,6 +5168,7 @@ function resolveMobPendingCast(mob: Mob, now: number) {
   const slowMs = mob.pendingCastSlowMs;
   const movePct = mob.pendingCastMovePct;
   const magic = mob.pendingCastMagic;
+  const aoe = mob.pendingCastAoe;
   clearMobPendingCast(mob);
 
   if (!targetWallet) return;
@@ -5140,6 +5186,36 @@ function resolveMobPendingCast(mob: Mob, now: number) {
     pushLog(target, log);
     return;
   }
+  if (kind === "aoe") {
+    const victims: Player[] = [];
+    for (const p of players.values()) {
+      if (p.hp <= 0) continue;
+      if (now < p.ghostStepUntil && p.wallet !== target.wallet) continue;
+      const onPrimary = p.wallet === target.wallet;
+      if (!onPrimary && dist(target.x, target.z, p.x, p.z) > aoe) continue;
+      victims.push(p);
+    }
+    victims.sort((a, b) => (a.wallet < b.wallet ? -1 : a.wallet > b.wallet ? 1 : 0));
+    let fled = false;
+    for (const victim of victims) {
+      const onPrimary = victim.wallet === target.wallet;
+      const splash = onPrimary ? dmg : Math.max(1, Math.floor(dmg * 0.7));
+      const hitLog = onPrimary ? log : `${mob.name}'s Cinder Burst splashes you for ${splash}.`;
+      applyPendingMobDamage(mob, victim, now, splash, hitLog, true);
+      if (onPrimary && victim.hp > 0) {
+        const spec = mobBoltAilment(mob.job, !!(mob.shiny && !mob.shinyClone));
+        if (spec && rollUnit("combat.mob.ailment") < spec.chance) {
+          applyAilment(victim, spec.kind, now, spec.durationMs, spec.poisonTick ?? 0);
+          pushLog(victim, `${mob.name}'s magic leaves you ${ailmentLabel(spec.kind)}.`);
+        }
+      }
+      if (victim.hp <= 0) {
+        downIfMobKilled(mob, victim, now, !fled);
+        fled = true;
+      }
+    }
+    return;
+  }
   if (kind === "damage") {
     applyPendingMobDamage(mob, target, now, dmg, log, magic);
     if (magic && target.hp > 0) {
@@ -5149,24 +5225,20 @@ function resolveMobPendingCast(mob: Mob, now: number) {
         pushLog(target, `${mob.name}'s magic leaves you ${ailmentLabel(spec.kind)}.`);
       }
     }
-    if (target.hp <= 0) {
-      const inPvp = pvpReraiseBlocked(target);
-      if (inPvp) {
-        target.reraiseUntil = 0;
-        respawnAtHub(target);
-      } else {
-        downPlayer(target, now);
-      }
-      if ((inPvp || target.hp <= 0) && mob.shiny && !mob.shinyClone) {
-        shinyFleeAfterPlayerKill(mob, now);
-        pushLog(target, mob.name + " flees into the Hollow...");
-      }
-    }
+    downIfMobKilled(mob, target, now);
   }
 }
 
 function mobSwing(mob: Mob, now: number) {
   if (!mob.alive) return;
+  if (mob.interruptShout) {
+    const msg = mob.interruptShout;
+    const who = mob.interruptShoutTo;
+    mob.interruptShout = "";
+    mob.interruptShoutTo = null;
+    const hear = who ? players.get(who) : undefined;
+    if (hear) pushLog(hear, msg);
+  }
   if (now < (mob.fleeUntil ?? 0)) return;
   // Non-aggro field critters never auto-fight. Shiny HQ/clones are also aggro:safe
   // (no auto-pull) but WILL fight after the player engages them (targetId set).
@@ -5191,22 +5263,27 @@ function mobSwing(mob: Mob, now: number) {
     clearMobPendingCast(mob);
   }
 
-  let nearest: Player | null = null;
-  let bestScore = -Infinity;
+  const focusCandidates: MobFocusCandidate[] = [];
   for (const p of players.values()) {
     // Ghost Step — invisible to chase / aggro
     if (now < p.ghostStepUntil) continue;
     if (p.hp <= 0) continue;
     const d = dist(mob.x, mob.z, p.x, p.z);
     if (d > 16) continue;
-    // Prefer current target + high enmity (Knight Provoke/Flash)
-    let score = -d + (p.enmity || 0) * 0.02;
-    if (mob.targetId === p.wallet) score += 8;
-    if (score > bestScore) {
-      bestScore = score;
-      nearest = p;
-    }
+    focusCandidates.push({
+      id: p.wallet,
+      x: p.x,
+      z: p.z,
+      hp: p.hp,
+      maxHp: p.maxHp,
+      enmity: p.enmity || 0,
+      job: p.job,
+    });
   }
+  // Melee keeps distance + hate + current-target stickiness.
+  // Casters also weigh wounds and backline jobs (#81).
+  const focus = pickMobFocus(mob, focusCandidates);
+  const nearest = focus ? players.get(focus.id) ?? null : null;
   if (!nearest) {
     mob.targetId = null;
     // Leave anim alone — idle roam drives walk/idle when not fighting.
@@ -5322,11 +5399,17 @@ function mobSwing(mob: Mob, now: number) {
     pushLog(victim, notes.length > 0 ? `${base} (${notes.join(", ")}).` : `${base}.`);
   };
 
+  let nearby = 0;
+  for (const p of players.values()) {
+    if (p.hp <= 0 || now < p.ghostStepUntil) continue;
+    if (dist(nearest.x, nearest.z, p.x, p.z) <= MOB_CINDER_RADIUS) nearby += 1;
+  }
   const ability = tryMobJobAbility(mob, {
     now,
     dist: d,
     player: nearest,
     vitals,
+    nearby,
     pushLog: (msg) => pushLog(nearest, msg),
     applyPlayerDamage: (raw, note) => applyMobDamage(raw, note),
   });
@@ -5444,6 +5527,7 @@ function tickSimBody() {
     if (now >= mob.slowUntil) mob.swingPenalty = 0;
     if (now >= mob.gravityUntil) mob.gravityPct = 0;
     if (mob.alive && now < mob.bioUntil && mob.bioTick > 0 && tick % TICK_HZ === 0) {
+      interruptCastOnDamage(mob, now, mob.bioTick);
       mob.hp = Math.max(0, mob.hp - mob.bioTick);
       if (mob.hp <= 0) {
         // #69: credit the Bio caster (or another wallet that hit it), not whoever happens to target it.

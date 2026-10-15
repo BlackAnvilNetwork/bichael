@@ -12,6 +12,7 @@ import {
   hitChance,
   jobStatsAtLevel,
   jobVitalsAtLevel,
+  magicDefenseFromMnd,
   meleeFStr,
   physicalDamage,
   swingDelayMs,
@@ -125,6 +126,16 @@ export function mobUsesMagicAuto(job: JobId): boolean {
   return job === "sorcerer" || job === "cleric" || job === "time_mage";
 }
 
+/** Jobs that pick a spell target instead of sticking to whoever is closest. */
+export function mobCastsSpells(job: JobId): boolean {
+  return mobUsesMagicAuto(job) || job === "battle_mage";
+}
+
+/** Innate magic defense a mob consults when a player spell lands. */
+export function mobMagicDefense(job: JobId, level: number): number {
+  return magicDefenseFromMnd(jobStatsAtLevel(job, level).mnd);
+}
+
 export function mobWeaponBonus(job: JobId): number {
   return JOB_WEAPON[job] === "staff" ? 5 : 7;
 }
@@ -132,6 +143,7 @@ export function mobWeaponBonus(job: JobId): number {
 export type MobAbilityId =
   | "mob_power_strike"
   | "mob_ember_bolt"
+  | "mob_cinder_burst"
   | "mob_berserk"
   | "mob_slow"
   | "mob_mend"
@@ -142,6 +154,9 @@ export type MobAbilityId =
   | "mob_shell"
   | "mob_haste"
   | "mob_stoneskin";
+
+/** Cinder Burst splash radius (world units). Modest — inside cast range. */
+export const MOB_CINDER_RADIUS = 5.2;
 
 type AbilityPick = {
   id: MobAbilityId;
@@ -168,6 +183,7 @@ const JOB_ABILITIES: Record<JobId, AbilityPick[]> = {
   ],
   sorcerer: [
     { id: "mob_shell", label: "Shell", mp: 12, recastMs: 18_000, minRange: 0, maxRange: ABILITY_RANGE },
+    { id: "mob_cinder_burst", label: "Cinder Burst", mp: 14, recastMs: 16_000, minRange: 0, maxRange: ABILITY_RANGE },
     { id: "mob_ember_bolt", label: "Ember Lance", mp: 8, recastMs: 5_500, minRange: 0, maxRange: ABILITY_RANGE },
   ],
   cleric: [
@@ -225,6 +241,7 @@ export const MOB_CAST_ANIM_MS = 1000;
 /** `magic` routes the resolved hit through the target's mag DT, not phys DT (#55). */
 export type PendingMobCastResolve =
   | { type: "damage"; dmg: number; log: string; magic?: boolean }
+  | { type: "aoe"; dmg: number; radius: number; log: string; magic: true }
   | { type: "slow"; durationMs: number; movePct: number; log: string }
   | { type: "miss"; log: string; magic?: boolean };
 
@@ -239,6 +256,8 @@ export type MobAbilityHooks = {
   vitals: MobJobVitals;
   pushLog: (msg: string) => void;
   applyPlayerDamage: (dmg: number, note: string) => void;
+  /** Living players standing in Cinder Burst range of the focus. 1 = solo. */
+  nearby?: number;
 };
 
 /**
@@ -253,9 +272,11 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
 
   const picks = JOB_ABILITIES[mob.job] ?? [];
   const silenced = now < mob.silenceUntil;
+  const packed = (hooks.nearby ?? 1) >= 2;
   // Spells are muted; melee JAs / Berserk still fire.
   const CAST_IDS: ReadonlySet<MobAbilityId> = new Set([
     "mob_ember_bolt",
+    "mob_cinder_burst",
     "mob_slow",
     "mob_mend",
     "mob_protect",
@@ -269,7 +290,8 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
       dist <= a.maxRange &&
       mob.mp >= a.mp &&
       !selfBuffUp(mob, a.id, now) &&
-      !(silenced && CAST_IDS.has(a.id)),
+      !(silenced && CAST_IDS.has(a.id)) &&
+      !(a.id === "mob_cinder_burst" && !packed),
   );
   if (ready.length === 0) return { ok: false };
   // Prefer self-heal when hurt
@@ -280,6 +302,10 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
   } else if (mob.hp >= mob.maxHp * 0.7) {
     const ward = ready.find((a) => SELF_BUFFS.has(a.id));
     if (ward) choice = ward;
+  }
+  if (packed && !SELF_BUFFS.has(choice.id) && choice.id !== "mob_mend") {
+    const burst = ready.find((a) => a.id === "mob_cinder_burst");
+    if (burst) choice = burst;
   }
 
   mob.mp = Math.max(0, mob.mp - choice.mp);
@@ -415,10 +441,9 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
       return { ok: true };
     }
     case "mob_ember_bolt": {
-      // Magic bolt — INT/MND based, ignores some physical def
+      // Raw spell power. MND/MDB resistance is applied when the hit lands.
       const power = Math.max(1, Math.floor((stats.int * 1.4 + stats.mnd * 0.4 + mob.level * 1.5) * atkMul * downMul));
-      const resist = Math.floor(vitals.vit * 0.35);
-      let dmg = Math.max(1, power - resist + 6);
+      const dmg = Math.max(1, power + 6);
       mob.anim = "cast";
       mob.animUntil = now + MOB_CAST_ANIM_MS;
       pace(mob, now, 2400);
@@ -428,6 +453,24 @@ export function tryMobJobAbility(mob: MobJobCombatant, hooks: MobAbilityHooks): 
           type: "damage",
           dmg,
           log: `${mob.name} casts ${choice.label} for ${dmg}.`,
+          magic: true,
+        },
+      };
+    }
+    case "mob_cinder_burst": {
+      // Modest ember AoE — less than the lance, splashes anyone on the focus.
+      const power = Math.max(1, Math.floor((stats.int * 1.05 + stats.mnd * 0.25 + mob.level) * atkMul * downMul));
+      const dmg = Math.max(1, power + 4);
+      mob.anim = "cast";
+      mob.animUntil = now + MOB_CAST_ANIM_MS;
+      pace(mob, now, 2600);
+      return {
+        ok: true,
+        pending: {
+          type: "aoe",
+          dmg,
+          radius: MOB_CINDER_RADIUS,
+          log: `${mob.name} casts Cinder Burst for ${dmg}.`,
           magic: true,
         },
       };
@@ -461,10 +504,9 @@ export function mobAutoAttackRoll(
     return { hit: false, dmg: 0, anim: magic ? "cast" : "melee" };
   }
   if (magic) {
+    // Raw magic auto. Resistance is applied on resolve, not baked in here.
     const power = Math.max(1, Math.floor((stats.int * 1.15 + stats.mnd * 0.35 + 4) * atkMul));
-    const resist = Math.floor(target.vit * 0.3);
-    let dmg = Math.max(1, power - resist);
-    return { hit: true, dmg, anim: "cast" };
+    return { hit: true, dmg: Math.max(1, power), anim: "cast" };
   }
   const att = Math.max(
     1,
@@ -473,4 +515,78 @@ export function mobAutoAttackRoll(
   const def = targetPhysDef(target);
   let dmg = physicalDamage(att, def, meleeFStr(mob.job, stats, target.vit, "none"), false);
   return { hit: true, dmg, anim: "melee" };
+}
+
+/** Melee stickiness. Casters use a smaller one so they can look past the tank. */
+export const MELEE_FOCUS_STICK = 8;
+export const CASTER_FOCUS_STICK = 3;
+export const MELEE_HATE_WEIGHT = 0.02;
+export const CASTER_HATE_WEIGHT = 0.012;
+export const CASTER_WOUND_WEIGHT = 8;
+export const CASTER_BACKLINE_BONUS = 4.5;
+export const CASTER_TANK_PENALTY = 3;
+
+const CASTER_BACKLINE: ReadonlySet<string> = new Set(["cleric", "sorcerer", "time_mage"]);
+
+export type MobFocusCandidate = {
+  id: string;
+  x: number;
+  z: number;
+  hp: number;
+  maxHp: number;
+  enmity: number;
+  job: string;
+};
+
+export type MobFocusMob = {
+  x: number;
+  z: number;
+  job: JobId;
+  targetId: string | null;
+};
+
+function woundFraction(c: MobFocusCandidate): number {
+  if (!(c.maxHp > 0)) return 0;
+  return Math.max(0, Math.min(1, 1 - c.hp / c.maxHp));
+}
+
+/**
+ * Who this mob is fighting.
+ * Melee: distance, hate, and a hard stick to the current target.
+ * Casters: the same hate still holds a provoked tank, but a wounded
+ * backliner outscores a healthy knight when hate is only modest.
+ * Ties break on id so the pick never needs a roll.
+ */
+export function mobFocusScore(mob: MobFocusMob, c: MobFocusCandidate): number {
+  const d = Math.hypot(mob.x - c.x, mob.z - c.z);
+  const current = mob.targetId === c.id;
+  if (!mobCastsSpells(mob.job)) {
+    return -d + (c.enmity || 0) * MELEE_HATE_WEIGHT + (current ? MELEE_FOCUS_STICK : 0);
+  }
+  let score = -d + (c.enmity || 0) * CASTER_HATE_WEIGHT + (current ? CASTER_FOCUS_STICK : 0);
+  const wound = woundFraction(c);
+  score += wound * CASTER_WOUND_WEIGHT;
+  if (mob.job === "sorcerer" || mob.job === "time_mage") {
+    if (CASTER_BACKLINE.has(c.job)) score += CASTER_BACKLINE_BONUS;
+    if (c.job === "knight") score -= CASTER_TANK_PENALTY;
+  } else if (mob.job === "cleric") {
+    score += wound * 3;
+  }
+  return score;
+}
+
+export function pickMobFocus<T extends MobFocusCandidate>(
+  mob: MobFocusMob,
+  candidates: readonly T[],
+): T | null {
+  let best: T | null = null;
+  let bestScore = -Infinity;
+  for (const c of candidates) {
+    const score = mobFocusScore(mob, c);
+    if (!best || score > bestScore + 1e-9 || (Math.abs(score - bestScore) <= 1e-9 && c.id < best.id)) {
+      best = c;
+      bestScore = score;
+    }
+  }
+  return best;
 }

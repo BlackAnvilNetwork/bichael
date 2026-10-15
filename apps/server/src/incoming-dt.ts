@@ -5,7 +5,10 @@
  * Buff fields apply to whoever carries them (party Protect / Shell etc.), so
  * these consolidate every job's wards in one place instead of chaining the
  * per-job helpers, which would double-count shared buffs like Shell.
+ *
+ * Magic resistance (MND + gear MDB) is applied before these wards (#81).
  */
+import { mitigateMagicDamage } from "@bellgrave/combat";
 
 export type PhysDtUnit = {
   bulwarkUntil: number;
@@ -77,4 +80,15 @@ export function pendingHitDtMul(
   tree: { physDt?: number; magDt?: number },
 ): number {
   return magic ? playerMagDtMul(p, now, tree.magDt ?? 0) : physDtMul(p, now, tree.physDt ?? 0);
+}
+
+/**
+ * Incoming magic: resistance first, then magic DT.
+ * A zero raw stays zero. Resistance never consults physical DT.
+ */
+export function incomingMagicDamage(raw: number, magDef: number, dtMul: number): number {
+  if (!(raw > 0)) return 0;
+  const resisted = mitigateMagicDamage(raw, magDef);
+  const dt = Number.isFinite(dtMul) ? Math.max(0, dtMul) : 1;
+  return Math.max(0, Math.floor(resisted * dt));
 }

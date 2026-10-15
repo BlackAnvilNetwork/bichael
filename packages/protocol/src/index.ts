@@ -317,6 +317,8 @@ export type UnitSnapshot = {
   anim: "idle" | "walk" | "melee" | "cast" | "rest" | "dead";
   /** Unix ms when current anim ends — bumps each swing so clients can replay melee/cast. */
   animUntil: number;
+  /** Enemy spell splash radius. Present only while an AoE cast is winding up. */
+  castAoe?: number;
   targetId: string | null;
   buffs: BuffState;
   /** Present on players and field mobs — drives swing SFX / job AI / visuals. */
