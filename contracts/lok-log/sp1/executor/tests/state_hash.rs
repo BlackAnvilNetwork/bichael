@@ -78,4 +78,18 @@ fn this_genesis_does_not_depend_on_risc_zero() {
     assert!(!host.to_ascii_lowercase().contains("poseidon"));
     assert!(include_str!("../../Cargo.toml").contains("patch-2.0.2-sp1-6.0.0"));
     assert!(include_str!("../../Cargo.toml").contains("tiny-keccak"));
+    assert!(host.contains("report_uses_keccak_precompile"));
+}
+
+#[test]
+fn execution_report_counts_keccak_permute() {
+    let report = "\
+gas: 22432
+syscall counts (2 total syscall instructions):
+    2 keccak_permute
+";
+    assert!(lok_sp1_executor::report_uses_keccak_precompile(report));
+    assert!(lok_sp1_executor::report_uses_keccak_precompile("keccak_permute: 2"));
+    assert!(!lok_sp1_executor::report_uses_keccak_precompile("2 poseidon_permute"));
+    assert!(!lok_sp1_executor::report_uses_keccak_precompile("0 keccak_permute"));
 }

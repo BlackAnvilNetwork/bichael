@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 hex = "0.4"
+lok-sp1-executor = { path = "../executor" }
 serde_json = "1"
 sp1-sdk = "=6.9.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

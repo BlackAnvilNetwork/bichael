@@ -5,8 +5,6 @@
 //! calls `execute` only. It does not set up a verifying key, it does not prove,
 //! and it does not decide whether a batch is valid.
 
-use std::io::BufRead;
-
 use sp1_sdk::{include_elf, Elf, Prover, ProverClient, SP1Stdin};
 
 const ELF: Elf = include_elf!("lok-sp1-program");
@@ -78,7 +76,8 @@ async fn handle_line(client: &(impl Prover + Sync), line: &str) -> serde_json::V
             });
         }
     };
-    eprintln!("{report}");
+    let report_text = report.to_string();
+    eprintln!("{report_text}");
     let bytes = public_values.as_slice();
     if bytes.is_empty() || bytes.len() % 32 != 0 {
         return serde_json::json!({
@@ -88,12 +87,11 @@ async fn handle_line(client: &(impl Prover + Sync), line: &str) -> serde_json::V
         });
     }
     let state_roots: Vec<String> = bytes.chunks(32).map(|chunk| format!("0x{}", hex::encode(chunk))).collect();
-    let keccak_syscalls = keccak_syscalls(&report.to_string());
     serde_json::json!({
         "ok": true,
         "prover": "sp1",
         "stateRoots": state_roots,
-        "keccakPrecompile": !keccak_syscalls.is_empty(),
+        "keccakPrecompile": lok_sp1_executor::report_uses_keccak_precompile(&report_text),
     })
 }
 
@@ -106,25 +104,6 @@ fn prover_name(prover: &str) -> String {
     } else {
         prover.to_string()
     }
-}
-
-fn keccak_syscalls(report: &str) -> Vec<String> {
-    report
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            let (name, count) = line.split_once(':')?;
-            let name = name.trim();
-            if !name.to_ascii_uppercase().contains("KECCAK") {
-                return None;
-            }
-            let count: u64 = count.trim().parse().ok()?;
-            if count == 0 {
-                return None;
-            }
-            Some(name.to_string())
-        })
-        .collect()
 }
 
 fn emit(value: &serde_json::Value) {

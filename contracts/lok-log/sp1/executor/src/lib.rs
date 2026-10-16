@@ -35,6 +35,36 @@ pub fn state_roots(text: &str) -> Result<Vec<[u8; 32]>, String> {
     }
 }
 
+/// True when an SP1 execution report counted a keccak syscall.
+///
+/// The report prints each syscall as `2 keccak_permute`, and some builds use
+/// `keccak_permute: 2`. Either form means the guest used the keccak precompile.
+pub fn report_uses_keccak_precompile(report: &str) -> bool {
+    report.lines().any(|line| {
+        let line = line.trim();
+        if let Some((name, count)) = line.split_once(':') {
+            return keccak_count(name, count);
+        }
+        let mut parts = line.split_whitespace();
+        let Some(count) = parts.next() else {
+            return false;
+        };
+        let Some(name) = parts.next() else {
+            return false;
+        };
+        parts.next().is_none() && keccak_count(name, count)
+    })
+}
+
+fn keccak_count(name: &str, count: &str) -> bool {
+    name.to_ascii_uppercase().contains("KECCAK")
+        && count
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .is_some_and(|count| count > 0)
+}
+
 fn stop_message(stop: ReplayStop) -> String {
     match stop {
         ReplayStop::BadHash { index, .. } => format!("bad hash at {index}"),
