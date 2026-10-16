@@ -3,9 +3,10 @@
  *
  * Each sealed tick notes its signed batch here. A second batch from the same
  * signer, for the same epoch and height, with a different next root, is
- * submitted to the equivocation court. The court reads the bond that signer
- * posted. This module does not invent an amount, does not broadcast, and
- * does not wait. Gnosis mainnet and Chiado are not called.
+ * submitted to the equivocation court. The slash is that signer's posted
+ * bond in slashable-bonds.json. No posted bond writes nothing. This module
+ * does not invent an amount, does not broadcast, and does not wait.
+ * Gnosis mainnet and Chiado are not called.
  */
 import { timingSafeEqual } from "node:crypto";
 import type { BatchEnvelope } from "./batch-envelope";

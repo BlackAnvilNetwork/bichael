@@ -3,9 +3,9 @@
  *
  * Two validly signed batches from the same signer for the same epoch and
  * height with different next roots are proof of equivocation. Anyone may
- * submit that pair. The slash is the bond already posted for that signer.
- * When no bond is posted, the recorded slash is zero and the signer is
- * still slashed.
+ * submit that pair. The slash is the whole xDAI bond already posted for that
+ * signer in slashable-bonds.json. No posted bond, or a posted zero, is not
+ * a slash and writes nothing.
  *
  * An admin vote, a multisig approval, or a social vote cannot slash without
  * that pair and cannot refuse a pair that reproduces. This module does not
@@ -14,7 +14,7 @@
  */
 import { timingSafeEqual } from "node:crypto";
 import { HASH_BYTES, leaderSignatureValid, type BatchEnvelope } from "./batch-envelope";
-import { postedSlashableBond } from "./root-anchor";
+import { slashPostedBond } from "./root-anchor";
 
 /** A vote a caller may attach. The court does not read it. */
 export type CourtBallot = {
@@ -25,6 +25,7 @@ export type CourtBallot = {
 
 export type CourtResult = { slashed: true; amountWei: bigint } | { slashed: false };
 
+/** Amount taken from slashable-bonds.json in this process. The file is the slash. */
 const slashed = new Map<string, bigint>();
 
 export function resetEquivocationCourtForTests(): void {
@@ -75,7 +76,7 @@ function evidenceReproduces(left: BatchEnvelope, right: BatchEnvelope, signer: U
 /**
  * Anyone may submit the pair. `ballot` is ignored: a vote cannot slash, and
  * a vote cannot keep a reproducing pair from slashing.
- * The recorded amount is the bond posted for this signer, or zero.
+ * The amount is the bond posted for this signer. Zero writes nothing.
  */
 export function submitEquivocationPair(
   left: BatchEnvelope,
@@ -86,9 +87,8 @@ export function submitEquivocationPair(
   void ballot;
   if (!evidenceReproduces(left, right, signer)) return { slashed: false };
   const id = equivocationSignerId(signer);
-  const existing = slashed.get(id);
-  if (existing != null) return { slashed: true, amountWei: existing };
-  const amountWei = postedSlashableBond(id);
+  const amountWei = slashPostedBond(id);
+  if (amountWei === 0n) return { slashed: false };
   slashed.set(id, amountWei);
   return { slashed: true, amountWei };
 }

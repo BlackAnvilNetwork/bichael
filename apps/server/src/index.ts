@@ -5549,9 +5549,9 @@ function tickSim() {
           chainLink,
         });
         const signedBatch = takeSealedSignedBatch();
-        if (signedBatch) observeSignedBatch(signedBatch.batch, signedBatch.signer);
         if (!sealed.ok) console.error("[seal] tick batch rejected: " + sealed.error);
         else {
+          if (signedBatch) observeSignedBatch(signedBatch.batch, signedBatch.signer);
           // Do not wait for a round. A missing orderer, or fewer heard peers than
           // the majority, leaves the batch provisional and the tick returns.
           submitOnSimTick(

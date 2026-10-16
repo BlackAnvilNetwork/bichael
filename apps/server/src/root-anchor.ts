@@ -200,6 +200,25 @@ export function postedSlashableBond(id: string): bigint {
   return found?.amountWei ?? 0n;
 }
 
+/**
+ * Take the whole bond posted for this signer in `slashable-bonds.json`.
+ * The amount is that posting. Zero when the file is missing, the id is absent,
+ * or the posting is zero, and those cases write nothing.
+ * This does not invent an amount and does not start admission.
+ */
+export function slashPostedBond(id: string): bigint {
+  const bondId = id.trim();
+  if (!bondId) return 0n;
+  const path = postedBondsPath();
+  if (!path || !existsSync(path)) return 0n;
+  loadPostedBondsFromDisk();
+  applyLiveBonds();
+  const amountWei = postedSlashableBond(bondId);
+  if (amountWei === 0n) return 0n;
+  notePostedSlashableBond(bondId, 0n);
+  return amountWei;
+}
+
 /** 10% of the bonds posted now. Floors. Zero bonds are a zero cap. */
 export function epochXdaiCapWei(bondsWei: bigint = postedBondsWei): bigint {
   if (bondsWei <= 0n) return 0n;

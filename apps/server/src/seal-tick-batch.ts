@@ -30,7 +30,6 @@ import {
   type AcceptBatchResult,
   type BatchEnvelope,
 } from "./batch-envelope";
-import { observeSignedBatch } from "./equivocation-watch";
 import { fallbackEpochSeed } from "./fallback-epoch-seed";
 import { startEpochRoll } from "./game-roll";
 
@@ -173,7 +172,6 @@ export function sealTickBatch(args: SealTickBatchArgs): AcceptBatchResult {
   };
   envelope.signature = sign(envelope);
   sealedSigned = { batch: envelope, signer: leaderPublicKey };
-  observeSignedBatch(envelope, leaderPublicKey);
   const result = checkSealedTick(envelope, args.rollBytes, args.rulesetHash, args.chainLink);
   if (result.ok) {
     storedParent = new Uint8Array(args.chainLink);
