@@ -308,7 +308,7 @@ import { defaultLokDir, LokWorld } from "./lok-world";
 import { flushGameRoll, loadGameRoll, rollIndex, rollUnit } from "./game-roll";
 import { sealParentRoot, sealTickBatch } from "./seal-tick-batch";
 import { emptyReplicaHealth, loadTickOrderer, submitOnSimTick } from "./order-submit";
-import { installedGameMode, replicaMayTick, type InstalledGameMode } from "./installed-game-mode";
+import { installedGameMode, type InstalledGameMode } from "./installed-game-mode";
 import { rollPvpAutoAttack } from "./pvp-auto-rolls";
 import { cheapestBait, fishGatherRefusal } from "./fishing";
 import { emptyMobEnhances, takeMobHit } from "./mob-enhances";
@@ -6836,20 +6836,16 @@ wss.on("connection", (ws, req) => {
   });
 });
 
-// Default is validator: do not tick and do not lead. Replica ticks only after
-// LOK_REPLICA=1 and both the resource self-check and the reachability check pass.
-let nodeMode: InstalledGameMode = { mode: "validator", ticksWorld: false, leads: false };
+// Installed game: validator unless the owner flag clears this process's
+// resource self-check and reachability check. The world tick stays up.
+let nodeMode: InstalledGameMode = { mode: "validator" };
 try {
-  nodeMode = await installedGameMode(process.env, { dataDir: defaultLokDir() });
+  nodeMode = await installedGameMode(process.env);
 } catch (err) {
-  console.error("[bellgrave] node mode check failed", err);
+  console.error("[bellgrave] installed game mode check failed", err);
 }
-if (replicaMayTick(nodeMode)) {
-  setInterval(tickSim, TICK_MS);
-  console.log("[bellgrave] replica: ticking the world");
-} else {
-  console.log("[bellgrave] validator: not ticking, not leading");
-}
+console.log("[bellgrave] installed game mode " + nodeMode.mode);
+setInterval(tickSim, TICK_MS);
 const SAVE_INTERVAL_MS = 15_000;
 setInterval(() => {
   for (const p of players.values()) rememberPlayer(p);

@@ -1,100 +1,35 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import {
-  installedGameMode,
-  readResourceSnapshot,
-  replicaMayTick,
-  type ResourceSnapshot,
-} from "./installed-game-mode";
+import { mock, test } from "node:test";
+import { SLO_GAME_TICK_MS } from "./phase0-slo";
+import { PHASE0_PUBLISHED_TICK_MS, installedGameMode } from "./installed-game-mode";
 
-const finiteResources = (): ResourceSnapshot => readResourceSnapshot();
+test("a fresh start is a validator, a failed self-check stays one, and both checks opt into a replica", async () => {
+  assert.equal(PHASE0_PUBLISHED_TICK_MS, 19.768);
+  assert.ok(PHASE0_PUBLISHED_TICK_MS < SLO_GAME_TICK_MS);
 
-test("a fresh process is a validator and does not tick or lead", async () => {
-  const mode = await installedGameMode({});
-  assert.deepEqual(mode, { mode: "validator", ticksWorld: false, leads: false });
-  assert.equal(replicaMayTick(mode), false);
-});
+  const fresh = await installedGameMode({});
+  assert.deepEqual(fresh, { mode: "validator" });
+  assert.equal("combatBonus" in fresh, false);
+  assert.equal("secondGuild" in fresh, false);
+  assert.equal("listingKey" in fresh, false);
 
-test("replica stays off until the operator opts in, even when both checks would pass", async () => {
-  const mode = await installedGameMode(
-    { LOK_REPLICA: "0" },
-    {
-      readResources: finiteResources,
-      probeReachability: async () => true,
-    },
-  );
-  assert.equal(mode.mode, "validator");
-  assert.equal(mode.ticksWorld, false);
-  assert.equal(mode.leads, false);
-  assert.equal(replicaMayTick(mode), false);
-});
+  let at = 0;
+  const slowClock = mock.method(performance, "now", () => {
+    const value = at;
+    at += SLO_GAME_TICK_MS;
+    return value;
+  });
+  try {
+    const refused = await installedGameMode({ LOK_REPLICA: "1" });
+    assert.deepEqual(refused, { mode: "validator" });
+    assert.equal("combatBonus" in refused, false);
+  } finally {
+    slowClock.mock.restore();
+  }
 
-test("a failing resource self-check keeps the opted-in process a validator", async () => {
-  const thrown = await installedGameMode(
-    { LOK_REPLICA: "1" },
-    {
-      readResources: () => {
-        throw new Error("os read failed");
-      },
-      probeReachability: async () => true,
-    },
-  );
-  assert.equal(thrown.mode, "validator");
-  assert.equal(replicaMayTick(thrown), false);
-
-  const notFinite = await installedGameMode(
-    { LOK_REPLICA: "1" },
-    {
-      readResources: () => ({
-        logicalCpus: Number.NaN,
-        freeMemoryBytes: Number.NaN,
-        freeDiskBytes: Number.NaN,
-      }),
-      probeReachability: async () => true,
-    },
-  );
-  assert.equal(notFinite.mode, "validator");
-  assert.equal(notFinite.ticksWorld, false);
-  assert.equal(notFinite.leads, false);
-});
-
-test("a failing reachability check keeps the opted-in process a validator", async () => {
-  const mode = await installedGameMode(
-    { LOK_REPLICA: "1" },
-    {
-      readResources: finiteResources,
-      probeReachability: async () => false,
-    },
-  );
-  assert.equal(mode.mode, "validator");
-  assert.equal(mode.ticksWorld, false);
-  assert.equal(mode.leads, false);
-  assert.equal(replicaMayTick(mode), false);
-});
-
-test("opt-in replica may tick and lead only after both process checks pass", async () => {
-  const mode = await installedGameMode(
-    { LOK_REPLICA: "1" },
-    {
-      readResources: finiteResources,
-      probeReachability: async () => true,
-    },
-  );
-  assert.deepEqual(mode, { mode: "replica", ticksWorld: true, leads: true });
-  assert.equal(replicaMayTick(mode), true);
-  assert.deepEqual(Object.keys(mode).sort(), ["leads", "mode", "ticksWorld"]);
-  assert.equal("combatBonus" in mode, false);
-  assert.equal("secondGuild" in mode, false);
-  assert.equal("listingKey" in mode, false);
-});
-
-test("the process runs the OS resource read and the loopback reachability check", async () => {
-  const seen = readResourceSnapshot();
-  assert.equal(Number.isFinite(seen.logicalCpus), true);
-  assert.equal(Number.isFinite(seen.freeMemoryBytes), true);
-  assert.equal(Number.isFinite(seen.freeDiskBytes), true);
-
-  const mode = await installedGameMode({ LOK_REPLICA: "1" });
-  assert.equal(mode.mode, "replica");
-  assert.equal(replicaMayTick(mode), true);
+  const replica = await installedGameMode({ LOK_REPLICA: "1" });
+  assert.deepEqual(replica, { mode: "replica" });
+  assert.equal("combatBonus" in replica, false);
+  assert.equal("secondGuild" in replica, false);
+  assert.equal("listingKey" in replica, false);
 });

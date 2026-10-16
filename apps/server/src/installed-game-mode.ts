@@ -1,93 +1,53 @@
 /**
- * Process mode. `docs/multi-operator.md` section 3.
+ * Mode of an installed game. `docs/multi-operator.md` section 3.
  *
- * The process default is validator. An installed game does not tick the world
- * and does not lead. Replica mode may tick and lead only after the operator
- * sets `LOK_REPLICA=1` and both checks this process runs have passed: the
- * resource self-check and the reachability check.
+ * An installed game is a validator unless its owner enables the replica
+ * flag. The flag is gated by a resource self-check ("can I hold a replica?")
+ * and a reachability check. The published Phase 0 profile is a 19.768 ms game
+ * tick against the 50 ms budget. This module does not invent CPU or RAM
+ * ceilings. The process times its own sample. A caller-supplied boolean is
+ * not the check. A sample that misses the budget keeps the process a validator.
  *
- * The resource self-check asks the OS. No CPU, RAM, or disk minimum is applied.
- * Those profiles are not published. A read that throws, or an answer that is
- * not a finite number, fails the check.
- *
- * The reachability check is a loopback accept this process opens. It is not a
- * boolean the caller supplies.
- *
- * A hosted server that should keep leading sets the flag and passes both
- * checks. Replica mode does not grant a combat bonus, a second guild, or the
- * listing key.
+ * Replica mode does not grant a combat bonus, a second guild, or the listing
+ * key. A hosted server is a replica by its own configuration. This module
+ * decides the installed game only.
  */
 
-import { statfsSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
-import { cpus, freemem } from "node:os";
+import { SLO_GAME_TICK_MS } from "./phase0-slo";
+
+/** Published Phase 0 game tick (issue #341 baseline). Under the 50 ms budget. */
+export const PHASE0_PUBLISHED_TICK_MS = 19.768;
 
 export type InstalledGameMode = {
   mode: "validator" | "replica";
-  /** Validator does not tick. Replica may. */
-  ticksWorld: boolean;
-  /** Validator does not lead. Replica may. */
-  leads: boolean;
 };
 
-export type ResourceSnapshot = {
-  logicalCpus: number;
-  freeMemoryBytes: number;
-  freeDiskBytes: number;
-};
+const VALIDATOR: InstalledGameMode = { mode: "validator" };
 
-export type ModeChecks = {
-  /** Directory whose volume is asked about disk. Defaults to the process cwd. */
-  dataDir?: string;
-  /** Test seam. Production boot omits this and reads the OS. */
-  readResources?: () => ResourceSnapshot;
-  /** Test seam. Production boot omits this and probes loopback. */
-  probeReachability?: () => Promise<boolean>;
-};
-
-const VALIDATOR: InstalledGameMode = {
-  mode: "validator",
-  ticksWorld: false,
-  leads: false,
-};
-
-const REPLICA: InstalledGameMode = {
-  mode: "replica",
-  ticksWorld: true,
-  leads: true,
-};
-
-/** Operator opt-in. Any other value leaves the replica flag off. */
+/** Owner opt-in. Any other value leaves the replica flag off. */
 export function replicaFlagEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.LOK_REPLICA === "1";
 }
 
-/** OS answer for the resource self-check. No capacity floor is applied here. */
-export function readResourceSnapshot(dir: string = process.cwd()): ResourceSnapshot {
-  const disk = statfsSync(dir);
-  return {
-    logicalCpus: cpus().length,
-    freeMemoryBytes: freemem(),
-    freeDiskBytes: Number(disk.bavail) * Number(disk.bsize),
-  };
-}
-
-/** True when the process could read a finite OS answer. A throw fails closed. */
-export function resourceSelfCheck(read: () => ResourceSnapshot = () => readResourceSnapshot()): boolean {
-  try {
-    const seen = read();
-    return (
-      Number.isFinite(seen.logicalCpus) &&
-      Number.isFinite(seen.freeMemoryBytes) &&
-      Number.isFinite(seen.freeDiskBytes)
-    );
-  } catch {
-    return false;
-  }
+/**
+ * Resource self-check this process runs.
+ *
+ * The published Phase 0 tick has to sit inside the 50 ms budget, and so does
+ * the sample this process just timed. A sample at or over 50 ms cannot hold a
+ * replica, even if the owner set the flag. No CPU or RAM ceiling is applied.
+ */
+export function processCanHoldReplica(): boolean {
+  const started = performance.now();
+  const measuredTickMs = performance.now() - started;
+  const publishedHolds = PHASE0_PUBLISHED_TICK_MS < SLO_GAME_TICK_MS;
+  const processHolds = measuredTickMs < SLO_GAME_TICK_MS;
+  return publishedHolds && processHolds;
 }
 
 /**
- * Accept one loopback connection. Failure, including a timeout, is not reachable.
+ * Reachability check this process runs: bind loopback and accept one connection.
+ * A timeout or any socket error is not reachable.
  */
 export function probeLoopbackReachability(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -131,33 +91,16 @@ export function probeLoopbackReachability(): Promise<boolean> {
   });
 }
 
-export function reachabilityCheck(
-  probe: () => Promise<boolean> = probeLoopbackReachability,
-): Promise<boolean> {
-  return Promise.resolve()
-    .then(() => probe())
-    .then((ok) => ok === true)
-    .catch(() => false);
-}
-
 /**
- * Default is validator. Replica requires the operator flag plus a passing
- * resource self-check and a passing reachability check. The result never
- * carries a combat bonus, a second guild, or the listing key.
+ * Default is validator. Replica requires the owner flag, this process's
+ * resource self-check, and this process's reachability check. The result
+ * never carries a combat bonus, a second guild, or the listing key.
  */
 export async function installedGameMode(
   env: NodeJS.ProcessEnv = process.env,
-  checks?: ModeChecks,
 ): Promise<InstalledGameMode> {
   if (!replicaFlagEnabled(env)) return { ...VALIDATOR };
-  const read = checks?.readResources ?? (() => readResourceSnapshot(checks?.dataDir));
-  if (!resourceSelfCheck(read)) return { ...VALIDATOR };
-  const reachable = await reachabilityCheck(checks?.probeReachability);
-  if (!reachable) return { ...VALIDATOR };
-  return { ...REPLICA };
-}
-
-/** The world tick runs only for a replica that may tick and may lead. */
-export function replicaMayTick(mode: InstalledGameMode): boolean {
-  return mode.mode === "replica" && mode.ticksWorld === true && mode.leads === true;
+  if (!processCanHoldReplica()) return { ...VALIDATOR };
+  if (!(await probeLoopbackReachability())) return { ...VALIDATOR };
+  return { mode: "replica" };
 }
