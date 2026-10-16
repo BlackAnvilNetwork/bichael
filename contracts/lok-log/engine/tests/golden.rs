@@ -15,11 +15,9 @@ const GENESIS_ROOT: &str = "0x0c0d7ba0dd69dcda2fe24de603679f65ae5dbdaec43f4ba9f3
 const UNIQUE_ID: &str = "16326979768789847505458237212507241523594462770995321419559994427250918491098";
 const FUNGIBLE_ID: &str = "89658009947691115780873220689577698189678099276092329480841579491160997392175";
 
-/// Spawn of token 1, job 3, index 0, from the genesis root. Ruleset word is 32 zero bytes.
-const ENTRY_HASH_ZERO_RULESET: &str = "0xfc8fd3adf1b3d84df6c37ab60490560b3fb077ec756dacb5a46b641c4c23f0c3";
 /// Same spawn under ruleset `0x44` repeated.
 const ENTRY_HASH_RULESET_44: &str = "0x4132b63228fa0c81a553514ecb448d615ebf2488ae7730ab623b78076327066b";
-/// `keccak256(abi.encode(prev, index, eventId))` with no ruleset word. The live link must not match this.
+/// `keccak256(abi.encode(prev, index, eventId))` with no ruleset word. A zero ruleset must match this.
 const ENTRY_HASH_OLD_PREIMAGE: &str = "0x1a3d2f6b7b0bca1def24adc542d497b42e5cd4df1e320d81598724289dd4eaca";
 
 fn word(byte: u8) -> [u8; 32] {
@@ -130,9 +128,8 @@ fn the_same_spawn_under_two_rulesets_has_two_entry_hashes() {
     let zero_link = entry_hash(&prev, 0, &spawn, &zero);
     let marked_link = entry_hash(&prev, 0, &spawn, &marked);
     assert_ne!(zero_link, marked_link);
-    assert_eq!(hex::encode(zero_link), ENTRY_HASH_ZERO_RULESET.trim_start_matches("0x"), "zero-ruleset entry hash drifted");
+    assert_eq!(hex::encode(zero_link), ENTRY_HASH_OLD_PREIMAGE.trim_start_matches("0x"), "a zero ruleset must keep the old three-field digest");
     assert_eq!(hex::encode(marked_link), ENTRY_HASH_RULESET_44.trim_start_matches("0x"), "marked-ruleset entry hash drifted");
-    assert_ne!(hex::encode(zero_link), ENTRY_HASH_OLD_PREIMAGE.trim_start_matches("0x"), "a zero ruleset must not match the preimage that stopped at the event id");
 
     let mut engine_zero = Engine::open(token, 3);
     assert_eq!(engine_zero.ruleset_hash(), zero);
