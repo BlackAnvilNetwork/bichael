@@ -3,6 +3,7 @@
 use std::fmt;
 
 use crate::chain::Chain;
+use crate::drop_batch::DropBatch;
 use crate::event::{craft_skill_validated_at, entry_hash, Input, Outcome};
 use crate::gold::{self, GoldError};
 use crate::ids::genesis_root;
@@ -85,6 +86,9 @@ pub enum EngineError {
     BadBountyAmount,
     /// This tx hash and log index already mirrored a PvP escrow event.
     DuplicatePvpFill,
+    /// A new loot drop does not name a kill in the open batch.
+    /// A kill from an earlier batch does not count. `ItemDrop` is `ClosedMint`, not this.
+    DropWithoutKill,
 }
 
 impl fmt::Display for EngineError {
@@ -133,6 +137,7 @@ impl fmt::Display for EngineError {
             Self::BountyMismatch => write!(f, "pvp bounty does not match"),
             Self::BadBountyAmount => write!(f, "pvp bounty must be 1e18 wei"),
             Self::DuplicatePvpFill => write!(f, "pvp receipt already mirrored"),
+            Self::DropWithoutKill => write!(f, "drop does not name a kill in this batch"),
         }
     }
 }
@@ -187,6 +192,7 @@ impl EngineError {
             Self::BountyMismatch => 41,
             Self::BadBountyAmount => 42,
             Self::DuplicatePvpFill => 43,
+            Self::DropWithoutKill => 44,
         }
     }
 }
@@ -213,6 +219,8 @@ pub struct Engine {
     /// Ruleset included in each new entry hash. Starts at 32 zero bytes, same as `World`.
     /// Set with `set_ruleset_hash`. Does not rewrite links already on the log.
     ruleset_hash: [u8; 32],
+    /// Kills in the open batch. Not part of the state hash.
+    batch: DropBatch,
 }
 
 impl Engine {
@@ -226,7 +234,13 @@ impl Engine {
             chain: Chain::new(anchor),
             inbound_applied: 0,
             ruleset_hash: [0u8; 32],
+            batch: DropBatch::default(),
         }
+    }
+
+    /// Open a batch and drop every kill from the previous one.
+    pub fn begin_batch(&mut self, batch_id: u64) {
+        self.batch.begin(batch_id);
     }
 
     /// Ruleset for the next entry hash. Does not rewrite links already on the log.
@@ -270,8 +284,10 @@ impl Engine {
         // successful apply does not keep the preimage alive across root and append.
         {
             let saved = self.state.clone();
+            let saved_batch = self.batch.clone();
             if let Err(err) = self.apply_local(&input, logged) {
                 self.state = saved;
+                self.batch = saved_batch;
                 return Err(err);
             }
         }
@@ -337,7 +353,27 @@ impl Engine {
             }
             Input::Harvest { token_id, material_id, amount } => self.note_harvest(*token_id, material_id, *amount),
             Input::ItemDrop { .. } => Err(EngineError::ClosedMint),
-            Input::LootDrop { token_id, item_id, amount } => self.note_drop(*token_id, *item_id, *amount),
+            Input::Kill { token_id, kill_id, batch_id } => {
+                self.involves(token_id)?;
+                self.batch.note_kill(*token_id, *kill_id, *batch_id)
+            }
+            Input::LootDrop {
+                token_id,
+                item_id,
+                amount,
+                kill_id,
+                batch_id,
+            } => {
+                self.involves(token_id)?;
+                if *item_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                if *amount == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                self.batch.accept_drop(*token_id, *kill_id, *batch_id, logged)?;
+                self.note_drop(*token_id, *item_id, *amount)
+            }
             Input::CraftSkill { token_id, skill_id, level } => self.note_craft_skill(*token_id, skill_id, *level),
             Input::RespecSkills { token_id, node_ids } => self.respec_skills(*token_id, node_ids),
             Input::GoldEarn { token_id, source, amount, day } => {

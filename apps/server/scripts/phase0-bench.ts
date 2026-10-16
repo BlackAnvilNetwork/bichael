@@ -78,10 +78,12 @@ function benchCoalescedTick(): number {
   const t0 = performance.now();
   lok.beginTick();
   for (const token of tokens) {
+    const killed = lok.kill(token, token);
+    if (!killed.ok) throw new Error(killed.error);
     for (let n = 0; n < 20; n++) {
       const harvested = lok.harvest(token, "ore", "1");
       if (!harvested.ok) throw new Error(harvested.error);
-      const dropped = lok.lootDrop(token, "7", "1");
+      const dropped = lok.lootDrop(token, "7", "1", token);
       if (!dropped.ok) throw new Error(dropped.error);
       const earned = lok.goldEarn(token, "drop", "1", 2);
       if (!earned.ok) throw new Error(earned.error);

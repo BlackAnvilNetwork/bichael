@@ -284,7 +284,14 @@ function coalescedCmd(row: CoalescedEvent): Record<string, unknown> {
     return { op: "harvest", tokenId: row.tokenId, materialId: row.materialId, amount: row.amount };
   }
   if (row.op === "lootDrop") {
-    return { op: "lootDrop", tokenId: row.tokenId, itemId: row.itemId, amount: row.amount };
+    return {
+      op: "lootDrop",
+      tokenId: row.tokenId,
+      itemId: row.itemId,
+      amount: row.amount,
+      killId: row.killId,
+      batchId: row.batchId,
+    };
   }
   return { op: "goldEarn", tokenId: row.tokenId, source: row.source, amount: row.amount, day: row.day };
 }
@@ -321,6 +328,8 @@ export class LokWorld {
    */
   private journalFd: number | null = null;
   private coalesce: TickCoalesce | null = null;
+  /** Batch the live tick opened. A kill from an earlier batch is not in this set. */
+  private openBatchId: number | null = null;
   /** Snapshot is due, but the tick must return before the full rewrite. */
   private snapshotDeferred = false;
   private snapshotQueued = false;
@@ -548,23 +557,51 @@ export class LokWorld {
     return this.apply({ op: "itemDrop", tokenId, itemId, amount });
   }
 
-  /** Loot drop counter. Like harvest: records the drop without minting spendable items. */
-  lootDrop(tokenId: string, itemId: string, amount: string): LokResult {
-    if (this.coalesce) {
-      return this.coalesce.add({ op: "lootDrop", tokenId, itemId, amount });
+  /**
+   * Open a batch and forget kills from the previous one.
+   * The command is not a log entry.
+   */
+  private beginBatch(batchId: number): LokResult {
+    this.openBatchId = batchId;
+    return this.apply({ op: "beginBatch", batchId }, false);
+  }
+
+  /** Log a kill in the open batch. It does not credit items or gold. */
+  kill(tokenId: string, killId: string): LokResult {
+    if (this.openBatchId == null) {
+      const opened = this.beginBatch(this.length);
+      if (!opened.ok) return opened;
     }
-    return this.apply({ op: "lootDrop", tokenId, itemId, amount });
+    return this.apply({ op: "kill", tokenId, killId, batchId: this.openBatchId });
+  }
+
+  /**
+   * Loot drop counter. Like harvest: records the drop without minting spendable items.
+   * A drop with no kill in the open batch is not logged.
+   */
+  lootDrop(tokenId: string, itemId: string, amount: string, killId: string): LokResult {
+    if (this.openBatchId == null || !killId) {
+      return { ok: false, error: "drop does not name a kill in this batch" };
+    }
+    const batchId = this.openBatchId;
+    if (this.coalesce) {
+      return this.coalesce.add({ op: "lootDrop", tokenId, itemId, amount, killId, batchId });
+    }
+    return this.apply({ op: "lootDrop", tokenId, itemId, amount, killId, batchId });
   }
 
   /**
    * Open a sim tick. Harvest, LootDrop, and GoldEarn queue and merge.
    * Other events still apply immediately, but their journal lines wait for
-   * endTick so the tick fsyncs once.
+   * endTick so the tick fsyncs once. The tick is a new batch: a kill from
+   * the previous tick does not justify a drop.
    */
   beginTick(): void {
     if (this.journalHold) throw new Error("lok tick is already open");
     this.journalHold = true;
     this.coalesce = new TickCoalesce();
+    const opened = this.beginBatch(this.length);
+    if (!opened.ok) throw new Error(opened.error);
   }
 
   /** Apply the merged rows, then one journal fsync for the whole tick. */

@@ -458,10 +458,29 @@ pub(crate) fn parse_input(value: &serde_json::Value) -> Result<Input, String> {
             item_id: req_u256(value, "itemId")?,
             amount: req_u256(value, "amount")?,
         }),
-        "lootDrop" => Ok(Input::LootDrop {
+        "lootDrop" => {
+            let has_kill = value.get("killId").is_some();
+            let has_batch = value.get("batchId").is_some();
+            if has_kill != has_batch {
+                return Err("lootDrop kill and batch must both be set".to_string());
+            }
+            let (kill_id, batch_id) = if has_kill {
+                (Some(req_u256(value, "killId")?), Some(req_u64(value, "batchId")?))
+            } else {
+                (None, None)
+            };
+            Ok(Input::LootDrop {
+                token_id: req_u256(value, "tokenId")?,
+                item_id: req_u256(value, "itemId")?,
+                amount: req_u256(value, "amount")?,
+                kill_id,
+                batch_id,
+            })
+        }
+        "kill" => Ok(Input::Kill {
             token_id: req_u256(value, "tokenId")?,
-            item_id: req_u256(value, "itemId")?,
-            amount: req_u256(value, "amount")?,
+            kill_id: req_u256(value, "killId")?,
+            batch_id: req_u64(value, "batchId")?,
         }),
         "craftSkill" => {
             let level = req_u64(value, "level")?;
@@ -722,11 +741,30 @@ Input::CancelAsk { listing_id, seller } => serde_json::json!({
             "itemId": s(item_id),
             "amount": s(amount),
         }),
-        Input::LootDrop { token_id, item_id, amount } => serde_json::json!({
-            "type": "lootDrop",
+        Input::LootDrop {
+            token_id,
+            item_id,
+            amount,
+            kill_id,
+            batch_id,
+        } => {
+            let mut value = serde_json::json!({
+                "type": "lootDrop",
+                "tokenId": s(token_id),
+                "itemId": s(item_id),
+                "amount": s(amount),
+            });
+            if let (Some(kill_id), Some(batch_id)) = (kill_id, batch_id) {
+                value["killId"] = s(kill_id);
+                value["batchId"] = serde_json::json!(batch_id);
+            }
+            value
+        }
+        Input::Kill { token_id, kill_id, batch_id } => serde_json::json!({
+            "type": "kill",
             "tokenId": s(token_id),
-            "itemId": s(item_id),
-            "amount": s(amount),
+            "killId": s(kill_id),
+            "batchId": batch_id,
         }),
         Input::CraftSkill { token_id, skill_id, level } => serde_json::json!({
             "type": "craftSkill",

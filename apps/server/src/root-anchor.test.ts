@@ -336,7 +336,10 @@ test("chain-bound sends wait one day after the anchor", async () => {
     const lok = LokWorld.open(dir, undefined, {});
     const spawned = lok.spawn("char-a", "Ada", 0);
     assert.equal(spawned.ok, true);
-    if (spawned.ok) assert.equal(lok.lootDrop(spawned.tokenId, "7", "1").ok, true);
+    if (spawned.ok) {
+      assert.equal(lok.kill(spawned.tokenId, "1").ok, true);
+      assert.equal(lok.lootDrop(spawned.tokenId, "7", "1", "1").ok, true);
+    }
     const tick = submitOnSimTick(null, { ok: true, height: 4, nextRoot: root });
     assert.equal(tick.tickFailed, false);
     assert.equal(tick.status, "provisional");
@@ -628,7 +631,8 @@ test("epoch xDAI stays within 10% of the posted slashable bonds", async () => {
     if (!spawned.ok) return;
     assert.equal(lok.goldEarn(spawned.tokenId, "quest", "100", 1).ok, true);
     assert.equal(lok.goldOf(spawned.tokenId), "100");
-    assert.equal(lok.lootDrop(spawned.tokenId, "7", "1").ok, true);
+    assert.equal(lok.kill(spawned.tokenId, "1").ok, true);
+    assert.equal(lok.lootDrop(spawned.tokenId, "7", "1", "1").ok, true);
     assert.equal(lok.dropOf(spawned.tokenId, "7"), "1");
     assert.equal(lok.itemOf(spawned.tokenId, "7"), "0");
     assert.equal(lok.harvest(spawned.tokenId, "ore", "2").ok, true);
@@ -657,7 +661,7 @@ test("epoch xDAI stays within 10% of the posted slashable bonds", async () => {
     assert.equal(epochSettledXdai(), 0n);
     assert.equal(lok.goldEarn(spawned.tokenId, "quest", "1", 1).ok, true);
     assert.equal(lok.goldOf(spawned.tokenId), "101");
-    assert.equal(lok.lootDrop(spawned.tokenId, "7", "1").ok, true);
+    assert.equal(lok.lootDrop(spawned.tokenId, "7", "1", "1").ok, true);
     assert.equal(lok.dropOf(spawned.tokenId, "7"), "2");
     assert.equal(lok.harvest(spawned.tokenId, "ore", "1").ok, true);
     assert.equal(lok.harvestOf(spawned.tokenId, "ore"), "3");

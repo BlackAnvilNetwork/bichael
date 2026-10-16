@@ -216,11 +216,12 @@ test("level, ability, craft, harvest, and drop replay and a bad event does not a
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
   assert.equal(lok.kekOf(a.tokenId), "0");
   assert.equal(lok.inboundAppliedOf(a.tokenId), 0);
-  assert.equal(lok.lootDrop(a.tokenId, "7", "3").ok, true);
+  assert.equal(lok.kill(a.tokenId, "1").ok, true);
+  assert.equal(lok.lootDrop(a.tokenId, "7", "3", "1").ok, true);
   assert.equal(lok.dropOf(a.tokenId, "7"), "3");
   assert.equal(lok.itemOf(a.tokenId, "7"), "2");
   const before = lok.length;
-  const badDrop = lok.lootDrop(a.tokenId, "0", "1");
+  const badDrop = lok.lootDrop(a.tokenId, "0", "1", "1");
   assert.equal(badDrop.ok, false);
   assert.equal(lok.length, before);
   const closedDrop = lok.itemDrop(a.tokenId, "7", "1");
@@ -519,9 +520,10 @@ test("loot drop logs a counter without minting spendable items", () => {
   assert.equal(a.ok, true);
   if (!a.ok) return;
   const before = lok.length;
-  const dropped = lok.lootDrop(a.tokenId, "7", "9");
+  assert.equal(lok.kill(a.tokenId, "1").ok, true);
+  const dropped = lok.lootDrop(a.tokenId, "7", "9", "1");
   assert.equal(dropped.ok, true);
-  assert.equal(lok.length, before + 1);
+  assert.equal(lok.length, before + 2);
   assert.equal(lok.dropOf(a.tokenId, "7"), "9");
   assert.equal(lok.itemOf(a.tokenId, "7"), "0");
   assert.equal(lok.importFromBag(a.tokenId, "7", "2").ok, true);

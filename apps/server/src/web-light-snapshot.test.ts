@@ -34,7 +34,8 @@ test("snapshotFor attaches a character-root proof and a state leaf that recomput
   assert.equal(lok.learnAbility(a.tokenId, "fire").ok, true);
   assert.equal(lok.harvest(a.tokenId, "ore", "4").ok, true);
   assert.equal(lok.craft(a.tokenId, "313", "1").ok, true);
-  assert.equal(lok.lootDrop(a.tokenId, "7", "2").ok, true);
+  assert.equal(lok.kill(a.tokenId, "1").ok, true);
+  assert.equal(lok.lootDrop(a.tokenId, "7", "2", "1").ok, true);
   assert.equal(lok.goldEarn(a.tokenId, "quest", "100", 1).ok, true);
   assert.equal(lok.goldEarn(a.tokenId, "quest", "5", 2).ok, true);
   assert.equal(lok.goldSpend(a.tokenId, "craft", "40").ok, true);

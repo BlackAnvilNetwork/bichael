@@ -107,7 +107,7 @@ function decide(batch: BatchEnvelope) {
 }
 
 test("the verifying key is pinned beside the wasm digest", () => {
-  assert.equal(LOCAL_RULESET_WASM_SHA256, "ae2fb7556c254cf9fddfdae0919dd1bdba12dfcd00b15d22c8c4bb43fd76a950");
+  assert.equal(LOCAL_RULESET_WASM_SHA256, "4d2610aa110a9f6bb163934d29a6ca7410b98530d59a700d8cd1b66cc5804178");
   assert.equal(LOCAL_RULESET_RECORD.wasmSha256, LOCAL_RULESET_WASM_SHA256);
   assert.equal(LOCAL_RULESET_RECORD.verifyingKey, LOCAL_SP1_VERIFYING_KEY);
   assert.match(LOCAL_SP1_VERIFYING_KEY, /^0x[0-9a-f]{64}$/);
@@ -130,7 +130,7 @@ test("a verifying-key change applies only after the one-day ruleset timelock", (
   const record = rulesetRecord();
   assert.equal(record.verifyingKey, OTHER_KEY);
   assert.equal(record.wasmSha256, LOCAL_RULESET_WASM_SHA256);
-  assert.equal(LOCAL_RULESET_WASM_SHA256, "ae2fb7556c254cf9fddfdae0919dd1bdba12dfcd00b15d22c8c4bb43fd76a950");
+  assert.equal(LOCAL_RULESET_WASM_SHA256, "4d2610aa110a9f6bb163934d29a6ca7410b98530d59a700d8cd1b66cc5804178");
 });
 
 test("a value that is not a verifying key does not schedule a change", () => {

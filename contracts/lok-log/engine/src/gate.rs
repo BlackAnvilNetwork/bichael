@@ -70,6 +70,20 @@ impl Gate {
         if op == "checkpoint" {
             return checkpoint_json(&self.world, &value);
         }
+        if op == "beginBatch" {
+            let batch_id = match value.get("batchId") {
+                Some(v) => match v.as_u64() {
+                    Some(n) => n,
+                    None => match v.as_str().and_then(|s| s.parse::<u64>().ok()) {
+                        Some(n) => n,
+                        None => return fail("bad batchId"),
+                    },
+                },
+                None => return fail("missing batchId"),
+            };
+            self.world.begin_batch(batch_id);
+            return json!({ "ok": true }).to_string();
+        }
         if op == "setRuleset" {
             let raw = value.get("rulesetHash").and_then(|v| v.as_str()).unwrap_or("");
             let hash = match parse_b256(raw) {

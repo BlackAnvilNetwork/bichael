@@ -50,6 +50,33 @@ pub fn craft_skill_validated_at(logged_seq: Option<u64>) -> bool {
     }
 }
 
+/// Logged `LootDrop` entries below this global seq keep their old encoding and
+/// replay without a kill. The bound starts at `u64::MAX`, so every seq already
+/// on a log is below it. A new append passes `None` and always names a kill.
+/// A network can lower the bound the same way craft validation does.
+pub const HISTORICAL_DROP_KILL_MIN_SEQ: u64 = u64::MAX;
+
+static DROP_KILL_MIN_SEQ: AtomicU64 = AtomicU64::new(HISTORICAL_DROP_KILL_MIN_SEQ);
+
+/// Override the drop-kill cutoff. Call before replaying a log.
+pub fn set_drop_kill_min_seq(min_seq: u64) {
+    DROP_KILL_MIN_SEQ.store(min_seq, Ordering::SeqCst);
+}
+
+pub fn drop_kill_min_seq() -> u64 {
+    DROP_KILL_MIN_SEQ.load(Ordering::SeqCst)
+}
+
+/// True when a `LootDrop` that does not name a kill is refused.
+/// New appends (`None`) always require a kill in the open batch. Logged entries
+/// require one only at or after [`drop_kill_min_seq`].
+pub fn drop_kill_required_at(logged_seq: Option<u64>) -> bool {
+    match logged_seq {
+        None => true,
+        Some(seq) => seq >= drop_kill_min_seq(),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input {
     /// First log event. Must name the same token and job the genesis anchor was built from.
@@ -85,7 +112,18 @@ pub enum Input {
     /// credit items. Mob loot is `LootDrop`.
     ItemDrop { token_id: U256, item_id: U256, amount: U256 },
     /// Loot drop counter. Like Harvest: records the drop, does not credit spendable items or KEK.
-    LootDrop { token_id: U256, item_id: U256, amount: U256 },
+    /// `kill_id` and `batch_id` are absent on an already-logged drop, so its event id
+    /// stays the three-field `LOK_LOOT_DROP_V1` preimage. A new append sets both.
+    LootDrop {
+        token_id: U256,
+        item_id: U256,
+        amount: U256,
+        kill_id: Option<U256>,
+        batch_id: Option<u64>,
+    },
+    /// A mob-loot kill marker. It does not credit items, gold, or XP.
+    /// `PvpKill` is an on-chain bounty mirror and is not this event.
+    Kill { token_id: U256, kill_id: U256, batch_id: u64 },
     /// Craft skill level for this character. Must be strictly higher than the logged level.
     /// Does not store XP and does not credit items or KEK.
     CraftSkill { token_id: U256, skill_id: String, level: u32 },
@@ -290,11 +328,29 @@ pub fn event_id(input: &Input) -> [u8; 32] {
             buf.u256(item_id);
             buf.u256(amount);
         }
-        Input::LootDrop { token_id, item_id, amount } => {
+        Input::LootDrop {
+            token_id,
+            item_id,
+            amount,
+            kill_id,
+            batch_id,
+        } => {
             buf.b256(&domain(b"LOK_LOOT_DROP_V1"));
             buf.u256(token_id);
             buf.u256(item_id);
             buf.u256(amount);
+            // Absent on an already-logged drop. Adding the words only when both
+            // are set leaves that preimage, and its entry hash, unchanged.
+            if let (Some(kill_id), Some(batch_id)) = (kill_id, batch_id) {
+                buf.u256(kill_id);
+                buf.u64(*batch_id);
+            }
+        }
+        Input::Kill { token_id, kill_id, batch_id } => {
+            buf.b256(&domain(b"LOK_KILL_V1"));
+            buf.u256(token_id);
+            buf.u256(kill_id);
+            buf.u64(*batch_id);
         }
         Input::CraftSkill { token_id, skill_id, level } => {
             buf.b256(&domain(b"LOK_CRAFT_SKILL_V1"));
@@ -462,4 +518,35 @@ pub fn entry_hash(prev: &[u8; 32], index: u64, input: &Input, ruleset: &[u8; 32]
     buf.b256(&event_id(input));
     buf.b256(ruleset);
     keccak256(&buf.bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_loot_drop_without_a_kill_keeps_the_three_field_event_id() {
+        let bare = Input::LootDrop {
+            token_id: U256::from_u64(4),
+            item_id: U256::from_u64(7),
+            amount: U256::from_u64(1),
+            kill_id: None,
+            batch_id: None,
+        };
+        let mut buf = Buf::new();
+        buf.b256(&keccak256(b"LOK_LOOT_DROP_V1"));
+        buf.u256(&U256::from_u64(4));
+        buf.u256(&U256::from_u64(7));
+        buf.u256(&U256::from_u64(1));
+        assert_eq!(event_id(&bare), keccak256(&buf.bytes));
+
+        let named = Input::LootDrop {
+            token_id: U256::from_u64(4),
+            item_id: U256::from_u64(7),
+            amount: U256::from_u64(1),
+            kill_id: Some(U256::from_u64(9)),
+            batch_id: Some(3),
+        };
+        assert_ne!(event_id(&bare), event_id(&named));
+    }
 }

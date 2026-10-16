@@ -28,10 +28,11 @@ test("a tick merges harvest, loot, and gold into one journal line each", () => {
   const before = readFileSync(lok.journalPath).length;
 
   lok.beginTick();
+  assert.equal(lok.kill(token, "1").ok, true);
   assert.equal(lok.harvest(token, "ore", "2").ok, true);
   assert.equal(lok.harvest(token, "ore", "3").ok, true);
-  assert.equal(lok.lootDrop(token, "7", "1").ok, true);
-  assert.equal(lok.lootDrop(token, "7", "4").ok, true);
+  assert.equal(lok.lootDrop(token, "7", "1", "1").ok, true);
+  assert.equal(lok.lootDrop(token, "7", "4", "1").ok, true);
   assert.equal(lok.goldEarn(token, "drop", "5", 3).ok, true);
   assert.equal(lok.goldEarn(token, "drop", "6", 3).ok, true);
   // Still queued: the journal has not grown yet.
@@ -41,10 +42,14 @@ test("a tick merges harvest, loot, and gold into one journal line each", () => {
 
   const added = readFileSync(lok.journalPath).subarray(before).toString("utf8");
   const lines = added.split("\n").filter((line) => line.length > 0);
-  assert.equal(lines.length, 3);
-  const cmds = lines.map((line) => JSON.parse(line) as { cmd: { op: string; amount: string } });
+  assert.equal(lines.length, 4);
+  const cmds = lines.map((line) => JSON.parse(line) as { cmd: { op: string; amount?: string } });
   assert.deepEqual(
-    cmds.map((row) => row.cmd.op + ":" + row.cmd.amount),
+    cmds.map((row) => row.cmd.op),
+    ["kill", "harvest", "lootDrop", "goldEarn"],
+  );
+  assert.deepEqual(
+    cmds.slice(1).map((row) => row.cmd.op + ":" + row.cmd.amount),
     ["harvest:5", "lootDrop:5", "goldEarn:11"],
   );
   assert.equal(lok.harvestOf(token, "ore"), "5");
@@ -52,6 +57,7 @@ test("a tick merges harvest, loot, and gold into one journal line each", () => {
 
   const again = LokWorld.open(lok.logPath.replace(/lok-world\.json$/, ""), undefined, {});
   assert.equal(again.harvestOf(token, "ore"), "5");
+  assert.equal(again.dropOf(token, "7"), "5");
   assert.equal(again.goldOf(token), "11");
   assert.equal(journalOps(again).filter((op) => op === "harvest").length, 1);
 });

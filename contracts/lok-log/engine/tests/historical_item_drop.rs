@@ -104,22 +104,55 @@ fn new_item_drop_append_is_closed_and_loot_drop_counts_without_minting() {
     assert_eq!(world.item_balance(&n(4), &n(1029)), Some(U256::ZERO));
 
     world
-        .apply(Input::LootDrop { token_id: n(4), item_id: n(1029), amount: n(2) })
+        .apply(Input::Kill { token_id: n(4), kill_id: n(1), batch_id: 1 })
+        .unwrap();
+    world
+        .apply(Input::LootDrop {
+            token_id: n(4),
+            item_id: n(1029),
+            amount: n(2),
+            kill_id: Some(n(1)),
+            batch_id: Some(1),
+        })
         .expect("loot counter appends");
-    assert_eq!(world.character_len(&n(4)), Some(len + 1));
+    assert_eq!(world.character_len(&n(4)), Some(len + 2));
     assert_eq!(world.dropped(&n(4), &n(1029)), Some(n(2)));
     assert_eq!(world.item_balance(&n(4), &n(1029)), Some(U256::ZERO));
     assert_eq!(world.gold_balance(&n(4)), Some(U256::ZERO));
     assert_eq!(
-        world.apply(Input::LootDrop { token_id: n(4), item_id: n(0), amount: n(1) }).unwrap_err(),
+        world
+            .apply(Input::LootDrop {
+                token_id: n(4),
+                item_id: n(0),
+                amount: n(1),
+                kill_id: None,
+                batch_id: None,
+            })
+            .unwrap_err(),
         EngineError::BadId
     );
     assert_eq!(
-        world.apply(Input::LootDrop { token_id: n(4), item_id: n(1029), amount: n(0) }).unwrap_err(),
+        world
+            .apply(Input::LootDrop {
+                token_id: n(4),
+                item_id: n(1029),
+                amount: n(0),
+                kill_id: None,
+                batch_id: None,
+            })
+            .unwrap_err(),
         EngineError::ZeroAmount
     );
     assert_eq!(
-        world.apply(Input::LootDrop { token_id: n(99), item_id: n(1029), amount: n(1) }).unwrap_err(),
+        world
+            .apply(Input::LootDrop {
+                token_id: n(99),
+                item_id: n(1029),
+                amount: n(1),
+                kill_id: None,
+                batch_id: None,
+            })
+            .unwrap_err(),
         EngineError::NotSpawned
     );
 
@@ -150,7 +183,16 @@ fn lone_engine_refuses_item_drop_on_append_and_on_replay() {
     }
     assert_eq!(engine.state().get(&Key::Item(n(4))), U256::ZERO);
     assert_eq!(engine.state().get(&Key::Drop(n(4))), U256::ZERO);
-    engine.apply(Input::LootDrop { token_id: n(1), item_id: n(4), amount: n(3) }).unwrap();
+    engine.apply(Input::Kill { token_id: n(1), kill_id: n(8), batch_id: 2 }).unwrap();
+    engine
+        .apply(Input::LootDrop {
+            token_id: n(1),
+            item_id: n(4),
+            amount: n(3),
+            kill_id: Some(n(8)),
+            batch_id: Some(2),
+        })
+        .unwrap();
     assert_eq!(engine.state().get(&Key::Item(n(4))), U256::ZERO);
     assert_eq!(engine.state().get(&Key::Drop(n(4))), n(3));
 }
@@ -158,13 +200,25 @@ fn lone_engine_refuses_item_drop_on_append_and_on_replay() {
 #[test]
 fn loot_drop_is_a_distinct_event_and_item_drop_keeps_its_id() {
     let drop = Input::ItemDrop { token_id: n(4), item_id: n(1029), amount: n(1) };
-    let loot = Input::LootDrop { token_id: n(4), item_id: n(1029), amount: n(1) };
+    let loot = Input::LootDrop {
+        token_id: n(4),
+        item_id: n(1029),
+        amount: n(1),
+        kill_id: None,
+        batch_id: None,
+    };
     assert_ne!(event_id(&drop), event_id(&loot));
     // A committed ItemDrop rewritten as LootDrop would no longer match its hash.
     let mut doc = world_doc();
     let entry = doc.characters[1].entries.iter_mut().find(|e| e.seq == 6).expect("seq 6 drop");
     if let Input::ItemDrop { token_id, item_id, amount } = entry.input.clone() {
-        entry.input = Input::LootDrop { token_id, item_id, amount };
+        entry.input = Input::LootDrop {
+            token_id,
+            item_id,
+            amount,
+            kill_id: None,
+            batch_id: None,
+        };
     } else {
         panic!("seq 6 is an ItemDrop");
     }

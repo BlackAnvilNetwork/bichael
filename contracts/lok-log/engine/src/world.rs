@@ -15,6 +15,7 @@ use crate::abi::keccak256;
 use crate::chain::{Chain, CharacterLogDocument, Entry, LoggedEntry, ReplayStop, WorldDocument};
 use crate::character_root::CharacterRootTree;
 use crate::checkpoint::{Checkpoint, Export};
+use crate::drop_batch::DropBatch;
 use crate::engine::{gold_err, parse_label, EngineError};
 use crate::event::{entry_hash, Input};
 use crate::gold;
@@ -193,6 +194,8 @@ pub struct World {
     /// Each stored entry keeps the ruleset it was hashed with. A reload starts this field at zero until
     /// the server sets it again; replay still checks the word stored on the entry.
     ruleset_hash: [u8; 32],
+    /// Kills that can justify a loot drop. Not hashed. Replay rebuilds it from `Kill` events.
+    batch: DropBatch,
 }
 
 impl World {
@@ -206,7 +209,14 @@ impl World {
             pvp_fill_keys: BTreeSet::new(),
             next_seq: 0,
             ruleset_hash: [0u8; 32],
+            batch: DropBatch::default(),
         }
+    }
+
+    /// Open a batch and forget every kill from the previous one.
+    /// A drop applied after this names a kill logged in this batch.
+    pub fn begin_batch(&mut self, batch_id: u64) {
+        self.batch.begin(batch_id);
     }
 
     pub fn genesis(&self) -> [u8; 32] {
@@ -696,12 +706,13 @@ impl World {
             None
         };
         let saved_sheets = self.snapshot_sheets(&touch);
+        let saved_batch = self.batch.clone();
         if let Err(err) = self.effects(&input, &touch, None) {
-            self.restore_failed_apply(saved_sheets, saved_listings, saved_pvp, saved_seq);
+            self.restore_failed_apply(saved_sheets, saved_listings, saved_pvp, saved_seq, saved_batch);
             return Err(err);
         }
         if let Err(err) = self.prepare_link(&touch, saved_seq) {
-            self.restore_failed_apply(saved_sheets, saved_listings, saved_pvp, saved_seq);
+            self.restore_failed_apply(saved_sheets, saved_listings, saved_pvp, saved_seq, saved_batch);
             return Err(err);
         }
         drop(saved_sheets);
@@ -734,6 +745,7 @@ impl World {
         saved_listings: Option<BTreeMap<U256, Listing>>,
         saved_pvp: Option<(BTreeMap<U256, OpenPvpBounty>, BTreeSet<([u8; 32], u64)>)>,
         saved_seq: u64,
+        saved_batch: DropBatch,
     ) {
         for undo in saved_sheets {
             match undo.sheet {
@@ -766,6 +778,7 @@ impl World {
             self.pvp_fill_keys = keys;
         }
         self.next_seq = saved_seq;
+        self.batch = saved_batch;
     }
 
     /// Ruleset for the next entry hash and the next drafted checkpoint.
@@ -1107,9 +1120,9 @@ impl World {
         Ok(world)
     }
 
-    /// Characters this command touches. Load and apply share this check. The logged seq is
-    /// unused here: `ItemDrop` is `ClosedMint` at every seq.
-    fn affected_at(&self, input: &Input, _logged_seq: Option<u64>) -> Result<BTreeSet<U256>, EngineError> {
+    /// Characters this command touches. Load and apply share this check.
+    /// `ItemDrop` is `ClosedMint` at every seq. A new `LootDrop` names a kill in the open batch.
+    fn affected_at(&self, input: &Input, logged_seq: Option<u64>) -> Result<BTreeSet<U256>, EngineError> {
         let mut touch = BTreeSet::new();
         match input {
             Input::Spawn { token_id, .. } => {
@@ -1191,7 +1204,22 @@ impl World {
             // ItemDrop never credits. seq is not in the entry hash, so a low seq is not a
             // historical allowlist. Mob loot is LootDrop.
             Input::ItemDrop { .. } => return Err(EngineError::ClosedMint),
-            Input::LootDrop { token_id, item_id, amount } => {
+            Input::Kill { token_id, kill_id, .. } => {
+                if *kill_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*token_id);
+            }
+            Input::LootDrop {
+                token_id,
+                item_id,
+                amount,
+                kill_id,
+                batch_id,
+            } => {
                 if *amount == U256::ZERO {
                     return Err(EngineError::ZeroAmount);
                 }
@@ -1201,6 +1229,7 @@ impl World {
                 if !self.characters.contains_key(token_id) {
                     return Err(EngineError::NotSpawned);
                 }
+                self.batch.accept_drop(*token_id, *kill_id, *batch_id, logged_seq)?;
                 touch.insert(*token_id);
             }
             Input::BagImport { token_id, item_id, amount } | Input::BagExport { token_id, item_id, amount } => {
@@ -1564,8 +1593,16 @@ impl World {
                 Ok(())
             }
             Input::ItemDrop { .. } => Err(EngineError::ClosedMint),
-            Input::LootDrop { token_id, item_id, amount } => {
+            Input::Kill { token_id, kill_id, batch_id } => {
+                // Marker only. Does not credit items, gold, or XP. PvpKill is not this.
+                if touch.contains(token_id) {
+                    self.batch.note_kill(*token_id, *kill_id, *batch_id)?;
+                }
+                Ok(())
+            }
+            Input::LootDrop { token_id, item_id, amount, .. } => {
                 // Counter only, like Harvest. Does not credit spendable items or KEK.
+                // The kill check ran in `affected_at` and did not mint.
                 if touch.contains(token_id) {
                     self.note_drop(*token_id, *item_id, *amount)?;
                 }
@@ -1635,6 +1672,7 @@ impl World {
                 log_index,
                 ..
             } => {
+                // On-chain bounty mirror. It does not justify a LootDrop.
                 self.pvp_fill_keys.insert((*tx_hash, *log_index));
                 self.pvp_bounties.remove(victim);
                 Ok(())
