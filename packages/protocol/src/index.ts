@@ -421,7 +421,7 @@ export const AH_FEE_BPS = 100;
 export const AH_FEE_BPS_DENOM = 10_000;
 /** Guild-vault share of the sale. Half of `AH_FEE_BPS`. */
 export const AH_VAULT_FEE_BPS = 50;
-/** Treasury share of the sale. Half of `AH_FEE_BPS`. A floored leftover wei stays here. */
+/** Treasury share of the sale. Half of `AH_FEE_BPS`. */
 export const AH_TREASURY_FEE_BPS = 50;
 
 /** Floor split used by AhEscrow.buyAsk / quoteFee. */
@@ -434,17 +434,13 @@ export function ahFeeSplit(priceWei: bigint): { feeWei: bigint; sellerNetWei: bi
 /**
  * Floor each share the same way `ahFeeSplit` floors (`price * bps / 10000`).
  * A zero fee is a zero vault share and a zero treasury share.
- * When the two floors sum to less than the 1% fee, the leftover wei is part of
- * the treasury share, so the shares sum to the fee. In-game gold is not an input.
+ * The two floors sum to the 1% fee, or to one wei less. That wei is not a
+ * third payout and is not added to either share. In-game gold is not an input.
  */
 export function ahGuildFeeShares(priceWei: bigint): { feeWei: bigint; vaultWei: bigint; treasuryWei: bigint } {
   const { feeWei } = ahFeeSplit(priceWei);
-  let vaultWei = (priceWei * BigInt(AH_VAULT_FEE_BPS)) / BigInt(AH_FEE_BPS_DENOM);
-  if (vaultWei > feeWei) vaultWei = feeWei;
-  let treasuryWei = (priceWei * BigInt(AH_TREASURY_FEE_BPS)) / BigInt(AH_FEE_BPS_DENOM);
-  const routed = vaultWei + treasuryWei;
-  if (routed < feeWei) treasuryWei += feeWei - routed;
-  else if (routed > feeWei) treasuryWei = feeWei - vaultWei;
+  const vaultWei = (priceWei * BigInt(AH_VAULT_FEE_BPS)) / BigInt(AH_FEE_BPS_DENOM);
+  const treasuryWei = (priceWei * BigInt(AH_TREASURY_FEE_BPS)) / BigInt(AH_FEE_BPS_DENOM);
   return { feeWei, vaultWei, treasuryWei };
 }
 

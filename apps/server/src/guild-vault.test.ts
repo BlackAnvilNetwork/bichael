@@ -1,8 +1,8 @@
 /**
- * The auction fee stays 1%. Half is the guild-vault share and half is the
- * treasury share, and those two amounts sum to the fee. A change waits one day.
- * The 20 Hz tick does not wait. In-game gold is outside this fee.
- * There is no score and no combat bonus.
+ * The auction fee stays 1%. Each fill pays 50 bps to the guild vault and 50 bps
+ * to the treasury. A one-wei remainder of the two floors is not a third payout.
+ * A change to the shares waits one day and does not delay a fill. The 20 Hz tick
+ * does not wait. In-game gold is outside this fee. There is no score and no combat bonus.
  */
 import {
   AH_FEE_BPS,
@@ -35,7 +35,7 @@ function root(fill: number): Uint8Array {
 }
 
 describe("guild vault fee split", { concurrency: false }, () => {
-  test("the two shares sum to the 1% fee and a change waits one day", () => {
+  test("the two shares stay 50 bps and a change waits one day", () => {
     resetRootAnchorForTests();
     try {
       const sol = readFileSync(ESCROW_SOL, "utf8");
@@ -44,10 +44,17 @@ describe("guild vault fee split", { concurrency: false }, () => {
       assert.equal(AH_TREASURY_FEE_BPS, 50);
       assert.equal(AH_VAULT_FEE_BPS + AH_TREASURY_FEE_BPS, AH_FEE_BPS);
       assert.match(sol, /uint256 public constant FEE_BPS = 100;/);
+      assert.match(sol, /uint256 public constant VAULT_FEE_BPS = 50;/);
+      assert.match(sol, /uint256 public constant TREASURY_FEE_BPS = 50;/);
       assert.match(sol, /uint64 public constant SHARE_DELAY = 1 days;/);
+      assert.match(sol, /is not a third payout/);
       assert.match(sol, /function proposeFeeShares/);
       assert.match(sol, /function executeFeeShares/);
       assert.equal(sol.includes("function setFeeShares"), false);
+      assert.equal(sol.includes("function setVaultFeeBps"), false);
+      assert.equal(sol.includes("function setTreasuryFeeBps"), false);
+      assert.equal(sol.includes("releaseFeeShares"), false);
+      assert.equal(sol.includes("vaultHeldWei"), false);
       assert.equal(sol.includes("function score"), false);
       assert.equal(sol.includes("goldEarn"), false);
       assert.equal(
@@ -57,6 +64,8 @@ describe("guild vault fee split", { concurrency: false }, () => {
 
       const shares = ahGuildFeeShares(10_000n);
       assert.deepEqual(shares, { feeWei: 100n, vaultWei: 50n, treasuryWei: 50n });
+      assert.deepEqual(ahGuildFeeShares(100n), { feeWei: 1n, vaultWei: 0n, treasuryWei: 0n });
+      assert.deepEqual(ahGuildFeeShares(300n), { feeWei: 3n, vaultWei: 1n, treasuryWei: 1n });
       assert.equal(epochSettledXdai(), 0n);
       assert.deepEqual(ahGuildFeeShares(0n), { feeWei: 0n, vaultWei: 0n, treasuryWei: 0n });
     } finally {

@@ -27,9 +27,11 @@ describe("ahFeeSplit (1% floor)", () => {
     assert.deepEqual(ahGuildFeeShares(0n), { feeWei: 0n, vaultWei: 0n, treasuryWei: 0n });
     assert.deepEqual(ahGuildFeeShares(1n), { feeWei: 0n, vaultWei: 0n, treasuryWei: 0n });
     assert.deepEqual(ahGuildFeeShares(99n), { feeWei: 0n, vaultWei: 0n, treasuryWei: 0n });
-    assert.deepEqual(ahGuildFeeShares(100n), { feeWei: 1n, vaultWei: 0n, treasuryWei: 1n });
+    assert.deepEqual(ahGuildFeeShares(100n), { feeWei: 1n, vaultWei: 0n, treasuryWei: 0n });
     assert.deepEqual(ahGuildFeeShares(200n), { feeWei: 2n, vaultWei: 1n, treasuryWei: 1n });
-    assert.deepEqual(ahGuildFeeShares(300n), { feeWei: 3n, vaultWei: 1n, treasuryWei: 2n });
+    assert.deepEqual(ahGuildFeeShares(300n), { feeWei: 3n, vaultWei: 1n, treasuryWei: 1n });
+    const dust = ahGuildFeeShares(300n);
+    assert.equal(dust.feeWei - (dust.vaultWei + dust.treasuryWei), 1n);
     const price = 10n ** 18n;
     const shares = ahGuildFeeShares(price);
     assert.equal(shares.feeWei, 10n ** 16n);

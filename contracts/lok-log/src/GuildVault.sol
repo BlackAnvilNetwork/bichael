@@ -3,9 +3,8 @@ pragma solidity ^0.8.24;
 
 /// @title GuildVault
 /// @notice Holds the guild share of the AhEscrow fee in native xDAI.
-///         This slice accepts that share and does not score epochs, mint a
-///         token, or pay guilds. A later payout waits for an anchored root
-///         and the one-day challenge delay.
+///         It does not score epochs and it does not pay guilds.
+///         There is no payout function.
 contract GuildVault {
     address public immutable escrow;
 

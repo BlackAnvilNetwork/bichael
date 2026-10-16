@@ -36,7 +36,7 @@ Every design choice below is held to three liveness requirements and to the cons
 - The listing key stays outside any voting set. Whoever holds it can send `AhEscrow` and `PvpBounty` transactions, and being a replica does not grant it.
 - Chain events (`AskFilled`, PvP bounty logs, NFT transfers) are attestations. A mirror waits for confirmation depth and matching replica reports. Production Gnosis depth starts at 30 blocks (`DEFAULT_GNOSIS_CONFIRMATIONS` in `apps/server/src/settlement-confirmations.ts`). A per-type override may only raise that, never lower it.
 - No shared mutable data directory. `LOK_ALLOW_SHARED_DATA_DIR` is not this mode. Nodes sync by replaying signed batches, or from a checkpoint plus the tail. Published immutable checkpoints and journal segments (section 15) are allowed.
-- No new token and no emissions. The player-facing auction fee stays 1% (`AhEscrow` `FEE_BPS = 100`, native xDAI). A timelocked share of that fee funds guild rewards. Uptime alone does not pay. Validators and light clients are not paid.
+- No new token and no emissions. The player-facing auction fee stays 1% (`AhEscrow` `FEE_BPS = 100`, native xDAI). Half of that fee is sent to the guild vault on each fill. A change to the split waits on the ruleset timelock. Uptime alone does not pay. Validators and light clients are not paid.
 
 ### New requirements from the tiered model
 
@@ -266,7 +266,7 @@ Replica is the protocol role. Mark is the player name for a bonded replica. The 
 
 A player on the installed game may opt in to a Mark. The flag still requires the resource self-check and a reachability check. Bonding that Mark grants the operator the right to register one guild and to lead it. Joining a guild needs no hardware and no bond. A second Mark from the same operator does not open a second guild and does not add a second score. A Mark grants no damage, loot, or other combat advantage.
 
-The player-facing auction fee stays 1% of the sale (`FEE_BPS = 100` in `contracts/lok-log/src/AhEscrow.sol`). `buyAsk` already pays `ownerOf(seller)` the remainder and sends the fee to `feeRecipient` in native xDAI. The guild pool is a split of that fee, not a second fee and not a new token. Starting parameter: 50 bps of the sale to the guild vault, 50 bps to the treasury. Both move only behind the ruleset timelock of at least one day. Until the auction house has volume, the vault is empty.
+The player-facing auction fee stays 1% of the sale (`FEE_BPS = 100` in `contracts/lok-log/src/AhEscrow.sol`). `buyAsk` pays `ownerOf(seller)` the price minus 1% and, in that same transaction, sends the floored 50 bps to the guild vault and the floored 50 bps to the treasury in native xDAI. That split is not a second fee and not a new token. A change to those two shares waits on the ruleset timelock of at least one day. The fee on a fill does not wait. Until the auction house has volume, the vault is empty.
 
 Once an epoch is anchored and the challenge delay has passed, the vault pays qualifying guilds in proportion to that epoch's score. If every score is zero, the xDAI stays in the vault for the next epoch.
 

@@ -7,7 +7,8 @@ import {GuildVault} from "../src/GuildVault.sol";
 import {RulesetRegistry} from "../src/RulesetRegistry.sol";
 import {MockOwnerNft} from "./mocks/MockOwnerNft.sol";
 
-/// Guild-vault slice: the 1% fee splits 50/50. Shares move only after the ruleset timelock.
+/// Guild-vault slice: each fill pays 50 bps to the vault and 50 bps to the treasury.
+/// A change to those shares waits out the ruleset timelock. The fee on a fill does not.
 contract AhEscrowGuildVaultTest is Test {
     AhEscrow escrow;
     MockOwnerNft nft;
@@ -39,6 +40,8 @@ contract AhEscrowGuildVaultTest is Test {
     function test_zeroVolumeVaultHoldsZero() public view {
         assertEq(escrow.guildVault().balance, 0);
         assertEq(address(escrow).balance, 0);
+        assertEq(escrow.VAULT_FEE_BPS(), 50);
+        assertEq(escrow.TREASURY_FEE_BPS(), 50);
         assertEq(escrow.vaultBps(), 50);
         assertEq(escrow.treasuryBps(), 50);
         assertEq(escrow.vaultBps() + escrow.treasuryBps(), escrow.FEE_BPS());
@@ -71,9 +74,9 @@ contract AhEscrowGuildVaultTest is Test {
         (uint256 vault100, uint256 treasury100) = escrow.quoteFeeShares(100);
         assertEq(fee100, 1);
         assertEq(net100, 99);
-        assertEq(vault100, uint256(100 * 50) / 10_000);
         assertEq(vault100, 0);
-        assertEq(treasury100, fee100 - vault100, "leftover wei of the 1% stays with the treasury");
+        assertEq(treasury100, 0);
+        assertEq(fee100 - (vault100 + treasury100), 1);
 
         (uint256 vault200, uint256 treasury200) = escrow.quoteFeeShares(200);
         assertEq(vault200, uint256(200 * 50) / 10_000);
@@ -217,14 +220,65 @@ contract AhEscrowGuildVaultTest is Test {
         assertEq(escrow.FEE_BPS(), 100);
     }
 
+    function test_buyAsk_oneWeiRemainderStaysInEscrow() public {
+        _open(LISTING, 100);
+        vm.prank(buyer);
+        escrow.buyAsk{value: 100}(LISTING, BUYER_TOKEN);
+        assertEq(seller.balance, 99, "seller still nets price minus the 1% fee");
+        assertEq(escrow.guildVault().balance, 0);
+        assertEq(feeTo.balance, 0);
+        assertEq(address(escrow).balance, 1, "the unpaired wei is not a third payout");
+
+        _open(8, 300);
+        uint256 sellerBefore = seller.balance;
+        vm.prank(buyer);
+        escrow.buyAsk{value: 300}(8, BUYER_TOKEN);
+        assertEq(seller.balance - sellerBefore, 297);
+        assertEq(escrow.guildVault().balance, 1);
+        assertEq(feeTo.balance, 1);
+        assertEq(address(escrow).balance, 2);
+    }
+
+    function test_warpWithNoQueuedChange_leavesSharesAndAlreadyPaidWei() public {
+        _open(LISTING, PRICE);
+        uint256 beforeSeller = seller.balance;
+        vm.prank(buyer);
+        escrow.buyAsk{value: PRICE}(LISTING, BUYER_TOKEN);
+
+        uint256 vaultWei = (PRICE * 50) / 10_000;
+        uint256 treasuryWei = (PRICE * 50) / 10_000;
+        assertEq(escrow.guildVault().balance, vaultWei);
+        assertEq(feeTo.balance, treasuryWei);
+        assertEq(seller.balance - beforeSeller, PRICE - ((PRICE * 100) / 10_000));
+        assertEq(seller.balance - beforeSeller, (PRICE * 9900) / 10_000);
+
+        vm.warp(block.timestamp + 1 days);
+        assertEq(escrow.VAULT_FEE_BPS(), 50);
+        assertEq(escrow.TREASURY_FEE_BPS(), 50);
+        assertEq(escrow.vaultBps(), 50);
+        assertEq(escrow.treasuryBps(), 50);
+        assertEq(escrow.guildVault().balance, vaultWei, "a warp does not pay the fill again");
+        assertEq(feeTo.balance, treasuryWei);
+        (uint256 pendingVault, uint256 pendingTreasury, uint64 readyAt) = escrow.pendingFeeShares();
+        assertEq(pendingVault, 0);
+        assertEq(pendingTreasury, 0);
+        assertEq(readyAt, 0);
+
+        (bool released,) = address(escrow).call(abi.encodeWithSignature("releaseFeeShares()"));
+        assertFalse(released);
+        assertEq(escrow.guildVault().balance, vaultWei);
+        assertEq(feeTo.balance, treasuryWei);
+    }
+
     function testFuzz_sharesPartitionTheOnePercentFee(uint96 price) public view {
         price = uint96(bound(price, 1, type(uint96).max));
         (uint256 fee, uint256 net) = escrow.quoteFee(price);
         (uint256 vaultWei, uint256 treasuryWei) = escrow.quoteFeeShares(price);
         assertEq(fee, (uint256(price) * 100) / 10_000);
         assertEq(net, uint256(price) - fee);
-        assertEq(vaultWei + treasuryWei, fee);
-        uint256 vaultFloor = (uint256(price) * 50) / 10_000;
-        assertEq(vaultWei, vaultFloor > fee ? fee : vaultFloor);
+        assertEq(vaultWei, (uint256(price) * 50) / 10_000);
+        assertEq(treasuryWei, (uint256(price) * 50) / 10_000);
+        assertLe(vaultWei + treasuryWei, fee);
+        assertLe(fee - (vaultWei + treasuryWei), 1);
     }
 }

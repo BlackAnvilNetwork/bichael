@@ -87,6 +87,8 @@ contract DeployTest is Test {
         assertEq(address(d.ahEscrow.characterNft()), address(d.nft));
         assertEq(d.ahEscrow.feeRecipient(), feeRecipient);
         assertEq(d.ahEscrow.FEE_BPS(), 100);
+        assertEq(d.ahEscrow.VAULT_FEE_BPS(), 50);
+        assertEq(d.ahEscrow.TREASURY_FEE_BPS(), 50);
         assertEq(d.ahEscrow.vaultBps(), 50);
         assertEq(d.ahEscrow.treasuryBps(), 50);
         assertEq(d.ahEscrow.SHARE_DELAY(), 1 days);

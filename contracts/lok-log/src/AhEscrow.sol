@@ -15,12 +15,15 @@ interface ICharacterOwnerOf {
 /// @notice First-party auction-house payment escrow. Buyers pay **native ETH**
 ///         (EOA, Safe, or EEZ `CrossChainProxy` with `msg.value`). At fill, ETH
 ///         goes to `ownerOf(sellerTokenId)` (never a client-supplied address),
-///         minus a 1% marketplace fee. That fee is split: `vaultBps` of the sale
-///         (starting at 50) is sent to the guild vault, and `treasuryBps`
-///         (starting at 50) is sent to `feeRecipient`. The player-facing fee
-///         stays 1%. There is no second fee and no new token. The two shares
-///         change only after `SHARE_DELAY`, the ruleset timelock floor (one day,
-///         `RulesetRegistry.MIN_DELAY`). This contract does not hold a long-lived
+///         minus a 1% marketplace fee. On each fill, the floored `VAULT_FEE_BPS`
+///         (50) of the sale is sent to the guild vault and the floored
+///         `TREASURY_FEE_BPS` (50) is sent to `feeRecipient`. The player-facing
+///         fee stays 1%. There is no second fee and no new token. A one-wei
+///         remainder of the two floors may stay in this contract and is not a
+///         third payout. `SHARE_DELAY` is the ruleset timelock floor (one day,
+///         `RulesetRegistry.MIN_DELAY`). It gates a change to the two share
+///         parameters. It does not delay the fee on a fill, and it does not
+///         release wei that a fill already paid. This contract does not hold a long-lived
 ///         player balance, and the character log never credits settlement ETH.
 ///         Upstream EEZ `periphery/Bridge.sol` is test-only; do not treat it as
 ///         this contract.
@@ -50,8 +53,13 @@ contract AhEscrow is Pausable, EIP712 {
     /// @notice 1% of sale price (fee = price * FEE_BPS / BPS_DENOM, floor).
     uint256 public constant FEE_BPS = 100;
     uint256 public constant BPS_DENOM = 10_000;
-    /// @notice Starting guild-vault share of the sale. The treasury share starts as the rest of `FEE_BPS`.
-    uint256 public constant VAULT_BPS_START = 50;
+    /// @notice Starting guild-vault share of the sale, in bps. Half of `FEE_BPS`.
+    ///         An immediate setter cannot change it. A queued change waits out
+    ///         `SHARE_DELAY` and applies only to a later fill.
+    uint256 public constant VAULT_FEE_BPS = 50;
+
+    /// @notice Starting treasury share of the sale, in bps. Half of `FEE_BPS`.
+    uint256 public constant TREASURY_FEE_BPS = 50;
     /// @notice Ruleset timelock floor (`RulesetRegistry.MIN_DELAY`, one day). Solidity cannot
     ///         copy another contract's constant into this one, so the test locks them together.
     ///         There is no setter for this delay.
@@ -148,8 +156,8 @@ contract AhEscrow is Pausable, EIP712 {
         characterNft = ICharacterOwnerOf(nft_);
         feeRecipient = feeRecipient_;
         guildVault = payable(address(new GuildVault(address(this))));
-        vaultBps = VAULT_BPS_START;
-        treasuryBps = FEE_BPS - VAULT_BPS_START;
+        vaultBps = VAULT_FEE_BPS;
+        treasuryBps = TREASURY_FEE_BPS;
         _grant(DEFAULT_ADMIN_ROLE, admin);
         _grant(LISTING_ROLE, admin);
         _grant(GUARDIAN_ROLE, admin);
@@ -227,16 +235,12 @@ contract AhEscrow is Pausable, EIP712 {
     }
 
     /// @notice Floor each share the same way `quoteFee` floors (`price * bps / BPS_DENOM`).
-    ///         When the two floors sum to less than the 1% fee, the leftover wei stays with
-    ///         the treasury so the seller still nets `price - fee` and this contract holds nothing.
+    ///         A zero fee is a zero vault share and a zero treasury share.
+    ///         The two floors sum to the 1% fee, or to one wei less. That wei stays
+    ///         in this contract and is not a third payout.
     function quoteFeeShares(uint256 priceWei) public view returns (uint256 vaultWei, uint256 treasuryWei) {
-        uint256 feeWei = (priceWei * FEE_BPS) / BPS_DENOM;
         vaultWei = (priceWei * vaultBps) / BPS_DENOM;
         treasuryWei = (priceWei * treasuryBps) / BPS_DENOM;
-        if (vaultWei > feeWei) vaultWei = feeWei;
-        uint256 routed = vaultWei + treasuryWei;
-        if (routed < feeWei) treasuryWei += feeWei - routed;
-        else if (routed > feeWei) treasuryWei = feeWei - vaultWei;
     }
 
     function _grant(bytes32 role, address account) private {
@@ -349,7 +353,8 @@ contract AhEscrow is Pausable, EIP712 {
         emit AskFilled(listingId, msg.sender, buyerTokenId, owner, price, feeWei, itemId, amount);
     }
 
-    /// @dev Pays the floored vault share, the treasury share of the 1% fee, then the seller.
+    /// @dev Pays the floored vault share and the floored treasury share, then the seller.
+    ///      A one-wei remainder of the two floors stays in this contract.
     ///      Isolated so `_fill` stays under the stack limit.
     function _payFeeAndSeller(uint256 price, address payable payout) private returns (uint256 feeWei) {
         uint256 sellerNet;
