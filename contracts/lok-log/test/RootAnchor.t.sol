@@ -76,6 +76,7 @@ contract RootAnchorTest is Test {
         commitment[47] = 0xcd;
         bytes32 checkpointKeccak = keccak256("checkpoint-bytes");
 
+        _useBlob(commitment);
         vm.expectEmit(true, false, false, true);
         emit RootAnchor.CheckpointBlobPosted(checkpointKeccak, commitment);
         anchor.postCheckpointBlob(commitment, checkpointKeccak);
@@ -86,25 +87,74 @@ contract RootAnchorTest is Test {
         assertEq(anchor.lastAnchoredHeight(), 0);
         assertFalse(anchor.hasAnchor());
 
+        _useBlob(commitment);
         anchor.postCheckpointBlob(commitment, checkpointKeccak);
         (storedCommitment, storedKeccak) = anchor.checkpointBlob(checkpointKeccak);
         assertEq(storedCommitment, commitment);
         assertEq(storedKeccak, checkpointKeccak);
     }
 
+    function test_versioned_hash_is_the_eip4844_rule() public {
+        bytes memory commitment =
+            hex"8d11423a504d39e6b3a36f4c1e72932fc104a4f7edc5087f07b8433e975a2593ac6937b9a08f379d12568d774a63b411";
+        bytes32 versioned = hex"01f63dba6fe23bbe500c0921a48221d15507f5cf0148612203597f57c3c1dbd3";
+        bytes32 checkpointKeccak = keccak256("vector");
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = versioned;
+        vm.blobhashes(hashes);
+        anchor.postCheckpointBlob(commitment, checkpointKeccak);
+        (bytes memory stored,) = anchor.checkpointBlob(checkpointKeccak);
+        assertEq(stored, commitment);
+        assertEq(stored.length, 48);
+    }
+
+    function test_a_commitment_that_does_not_match_the_blob_is_not_stored() public {
+        bytes memory commitment = new bytes(48);
+        commitment[0] = 0xab;
+        bytes32 checkpointKeccak = keccak256("checkpoint-bytes");
+        bytes32 versioned = _versioned(commitment);
+
+        vm.blobhashes(new bytes32[](0));
+        vm.expectRevert(abi.encodeWithSelector(RootAnchor.BlobHashMismatch.selector, bytes32(0), versioned));
+        anchor.postCheckpointBlob(commitment, checkpointKeccak);
+
+        bytes32[] memory wrong = new bytes32[](1);
+        wrong[0] = bytes32(uint256(0x02));
+        vm.blobhashes(wrong);
+        vm.expectRevert(abi.encodeWithSelector(RootAnchor.BlobHashMismatch.selector, wrong[0], versioned));
+        anchor.postCheckpointBlob(commitment, checkpointKeccak);
+
+        vm.expectRevert(abi.encodeWithSelector(RootAnchor.CheckpointBlobMissing.selector, checkpointKeccak));
+        anchor.checkpointBlob(checkpointKeccak);
+    }
+
     function test_a_different_commitment_for_the_same_keccak_is_refused() public {
         bytes memory commitment = new bytes(48);
         commitment[0] = 0x11;
         bytes32 checkpointKeccak = keccak256("checkpoint-bytes");
+        _useBlob(commitment);
         anchor.postCheckpointBlob(commitment, checkpointKeccak);
 
         bytes memory other = new bytes(48);
         other[0] = 0x22;
+        _useBlob(other);
         vm.expectRevert(abi.encodeWithSelector(RootAnchor.CheckpointBlobConflict.selector, checkpointKeccak));
         anchor.postCheckpointBlob(other, checkpointKeccak);
 
         (bytes memory storedCommitment,) = anchor.checkpointBlob(checkpointKeccak);
         assertEq(storedCommitment, commitment);
+    }
+
+    function _useBlob(bytes memory commitment) internal {
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = _versioned(commitment);
+        vm.blobhashes(hashes);
+    }
+
+    function _versioned(bytes memory commitment) internal pure returns (bytes32) {
+        bytes32 digest = sha256(commitment);
+        uint256 mask = uint256(0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+        return bytes32((uint256(digest) & mask) | (uint256(0x01) << 248));
     }
 
     function test_a_commitment_must_be_48_bytes() public {

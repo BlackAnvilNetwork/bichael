@@ -18,6 +18,7 @@ export function resolveAnvilBin(): string | null {
   for (const candidate of [
     process.env.ANVIL_PATH,
     "anvil",
+    join(process.env.USERPROFILE || "", ".foundry/bin/anvil.exe"),
     join(process.env.HOME || "", ".foundry/bin/anvil"),
     "/home/ubuntu/.foundry/bin/anvil",
   ]) {
@@ -46,6 +47,7 @@ export function resolveForgeBin(): string | null {
   for (const candidate of [
     process.env.FORGE_PATH,
     "forge",
+    join(process.env.USERPROFILE || "", ".foundry/bin/forge.exe"),
     join(process.env.HOME || "", ".foundry/bin/forge"),
     "/home/ubuntu/.foundry/bin/forge",
   ]) {
