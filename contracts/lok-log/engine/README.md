@@ -48,7 +48,7 @@ Exit 0 prints the head, state root, and summary. Exit 1 is a bad hash. Exit 2 is
 
 ## Loot: ItemDrop and LootDrop
 
-`lootDrop` is the loot counter. Like `harvest` it counts and never credits items or KEK; mob loot is logged with it. `itemDrop` is `ClosedMint` on append and on replay. `seq` is not in the entry hash, so a low seq does not credit items. A log that still contains `itemDrop` does not open; clear it. Rewriting a committed `itemDrop` into `lootDrop` would change its hash. `tests/historical_item_drop.rs` keeps the pre-#206 fixtures and expects them to be refused.
+`lootDrop` is the loot counter. Like `harvest` it counts and never credits items or KEK. It must cite the seq of a prior `mobKill` on that character's log. `mobKill` records the death and credits no items, gold, XP, or mint. `pvpKill` does not justify the drop. `itemDrop` is `ClosedMint` on append and on replay. `seq` is not in the entry hash, so a low seq does not credit items. A log that still contains `itemDrop` does not open; clear it. Rewriting a committed `itemDrop` into `lootDrop` would change its hash. `tests/historical_item_drop.rs` keeps the pre-#206 fixtures and expects them to be refused.
 
 ## Wasm pin
 

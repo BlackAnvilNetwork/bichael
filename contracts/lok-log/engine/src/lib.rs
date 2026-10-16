@@ -9,7 +9,8 @@
 //! do not mint items. Bag imports credit items without a chain inbound nonce. Bag exports debit
 //! spendable items back to the bag and are not checkpoint ERC-1155 exports. `ExportItem` is the
 //! chain withdrawal packed into `Checkpoint.exports`. Each character has their own hash chain.
-//! `LootDrop` is the loot counter and never credits items. `ItemDrop` is `ClosedMint` on append
+//! `LootDrop` is the loot counter and never credits items. It must cite a prior `MobKill`
+//! on that character's log. `MobKill` credits nothing. `ItemDrop` is `ClosedMint` on append
 //! and on replay. A low `seq` does not credit items.
 //! An item import carries that character's inbound nonce and is rejected
 //! if the same nonce is applied again. The nonce must be the next one (`inboundCount`).

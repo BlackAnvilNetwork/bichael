@@ -356,7 +356,7 @@ Unpredictability comes from separating the roller from the leader, not from the 
 ### Caps inside `World::apply`
 
 - The ceilings in force are the daily gold caps in `contracts/lok-log/engine/src/gold.rs`, on the server-day window. An epoch is not a day. `GOLD_DAILY_TOTAL_CAP` is 50_000 gold per character per server day, all sources. Per source per server day: quest 20_000, drop 15_000, harvest 15_000, npc_sell 10_000, and any other earn source 5_000. `craft_refund` is not an earn and does not count against those caps. The day is server-stamped. A replayer cannot verify the day. Loot, XP, and mint have no per-epoch numbers in this spec. Chain xDAI stays on its separate epoch cap (10% of the slashable bonds then posted).
-- Every drop must reference a valid kill event, so loot cannot appear without an event that justifies it.
+- Every `LootDrop` must cite the seq of a prior `mobKill` already on that character's log. A missing seq, a seq that is not yet prior, or any other event (including `pvpKill`) is rejected. `mobKill` credits no items, gold, XP, or mint. `LootDrop` still does not credit items or KEK.
 - Conservation checks stay as they are today: value moves, it is not created, and `ItemDrop` never credits.
 
 These rules are part of the ruleset and are therefore covered by the ruleset hash and the timelock.

@@ -85,6 +85,12 @@ pub enum EngineError {
     BadBountyAmount,
     /// This tx hash and log index already mirrored a PvP escrow event.
     DuplicatePvpFill,
+    /// The cited kill seq is not on this character's log.
+    MissingKill,
+    /// The cited kill seq is this event or later, so it is not a prior kill.
+    FutureKill,
+    /// The cited event is not a mob kill. `PvpKill` does not justify mob loot.
+    NotAKill,
 }
 
 impl fmt::Display for EngineError {
@@ -133,6 +139,9 @@ impl fmt::Display for EngineError {
             Self::BountyMismatch => write!(f, "pvp bounty does not match"),
             Self::BadBountyAmount => write!(f, "pvp bounty must be 1e18 wei"),
             Self::DuplicatePvpFill => write!(f, "pvp receipt already mirrored"),
+            Self::MissingKill => write!(f, "kill event is not on this character's log"),
+            Self::FutureKill => write!(f, "kill event is not yet in the log"),
+            Self::NotAKill => write!(f, "cited event is not a mob kill"),
         }
     }
 }
@@ -187,7 +196,35 @@ impl EngineError {
             Self::BountyMismatch => 41,
             Self::BadBountyAmount => 42,
             Self::DuplicatePvpFill => 43,
+            Self::MissingKill => 44,
+            Self::FutureKill => 45,
+            Self::NotAKill => 46,
         }
+    }
+}
+
+/// A loot drop may cite only a prior `MobKill` on this character.
+/// `horizon` is the seq this drop would occupy. A seq at or above it is not prior.
+pub(crate) fn require_prior_mob_kill<'a>(
+    prior: impl Iterator<Item = (u64, &'a Input)>,
+    token_id: &U256,
+    kill_seq: u64,
+    horizon: u64,
+) -> Result<(), EngineError> {
+    if kill_seq >= horizon {
+        return Err(EngineError::FutureKill);
+    }
+    let mut cited = None;
+    for (seq, input) in prior {
+        if seq == kill_seq {
+            cited = Some(input);
+            break;
+        }
+    }
+    match cited {
+        Some(Input::MobKill { token_id: killer }) if killer == token_id => Ok(()),
+        Some(_) => Err(EngineError::NotAKill),
+        None => Err(EngineError::MissingKill),
     }
 }
 
@@ -208,6 +245,9 @@ pub struct Engine {
     starting_job: u8,
     state: State,
     chain: Chain,
+    /// Global seq of each chain link, in order. A new append uses the chain index.
+    /// Replay stores the seq from the log. Used to cite a prior mob kill.
+    seqs: Vec<u64>,
     /// How many deposit/import nonces this character has consumed. The next accepted nonce is this plus one.
     inbound_applied: u64,
     /// Ruleset included in each new entry hash. Starts at 32 zero bytes, same as `World`.
@@ -224,6 +264,7 @@ impl Engine {
             starting_job,
             state: State::new(),
             chain: Chain::new(anchor),
+            seqs: Vec::new(),
             inbound_applied: 0,
             ruleset_hash: [0u8; 32],
         }
@@ -276,11 +317,13 @@ impl Engine {
             }
         }
         let index = self.chain.len();
+        let seq = logged.unwrap_or(index);
         let prev_hash = self.chain.head();
         let link = entry_hash(&prev_hash, index, &input, &self.ruleset_hash);
         let state_root = self.state.root();
         let summary = self.state.summary();
         self.chain.push(input, link, self.ruleset_hash);
+        self.seqs.push(seq);
         Ok(Outcome::Applied {
             index,
             prev_hash,
@@ -337,7 +380,27 @@ impl Engine {
             }
             Input::Harvest { token_id, material_id, amount } => self.note_harvest(*token_id, material_id, *amount),
             Input::ItemDrop { .. } => Err(EngineError::ClosedMint),
-            Input::LootDrop { token_id, item_id, amount } => self.note_drop(*token_id, *item_id, *amount),
+            Input::MobKill { token_id } => {
+                self.involves(token_id)?;
+                Ok(())
+            }
+            Input::LootDrop { token_id, item_id, amount, kill_seq } => {
+                self.involves(token_id)?;
+                if *item_id == U256::ZERO {
+                    return Err(EngineError::BadId);
+                }
+                if *amount == U256::ZERO {
+                    return Err(EngineError::ZeroAmount);
+                }
+                let horizon = logged.unwrap_or(self.chain.len());
+                require_prior_mob_kill(
+                    self.seqs.iter().copied().zip(self.chain.entries().iter().map(|entry| &entry.input)),
+                    token_id,
+                    *kill_seq,
+                    horizon,
+                )?;
+                self.note_drop(*token_id, *item_id, *amount)
+            }
             Input::CraftSkill { token_id, skill_id, level } => self.note_craft_skill(*token_id, skill_id, *level),
             Input::RespecSkills { token_id, node_ids } => self.respec_skills(*token_id, node_ids),
             Input::GoldEarn { token_id, source, amount, day } => {

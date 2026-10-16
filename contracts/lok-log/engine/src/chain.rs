@@ -458,10 +458,14 @@ pub(crate) fn parse_input(value: &serde_json::Value) -> Result<Input, String> {
             item_id: req_u256(value, "itemId")?,
             amount: req_u256(value, "amount")?,
         }),
+        "mobKill" => Ok(Input::MobKill {
+            token_id: req_u256(value, "tokenId")?,
+        }),
         "lootDrop" => Ok(Input::LootDrop {
             token_id: req_u256(value, "tokenId")?,
             item_id: req_u256(value, "itemId")?,
             amount: req_u256(value, "amount")?,
+            kill_seq: req_u64(value, "killSeq")?,
         }),
         "craftSkill" => {
             let level = req_u64(value, "level")?;
@@ -722,11 +726,16 @@ Input::CancelAsk { listing_id, seller } => serde_json::json!({
             "itemId": s(item_id),
             "amount": s(amount),
         }),
-        Input::LootDrop { token_id, item_id, amount } => serde_json::json!({
+        Input::MobKill { token_id } => serde_json::json!({
+            "type": "mobKill",
+            "tokenId": s(token_id),
+        }),
+        Input::LootDrop { token_id, item_id, amount, kill_seq } => serde_json::json!({
             "type": "lootDrop",
             "tokenId": s(token_id),
             "itemId": s(item_id),
             "amount": s(amount),
+            "killSeq": kill_seq,
         }),
         Input::CraftSkill { token_id, skill_id, level } => serde_json::json!({
             "type": "craftSkill",

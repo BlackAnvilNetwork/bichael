@@ -84,8 +84,12 @@ pub enum Input {
     /// Closed mint. Refused on append and on replay (`ClosedMint`). A low `seq` does not
     /// credit items. Mob loot is `LootDrop`.
     ItemDrop { token_id: U256, item_id: U256, amount: U256 },
-    /// Loot drop counter. Like Harvest: records the drop, does not credit spendable items or KEK.
-    LootDrop { token_id: U256, item_id: U256, amount: U256 },
+    /// A mob death on this character's log. Credits no items, gold, XP, or mint.
+    /// Not a [`Input::PvpKill`]: that event settles a chain bounty.
+    MobKill { token_id: U256 },
+    /// Loot drop counter. Records the drop and does not credit spendable items or KEK.
+    /// `kill_seq` is the global seq of a prior [`Input::MobKill`] already on this character's log.
+    LootDrop { token_id: U256, item_id: U256, amount: U256, kill_seq: u64 },
     /// Craft skill level for this character. Must be strictly higher than the logged level.
     /// Does not store XP and does not credit items or KEK.
     CraftSkill { token_id: U256, skill_id: String, level: u32 },
@@ -290,11 +294,16 @@ pub fn event_id(input: &Input) -> [u8; 32] {
             buf.u256(item_id);
             buf.u256(amount);
         }
-        Input::LootDrop { token_id, item_id, amount } => {
+        Input::MobKill { token_id } => {
+            buf.b256(&domain(b"LOK_MOB_KILL_V1"));
+            buf.u256(token_id);
+        }
+        Input::LootDrop { token_id, item_id, amount, kill_seq } => {
             buf.b256(&domain(b"LOK_LOOT_DROP_V1"));
             buf.u256(token_id);
             buf.u256(item_id);
             buf.u256(amount);
+            buf.u64(*kill_seq);
         }
         Input::CraftSkill { token_id, skill_id, level } => {
             buf.b256(&domain(b"LOK_CRAFT_SKILL_V1"));

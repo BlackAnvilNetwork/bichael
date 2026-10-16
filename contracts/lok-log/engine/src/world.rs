@@ -15,7 +15,7 @@ use crate::abi::keccak256;
 use crate::chain::{Chain, CharacterLogDocument, Entry, LoggedEntry, ReplayStop, WorldDocument};
 use crate::character_root::CharacterRootTree;
 use crate::checkpoint::{Checkpoint, Export};
-use crate::engine::{gold_err, parse_label, EngineError};
+use crate::engine::{gold_err, parse_label, require_prior_mob_kill, EngineError};
 use crate::event::{entry_hash, Input};
 use crate::gold;
 use crate::ids::{genesis_root, world_genesis};
@@ -1107,9 +1107,10 @@ impl World {
         Ok(world)
     }
 
-    /// Characters this command touches. Load and apply share this check. The logged seq is
-    /// unused here: `ItemDrop` is `ClosedMint` at every seq.
-    fn affected_at(&self, input: &Input, _logged_seq: Option<u64>) -> Result<BTreeSet<U256>, EngineError> {
+    /// Characters this command touches. Load and apply share this check.
+    /// `logged_seq` is the seq a replayed entry already has. A new append uses `next_seq`.
+    /// `ItemDrop` is `ClosedMint` at every seq. A `LootDrop` must cite a prior mob kill.
+    fn affected_at(&self, input: &Input, logged_seq: Option<u64>) -> Result<BTreeSet<U256>, EngineError> {
         let mut touch = BTreeSet::new();
         match input {
             Input::Spawn { token_id, .. } => {
@@ -1189,18 +1190,29 @@ impl World {
                 touch.insert(*token_id);
             }
             // ItemDrop never credits. seq is not in the entry hash, so a low seq is not a
-            // historical allowlist. Mob loot is LootDrop.
+            // historical allowlist. Mob loot is LootDrop, and only after a mob kill.
             Input::ItemDrop { .. } => return Err(EngineError::ClosedMint),
-            Input::LootDrop { token_id, item_id, amount } => {
+            Input::MobKill { token_id } => {
+                if !self.characters.contains_key(token_id) {
+                    return Err(EngineError::NotSpawned);
+                }
+                touch.insert(*token_id);
+            }
+            Input::LootDrop { token_id, item_id, amount, kill_seq } => {
                 if *amount == U256::ZERO {
                     return Err(EngineError::ZeroAmount);
                 }
                 if *item_id == U256::ZERO {
                     return Err(EngineError::BadId);
                 }
-                if !self.characters.contains_key(token_id) {
-                    return Err(EngineError::NotSpawned);
-                }
+                let ch = self.characters.get(token_id).ok_or(EngineError::NotSpawned)?;
+                let horizon = logged_seq.unwrap_or(self.next_seq);
+                require_prior_mob_kill(
+                    ch.seqs.iter().copied().zip(ch.chain.entries().iter().map(|entry| &entry.input)),
+                    token_id,
+                    *kill_seq,
+                    horizon,
+                )?;
                 touch.insert(*token_id);
             }
             Input::BagImport { token_id, item_id, amount } | Input::BagExport { token_id, item_id, amount } => {
@@ -1564,8 +1576,11 @@ impl World {
                 Ok(())
             }
             Input::ItemDrop { .. } => Err(EngineError::ClosedMint),
-            Input::LootDrop { token_id, item_id, amount } => {
+            // The log entry is the record. No items, gold, XP, or mint.
+            Input::MobKill { .. } => Ok(()),
+            Input::LootDrop { token_id, item_id, amount, kill_seq: _ } => {
                 // Counter only, like Harvest. Does not credit spendable items or KEK.
+                // The kill citation was checked in `affected_at`.
                 if touch.contains(token_id) {
                     self.note_drop(*token_id, *item_id, *amount)?;
                 }
