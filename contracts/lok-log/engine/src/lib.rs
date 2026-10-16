@@ -16,6 +16,9 @@
 
 mod abi;
 mod chain;
+// Native proof API. The wasm gate does not call it, so the ruleset bundle stays put.
+#[cfg(not(target_arch = "wasm32"))]
+mod character_root;
 mod checkpoint;
 mod craft_recipe_data;
 mod engine;
@@ -32,6 +35,10 @@ mod world;
 #[cfg(target_arch = "wasm32")]
 mod wasm_api;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use character_root::{
+    character_leaf, CharacterRootProof, CharacterRootTree, MissingToken, Sibling,
+};
 pub use chain::{
     load_world, parse_any_log, parse_log, parse_world_log, replay, replay_world, AnyLog,
     CharacterLogDocument, LoggedEntry, LogDocument, ReplayReport, ReplayStop, WorldDocument,
