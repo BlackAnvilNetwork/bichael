@@ -30,11 +30,6 @@ contract GoldenTest is Base {
         16326979768789847505458237212507241523594462770995321419559994427250918491098;
     uint256 constant GOLDEN_FUNGIBLE_ID =
         89658009947691115780873220689577698189678099276092329480841579491160997392175;
-    /// Spawn of token 1, job 3, index 0. `keccak256(abi.encode(prev, index, eventId, rulesetHash))`.
-    bytes32 constant GOLDEN_ENTRY_ZERO_RULESET = 0xfc8fd3adf1b3d84df6c37ab60490560b3fb077ec756dacb5a46b641c4c23f0c3;
-    bytes32 constant GOLDEN_ENTRY_RULESET_44 = 0x4132b63228fa0c81a553514ecb448d615ebf2488ae7730ab623b78076327066b;
-    /// Preimage that stopped at the event id. The zero-ruleset link must not equal this.
-    bytes32 constant GOLDEN_ENTRY_OLD_PREIMAGE = 0x1a3d2f6b7b0bca1def24adc542d497b42e5cd4df1e320d81598724289dd4eaca;
 
     function test_golden() public view {
         CharacterCheckpoint.Checkpoint memory c = _fixed();
@@ -64,19 +59,5 @@ contract GoldenTest is Base {
         assertEq(genesis, GOLDEN_GENESIS_ROOT, "genesis root drifted");
         assertEq(uniqueId, GOLDEN_UNIQUE_ID, "unique item id drifted");
         assertEq(fungibleId, GOLDEN_FUNGIBLE_ID, "fungible item id drifted");
-    }
-
-    function test_entry_hash_includes_ruleset() public pure {
-        bytes32 eventId = keccak256(abi.encode(keccak256("LOK_SPAWN_V1"), uint256(1), uint8(3)));
-        bytes32 prev = GOLDEN_GENESIS_ROOT;
-        bytes32 ruleset44 = 0x4444444444444444444444444444444444444444444444444444444444444444;
-        bytes32 zeroLink = keccak256(abi.encode(prev, uint64(0), eventId, bytes32(0)));
-        bytes32 markedLink = keccak256(abi.encode(prev, uint64(0), eventId, ruleset44));
-        bytes32 oldLink = keccak256(abi.encode(prev, uint64(0), eventId));
-        assertEq(zeroLink, GOLDEN_ENTRY_ZERO_RULESET, "zero-ruleset entry hash drifted");
-        assertEq(markedLink, GOLDEN_ENTRY_RULESET_44, "marked-ruleset entry hash drifted");
-        assertEq(oldLink, GOLDEN_ENTRY_OLD_PREIMAGE, "old preimage drifted");
-        assertTrue(zeroLink != markedLink);
-        assertTrue(zeroLink != oldLink);
     }
 }

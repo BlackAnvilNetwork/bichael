@@ -4,7 +4,7 @@
  "entries": [
   {
    "seq": 0,
-   "hash": "0x9e80908e4b2ff15094d9adb3b713279dab7e11f4cd89cad801e66956b4ab019b",
+   "hash": "0xb30aa33e02a0d59cc092eff4d18b7eee8fcd84a7b00e08e687ca53af2d715fba",
    "input": {
     "startingJob": 0,
     "tokenId": "1",
@@ -13,7 +13,7 @@
   },
   {
    "seq": 55,
-   "hash": "0x5bf1d478f94112f6edc31934ff07cecb4b2d2f8846dd5fceccee0c8fffbae5a9",
+   "hash": "0xbce94aa23101883d9bf24806b5a73c6ce50e6b1cb7669f49ee35ad8a7c074b0d",
    "input": {
     "abilityId": "time_mage_0",
     "tokenId": "1",
@@ -22,7 +22,7 @@
   },
   {
    "seq": 71,
-   "hash": "0xde3c6917dac57d8781328160f24352e988531b315ff8725af631a1e266961451",
+   "hash": "0x5e33334189f94eaa51e3717b25ac7c35f5d94359c9282daa947f118e4e03486b",
    "input": {
     "level": 2,
     "tokenId": "1",
@@ -31,7 +31,7 @@
   },
   {
    "seq": 72,
-   "hash": "0x407b5b2c7b26e13bd6156ff58649ba33119f27b85f86e7902677f62b4725fa54",
+   "hash": "0xa110d286c63e8032fc8767089e73741a2edefa6b95d2b07d90a125969410cb6b",
    "input": {
     "amount": "1",
     "itemId": "1057",
@@ -41,7 +41,7 @@
   },
   {
    "seq": 73,
-   "hash": "0xe0a033c7074c7009f2eab6ca47b12dbd6e7f8e75c4bb47652fd25b4e0c6fd3f5",
+   "hash": "0x92caa9cba3c263b579f6c77224ab0b720f6163eda8ae0957dcdb5f8edbb3c07b",
    "input": {
     "amount": "1",
     "itemId": "1057",
@@ -51,7 +51,7 @@
   },
   {
    "seq": 79,
-   "hash": "0x4dceb1af5d6312d2c832f2a1ee90322f36a0b7fd8295ea7d6272bd7618deabfd",
+   "hash": "0x163eb9713a82e30e347b766dbc5e44fed8ce3ee061dc369f7fce353b824cf920",
    "input": {
     "level": 3,
     "tokenId": "1",
@@ -60,7 +60,7 @@
   },
   {
    "seq": 80,
-   "hash": "0xb9beed85277479a7521ebe01d55db689d83ca8991753b0db56d14cbfff3f2caf",
+   "hash": "0xb62269f094fe03fd06472b64a9e50a87abb0f1742cb94546b512627a112e3ee9",
    "input": {
     "amount": "1",
     "materialId": "dustgrain",
@@ -70,7 +70,7 @@
   },
   {
    "seq": 81,
-   "hash": "0xc88adc5a6ced59ae5af865c056aa49ad614af2be2f8fb1f55861c53c2baef4e2",
+   "hash": "0x793232c8fd542ef0f4af38c708692e3c7605ec7e9d1912a7d4fdf7a355bb593f",
    "input": {
     "amount": "1",
     "materialId": "copper-ore",
@@ -80,7 +80,7 @@
   },
   {
    "seq": 82,
-   "hash": "0xa81f87f56f8be1da55985cfdd583a7922d9f20ca96a7ee63b310af826fe7554a",
+   "hash": "0xc3531a6c414c92a856f91f0c5e412ec257f4176c9aa0dcd3abf51a036d5909c6",
    "input": {
     "amount": "1",
     "materialId": "dustgrain",

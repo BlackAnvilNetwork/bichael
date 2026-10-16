@@ -51,25 +51,6 @@ const genesisRoot = keccak256(encodeAbiParameters(
 const uniqueId = BigInt(keccak256(encodePacked(['bytes1', 'string', 'uint64'], ['0x01', 'iron_sword', 42n])))
 const fungibleId = BigInt(keccak256(encodePacked(['bytes1', 'string'], ['0x00', 'iron_ore'])))
 
-const spawnTag = keccak256(stringToHex('LOK_SPAWN_V1'))
-const eventId = keccak256(encodeAbiParameters(
-  [{ type: 'bytes32' }, { type: 'uint256' }, { type: 'uint8' }],
-  [spawnTag, 1n, 3],
-))
-const ruleset44 = '0x' + '44'.repeat(32)
-const zeroEntry = keccak256(encodeAbiParameters(
-  [{ type: 'bytes32' }, { type: 'uint64' }, { type: 'bytes32' }, { type: 'bytes32' }],
-  [genesisRoot, 0n, eventId, '0x' + '00'.repeat(32)],
-))
-const markedEntry = keccak256(encodeAbiParameters(
-  [{ type: 'bytes32' }, { type: 'uint64' }, { type: 'bytes32' }, { type: 'bytes32' }],
-  [genesisRoot, 0n, eventId, ruleset44],
-))
-const oldEntry = keccak256(encodeAbiParameters(
-  [{ type: 'bytes32' }, { type: 'uint64' }, { type: 'bytes32' }],
-  [genesisRoot, 0n, eventId],
-))
-
 const expected = {
   genesisTag: '0x8a8d1f348a2311fc4d6271c76e697ff6d99152a86984976269678b04ab4eb413',
   bodyHash: '0x0da4d29fd8c0892590468c9b2f8fa5e402388553fa6912e3f72a8cc671ee6d19',
@@ -77,11 +58,8 @@ const expected = {
   genesisRoot: '0x0c0d7ba0dd69dcda2fe24de603679f65ae5dbdaec43f4ba9f3dfa8c6b444761c',
   uniqueId: 16326979768789847505458237212507241523594462770995321419559994427250918491098n,
   fungibleId: 89658009947691115780873220689577698189678099276092329480841579491160997392175n,
-  zeroEntry: '0xfc8fd3adf1b3d84df6c37ab60490560b3fb077ec756dacb5a46b641c4c23f0c3',
-  markedEntry: '0x4132b63228fa0c81a553514ecb448d615ebf2488ae7730ab623b78076327066b',
-  oldEntry: '0x1a3d2f6b7b0bca1def24adc542d497b42e5cd4df1e320d81598724289dd4eaca',
 }
-const got = { genesisTag, bodyHash, digest, genesisRoot, uniqueId, fungibleId, zeroEntry, markedEntry, oldEntry }
+const got = { genesisTag, bodyHash, digest, genesisRoot, uniqueId, fungibleId }
 let ok = true
 for (const k of Object.keys(expected)) {
   const match = String(got[k]).toLowerCase() === String(expected[k]).toLowerCase()

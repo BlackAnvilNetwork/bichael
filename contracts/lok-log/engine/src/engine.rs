@@ -156,9 +156,6 @@ pub struct Engine {
     chain: Chain,
     /// How many deposit/import nonces this character has consumed. The next accepted nonce is this plus one.
     inbound_applied: u64,
-    /// Ruleset included in each new entry hash. Starts at 32 zero bytes, same as `World`.
-    /// Set with `set_ruleset_hash`. Does not rewrite links already on the log.
-    ruleset_hash: [u8; 32],
 }
 
 impl Engine {
@@ -171,17 +168,7 @@ impl Engine {
             state: State::new(),
             chain: Chain::new(anchor),
             inbound_applied: 0,
-            ruleset_hash: [0u8; 32],
         }
-    }
-
-    /// Ruleset for the next entry hash. Does not rewrite links already on the log.
-    pub fn set_ruleset_hash(&mut self, hash: [u8; 32]) {
-        self.ruleset_hash = hash;
-    }
-
-    pub fn ruleset_hash(&self) -> [u8; 32] {
-        self.ruleset_hash
     }
 
     pub fn genesis(&self) -> [u8; 32] {
@@ -223,10 +210,10 @@ impl Engine {
         }
         let index = self.chain.len();
         let prev_hash = self.chain.head();
-        let link = entry_hash(&prev_hash, index, &input, &self.ruleset_hash);
+        let link = entry_hash(&prev_hash, index, &input, &[0u8; 32]);
         let state_root = self.state.root();
         let summary = self.state.summary();
-        self.chain.push(input, link, self.ruleset_hash);
+        self.chain.push(input, link, [0u8; 32]);
         Ok(Outcome::Applied {
             index,
             prev_hash,

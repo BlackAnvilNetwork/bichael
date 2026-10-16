@@ -499,7 +499,7 @@ fn legacy_entry_hash(prev: &[u8; 32], index: u64, input: &Input) -> [u8; 32] {
 }
 
 #[test]
-fn a_zero_ruleset_changes_every_link_and_two_rulesets_differ() {
+fn a_zero_ruleset_keeps_the_old_entry_hash_and_a_set_ruleset_is_inside_it() {
     let mut gate = Gate::open("").unwrap();
     let spawned: serde_json::Value =
         serde_json::from_str(&gate.apply_command(r#"{"op":"spawn","tokenId":"1","startingJob":3}"#)).unwrap();
@@ -512,10 +512,9 @@ fn a_zero_ruleset_changes_every_link_and_two_rulesets_differ() {
     let spawn = &zero_parsed.characters[0].entries[0];
     let prev = genesis_root(&n(1), 3);
     let old = legacy_entry_hash(&prev, 0, &spawn.input);
-    assert_ne!(spawn.hash, old);
+    assert_eq!(spawn.hash, old);
     assert_eq!(spawn.ruleset_hash, [0u8; 32]);
-    assert_eq!(entry_hash(&prev, 0, &spawn.input, &[0u8; 32]), spawn.hash);
-    assert_ne!(entry_hash(&prev, 0, &spawn.input, &[0u8; 32]), old);
+    assert_eq!(entry_hash(&prev, 0, &spawn.input, &[0u8; 32]), old);
     assert_ne!(entry_hash(&prev, 0, &spawn.input, &[0xabu8; 32]), spawn.hash);
 
     let ruleset = [0xabu8; 32];
@@ -547,7 +546,7 @@ fn a_zero_ruleset_changes_every_link_and_two_rulesets_differ() {
 
     let parsed = parse_world_log(&doc).unwrap();
     let logged = &parsed.characters[0].entries;
-    assert_ne!(logged[0].hash, old);
+    assert_eq!(logged[0].hash, old);
     assert_eq!(logged[0].hash, entry_hash(&prev, 0, &logged[0].input, &[0u8; 32]));
     assert_eq!(logged[0].ruleset_hash, [0u8; 32]);
     assert_eq!(logged[1].ruleset_hash, ruleset);

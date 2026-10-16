@@ -75,7 +75,7 @@ pub struct LoggedEntry {
     pub input: Input,
     /// Global order shared by every character log that carries this payload. Not part of the hash.
     pub seq: u64,
-    /// Ruleset word inside `hash`. Absent JSON means 32 zero bytes, which is still in the preimage.
+    /// Ruleset word stored with this link. Absent JSON is 32 zero bytes, which `entry_hash` leaves out.
     pub ruleset_hash: [u8; 32],
 }
 
@@ -131,8 +131,8 @@ pub fn replay(doc: &LogDocument) -> Result<ReplayReport, ReplayStop> {
     let mut engine = Engine::open(doc.token_id, doc.starting_job);
     for (i, entry) in doc.entries.iter().enumerate() {
         let index = i as u64;
-        engine.set_ruleset_hash(entry.ruleset_hash);
-        let computed = entry_hash(&engine.head(), index, &entry.input, &engine.ruleset_hash());
+        // A lone character engine has no ruleset. World replay checks the word stored on the entry.
+        let computed = entry_hash(&engine.head(), index, &entry.input, &[0u8; 32]);
         if computed != entry.hash {
             return Err(ReplayStop::BadHash {
                 index,

@@ -9,7 +9,7 @@ In-game **gold** is a separate log balance (`GoldEarn` / `GoldSpend` / `GoldSell
 1. **State and events.** Character state is a `BTreeMap` so commitment order is sorted, not insertion order. `Input` / `Outcome` are the apply types. Each character has their own hash chain from their genesis root. A transfer or auction is the same payload on every affected character's log, and each log advances its own index. `WithdrawKek` decreases spendable KEK (escrowed bids are not spendable) and does not submit an onchain withdrawal. A lone `Engine` applies balance events that name that character; list/bid/cancel/settle need the shared listing book, so `World` appends those onto the character chains.
 2. **Canonical encoding.** `abi.encode` word layout (32-byte big-endian, dynamic tail offset) and `abi.encodePacked` for item ids, hashed with keccak256. Same rules the contracts use.
 3. **Genesis, then Spawn.** `genesis_root(tokenId, startingJob) = keccak256(abi.encode(GENESIS_TAG, tokenId, startingJob))` with `GENESIS_TAG = keccak256("LOK_GENESIS_V1")`. That anchor is the chain head before any events. `Spawn` is the first log event and fills the sheet the contract's `initCharacter` summary describes: level 1, the starting job, no subjob, location 0.
-4. **Hash-chained log.** Entry `i` hashes as `keccak256(abi.encode(prev, index, eventId, rulesetHash))`. `prev` for index 0 is the genesis root. `rulesetHash` is 32 bytes and is always in the preimage; thirty-two zero bytes still differ from a link that stopped at `eventId`. `lok-replay` replays a JSON log and **stops at the first bad hash** (exit 1) without applying that event or anything after it.
+4. **Hash-chained log.** Entry `i` hashes as `keccak256(abi.encode(prev, index, eventId))` when the ruleset is 32 zero bytes. A non-zero ruleset is appended after `eventId`. `prev` for index 0 is the genesis root. `lok-replay` replays a JSON log and **stops at the first bad hash** (exit 1) without applying that event or anything after it.
 
 ## State root
 
@@ -73,7 +73,7 @@ Exit 0 prints the head, state root, and summary. Exit 1 is a bad hash. Exit 2 is
 | `append_ask` | `ask` | seller |
 | `append_chain_fill` | `chainFill` (item to inbox; ETH stays on AhEscrow) | buyer |
 
-The payload (and therefore `event_id`) is the same on every log that carries the event. `entry_hash` is `keccak256(abi.encode(prev, index, eventId, rulesetHash))` with **that log's** previous head, index, and the ruleset hash in force when the entry was appended, so the links differ. `seq` in the JSON is replay order and is not part of the hash. A character checkpoint covers only that character's span: `fromIndex` / `toIndex` / `logHash` are that chain.
+The payload (and therefore `event_id`) is the same on every log that carries the event. `entry_hash` is `keccak256(abi.encode(prev, index, eventId))` with **that log's** previous head and index, so the links differ. A non-zero ruleset in force at append is appended after `eventId` and stored on the entry. `seq` in the JSON is replay order and is not part of the hash. A character checkpoint covers only that character's span: `fromIndex` / `toIndex` / `logHash` are that chain.
 
 `commit_span` records the committed prefix (`logIndex`). `rebase` drops only that character's uncommitted tail and replays what remains, so another character's committed copy of the trade is not removed.
 
