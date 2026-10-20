@@ -176,6 +176,7 @@ import {
 import { createPaleHollowMobs, createPaleHollowNodes, relocateGatherNode, type FieldNode } from "./pale-hollow-world";
 import { steerMobStep } from "./mob-steer";
 import { withinEngageRange } from "./engage-range";
+import { shouldDropWalk, walkUntilAfterStep, walkUntilAtArrival } from "./walk-pose";
 import { GATHER_RANGE, beginGatherChannel, tickGatherChannel, type GatherChannel } from "./gather-channel";
 import {
   MOB_CAST_ANIM_MS,
@@ -493,6 +494,8 @@ type Player = {
   animUntil: number;
   /** Keep walk pose briefly after a waypoint so WASD/net gaps don't flicker idle. */
   walkUntil: number;
+  /** Wall time of the last `move` packet; held WASD refreshes it every 50ms (#436). */
+  lastMoveInputAt: number;
   /** Cached unlocked abilities (job + weapon skills). */
   unlockCacheKey: string;
   unlockCache: AbilityId[];
@@ -3408,6 +3411,7 @@ function createPlayer(
     nextSwingAt: 0,
     animUntil: 0,
     walkUntil: 0,
+    lastMoveInputAt: 0,
     unlockCacheKey: "",
     unlockCache: [],
     recasts: {},
@@ -5750,8 +5754,7 @@ function tickSimBody() {
           p.moveTo = null;
           if (goal && Math.hypot(goal.x - p.x, goal.z - p.z) > 0.8) p.navHold = true;
           syncUnitY(p);
-          p.walkUntil = now + 150;
-          if (now >= p.animUntil) p.anim = "walk";
+          p.walkUntil = walkUntilAtArrival(now, p.lastMoveInputAt);
           break;
         }
         const step = Math.min(d, speed * dt);
@@ -5769,7 +5772,7 @@ function tickSimBody() {
         p.z = c.z;
         // Ignore tiny residual heading noise near the waypoint
         if (d > 0.35) p.facing = facingTo(0, 0, dx, dz);
-        p.walkUntil = now + 200;
+        p.walkUntil = walkUntilAfterStep(now);
         // Don't stomp an active swing/cast pose
         if (now >= p.animUntil) p.anim = "walk";
         syncUnitY(p);
@@ -5777,7 +5780,7 @@ function tickSimBody() {
       }
     } else {
       if (p.movePath.length) p.movePath = [];
-      if (p.anim === "walk" && now >= p.walkUntil) {
+      if (p.anim === "walk" && shouldDropWalk(now, p.walkUntil, p.lastMoveInputAt)) {
         if (now >= p.animUntil) p.anim = "idle";
       }
     }
@@ -6663,6 +6666,7 @@ function onMessage(ws: WebSocket, data: string) {
       }
       // Manual move cancels engage so chase doesn't overwrite the click/WASD
       if (p.targetId) p.targetId = null;
+      p.lastMoveInputAt = Date.now();
       assignRoute(p, msg.x, msg.z);
       if (p.moveTo) warnSoftGate(p, p.movePath.at(-1)?.z ?? p.moveTo.z);
       break;
