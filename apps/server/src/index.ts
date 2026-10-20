@@ -176,7 +176,8 @@ import {
 import { createPaleHollowMobs, createPaleHollowNodes, relocateGatherNode, type FieldNode } from "./pale-hollow-world";
 import { steerMobStep } from "./mob-steer";
 import { withinEngageRange } from "./engage-range";
-import { shouldDropWalk, walkUntilAfterStep, walkUntilAtArrival } from "./walk-pose";
+import { moveInputHeld, shouldDropWalk, walkUntilAfterStep, walkUntilAtArrival } from "./walk-pose";
+import { chaseNeedsReplan, shouldAutoEngage } from "./chase-route";
 import { GATHER_RANGE, beginGatherChannel, tickGatherChannel, type GatherChannel } from "./gather-channel";
 import {
   MOB_CAST_ANIM_MS,
@@ -2705,8 +2706,7 @@ function closeViaRoute(p: Player, toX: number, toZ: number) {
     p.navHold = false;
     return;
   }
-  const shifted = !p.navGoal || Math.hypot(p.navGoal.x - gx, p.navGoal.z - gz) > 1.25;
-  if (!shifted && (p.moveTo || p.navHold)) return;
+  if (!chaseNeedsReplan(p, gx, gz)) return;
   assignRoute(p, gx, gz);
 }
 
@@ -2764,6 +2764,8 @@ function findNextHostile(p: Player, excludeId?: string): Mob | null {
 
 /** After a kill, keep fighting if another hostiles is nearby. */
 function autoEngageNext(p: Player, deadId: string) {
+  // #445: held WASD is steering; do not yank the route toward the next hostile.
+  if (!shouldAutoEngage(moveInputHeld(Date.now(), p.lastMoveInputAt))) return;
   const next = findNextHostile(p, deadId);
   if (!next) return;
   p.targetId = next.id;
