@@ -56,3 +56,7 @@ The bag is a character save. Gold and log item balances live in the Rust engine 
 ## UI pack
 
 Black Anvil HUD chrome lives in `apps/web/public/ui/black-anvil/` (source sheet + sliced PNG/WebP). Re-slice with `python3 apps/web/scripts/slice-black-anvil-ui.py`.
+
+## Trademarks
+
+Black Anvil™ and its logo are trademarks of Black Anvil Network. The code license does not grant rights to use them. Forks and modified versions must use their own name and logo. See [TRADEMARK.md](TRADEMARK.md).
